@@ -1,0 +1,58 @@
+{
+  "name": "@getquick/site",
+  "version": "0.1.0",
+  "description": "Shared tooling for GETQUICK sites: the gq CLI",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "gq": "bin/gq.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin",
+    "src",
+    "docs/research/ploi-api.md",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "check": "pnpm format:check && pnpm lint && pnpm test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "test": "node --test \"test/*.test.mjs\"",
+    "release:publish": "node scripts/publish.mjs"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.3",
+    "globals": "^17.4.0",
+    "prettier": "^3.8.2",
+    "sigillo": "0.13.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "packageManager": "pnpm@12.6.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Quick-Release/getquick-site.git"
+  },
+  "keywords": [
+    "getquick",
+    "cloudflare",
+    "ploi",
+    "cli",
+    "operations"
+  ]
+}

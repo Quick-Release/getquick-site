@@ -1,0 +1,10 @@
+{
+  "project": "getquick-site",
+  "sigillo": {
+    "apiUrl": "https://secrets.getquick.io",
+    "projectId": "01M3T75CP7E7JCADHSZ36VCR05",
+    "environments": {
+      "operations": "ops"
+    }
+  }
+}

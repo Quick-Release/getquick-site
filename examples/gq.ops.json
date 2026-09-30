@@ -1,0 +1,12 @@
+{
+  "project": "example-project",
+  "ploi": {
+    "serverId": "12345",
+    "siteId": "67890"
+  },
+  "cloudflare": {
+    "accountId": "0123456789abcdef0123456789abcdef",
+    "zoneId": "abcdef0123456789abcdef0123456789",
+    "zoneName": "example.com"
+  }
+}
