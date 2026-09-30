@@ -10,10 +10,8 @@ test("exec returns the exit code and output of a child that ignores its input", 
 });
 
 test("exec keeps multibyte characters split across output chunks", async () => {
-  const text = "ção€".repeat(50_000);
-  const result = await exec(process.execPath, [
-    "-e",
-    `process.stdout.write(${JSON.stringify(text)})`,
-  ]);
-  assert.equal(result.stdout, text);
+  // 9 bytes a repeat, so 64 KiB pipe chunks end mid-character; the child builds
+  // the text itself because Linux caps one argument at 128 KiB.
+  const result = await exec(process.execPath, ["-e", "process.stdout.write('ção€'.repeat(50000))"]);
+  assert.equal(result.stdout, "ção€".repeat(50_000));
 });
