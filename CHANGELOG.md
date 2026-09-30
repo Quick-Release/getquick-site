@@ -3,6 +3,18 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## Unreleased
+
+### Fixed
+
+- `exec` no longer crashes the process when a child exits without reading
+  its input, and decodes output as UTF-8 so multibyte characters survive
+  chunk boundaries.
+- `run()` rejects a call without `stdout` and `stderr` up front instead of
+  failing while reporting another error.
+- `release:publish` stops with a clear message when a `git` check fails,
+  instead of reading a failed `git status` as a clean tree.
+
 ## 0.1.0 — 2026-09-30
 
 First release: `gq-ops` 0.1.0 (`Quick-Release/gq-ops@d972d12`) as the `gq` bin

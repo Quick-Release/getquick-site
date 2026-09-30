@@ -19,6 +19,9 @@ export async function run(
   } = {},
 ) {
   if (typeof cwd !== "string" || cwd === "") throw new TypeError("run() requires a cwd.");
+  if (typeof stdout?.write !== "function" || typeof stderr?.write !== "function") {
+    throw new TypeError("run() requires stdout and stderr streams.");
+  }
   const io = {
     out: (line) => stdout.write(`${line}\n`),
     err: (line) => stderr.write(`${line}\n`),

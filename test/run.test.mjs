@@ -603,3 +603,12 @@ test("--data-file resolves against the site root, not the invocation directory",
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout).body, { a: 1 });
 });
+
+test("run() requires its output streams", async () => {
+  const { run } = await import("../src/index.mjs");
+  const cwd = await temporaryDirectory();
+  await assert.rejects(
+    run(["--version"], { cwd, stderr: { write() {} } }),
+    /run\(\) requires stdout and stderr/,
+  );
+});

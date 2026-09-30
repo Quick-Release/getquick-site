@@ -22,7 +22,12 @@ function run(command, args, options = {}) {
 }
 
 function output(command, args) {
-  return spawnSync(command, args, { cwd: root, encoding: "utf8" }).stdout.trim();
+  const result = spawnSync(command, args, { cwd: root, encoding: "utf8" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`${command} ${args.join(" ")} failed: ${result.stderr.trim()}`);
+  }
+  return result.stdout.trim();
 }
 
 if (process.env[reentry] !== "1" || process.env.SIGILLO !== "1") {
