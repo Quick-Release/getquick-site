@@ -3,10 +3,12 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
-## Unreleased
+## 0.1.1 — 2026-10-01
 
 ### Fixed
 
+- The README describes the published package: install, configuration,
+  commands, `run()`, and releasing.
 - `exec` no longer crashes the process when a child exits without reading
   its input, and decodes output as UTF-8 so multibyte characters survive
   chunk boundaries.

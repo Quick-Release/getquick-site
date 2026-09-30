@@ -1,14 +1,146 @@
 # getquick-site
 
 Shared tooling for GETQUICK sites, published to public npm as
-`@getquick/site`: one `gq` CLI for releases and version sync, Ploi
-provisioning and releases, database sync and backups, Cloudflare CI and
-media, Sigillo secret injection, and the `setup`/`doctor`/`verify` runners.
-Each site configures it through its own `gq.ops.json`.
+[`@getquick/site`](https://www.npmjs.com/package/@getquick/site): one `gq`
+CLI, configured by each site's own `gq.ops.json`.
 
 It replaces [`gq-ops`](https://github.com/Quick-Release/gq-ops) and the
 vendored `shop-devtools`. The package is being extracted from the Lombardi
-site (phase 1 of the GETQUICK blueprint rollout) and isn't published yet.
+site (phase 1 of the GETQUICK blueprint rollout); release and version sync,
+Ploi provisioning and releases, database sync and backups, Cloudflare CI and
+media, Sigillo secret injection, and the `setup`/`doctor`/`verify` runners
+move in over the coming releases. Today it carries `gq-ops`'s commands: Ploi,
+Cloudflare, and GitHub Actions sync.
+
+## Install
+
+Pin an exact version in the site's root `devDependencies`; it needs no
+registry login:
+
+```sh
+pnpm add --save-dev --save-exact @getquick/site
+```
+
+```json
+{
+  "scripts": {
+    "ops": "gq"
+  }
+}
+```
+
+## Configure a site
+
+`gq` walks up from the current directory to the nearest `gq.ops.json`,
+stopping at the enclosing Git repository, and treats that directory as the
+site root. Every site-relative path resolves from there. `--project <dir>` or
+`--config <file>` selects a site explicitly.
+
+```json
+{
+  "project": "example-site",
+  "ploi": { "serverId": "12345", "siteId": "67890" },
+  "cloudflare": {
+    "accountId": "0123456789abcdef0123456789abcdef",
+    "zoneId": "abcdef0123456789abcdef0123456789",
+    "zoneName": "example.com"
+  },
+  "github": {
+    "repository": "Quick-Release/example-site",
+    "environment": "production",
+    "secrets": ["CLOUDFLARE_API_TOKEN"],
+    "variables": ["CLOUDFLARE_ACCOUNT_ID"]
+  }
+}
+```
+
+Provider IDs are safe to commit; tokens are not. `gq` reads `PLOI_API_TOKEN`,
+`CLOUDFLARE_API_TOKEN` and optional ID overrides (`PLOI_SERVER_ID`,
+`PLOI_SITE_ID`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ZONE_ID`,
+`CLOUDFLARE_ZONE_NAME`) from, in increasing precedence:
+
+1. `${XDG_CONFIG_HOME:-$HOME/.config}/gq/ops.env`
+2. the site's `.env`
+3. the process environment, which is where a secret manager such as Sigillo
+   injects them per command
+4. flags (`--server`, `--site`, `--account`, `--zone`)
+
+## Commands
+
+```sh
+gq --version
+gq context show [--json]
+
+gq ploi servers list
+gq ploi server show [--server <id>]
+gq ploi sites list [--server <id>]
+gq ploi site show [--server <id>] [--site <id>]
+gq ploi api list [--group <group>] [--search <text>]
+gq ploi api describe <operation-id>
+gq ploi api <operation-id> [--path name=value] [--query name=value]
+    [--page <n>] [--per-page <n>] [--data <json> | --data-file <file>]
+    [--all] [--max-pages <n>] [--dry-run | --yes]
+
+gq cloudflare accounts list
+gq cloudflare zones list [--account <id>]
+gq cloudflare zone show [--zone <id>]
+gq cloudflare dns list [--zone <id>] [--name <hostname>] [--type <type>]
+
+gq github actions sync [--dry-run] [--yes]
+```
+
+`--json` prints machine-readable output; `ploi api` always prints the
+provider's JSON. In a terminal, `gq` with no arguments opens a command picker.
+
+`ploi api` covers all 225 operations in the Ploi API reference
+([inventory](docs/research/ploi-api.md)); operation IDs follow the docs' routes,
+such as `sites.log-site`. Every non-GET operation needs `--yes` (or a prompt in
+a terminal); `--dry-run` prints the resolved request without sending it.
+Cloudflare commands are read-only. `github actions sync` pipes each value to
+`gh` on stdin and never prints it.
+
+## Programmatic use
+
+The CLI is a thin shell over `run()`, which resolves to an exit code:
+
+```js
+import { run } from "@getquick/site";
+
+const code = await run(["ploi", "site", "show", "--json"], {
+  cwd, // where discovery starts
+  env, // replaces process.env
+  fetch, // every provider request
+  exec, // every child process: (command, args, { cwd, env, input }) => { code, stdout, stderr }
+  stdout, // anything with write()
+  stderr,
+});
+```
+
+No command reads `process.env` or `process.cwd()`; `bin/gq.mjs` is the only
+place that passes the real ones.
+
+## Development
+
+```sh
+pnpm install
+pnpm check   # Prettier, ESLint, node:test
+```
+
+Tests call `run()` against a fixture site (a temporary Git repository with a
+`gq.ops.json`) with recording fakes for `fetch` and `exec`
+([`test/support/fixture-site.mjs`](test/support/fixture-site.mjs)). They need
+no network, credentials, or provider accounts.
+
+## Releasing
+
+1. Bump `version` in `package.json`, add its section to `CHANGELOG.md`, and
+   commit.
+2. Tag the commit `v<version>` and push the commit and tag.
+3. `pnpm release:publish` checks that `HEAD` carries that tag and that
+   `pnpm check` passes, then runs `npm publish` under Sigillo's `operations`
+   environment (`gq.ops.json`), where `NPM_TOKEN` lives. The token is never
+   written to disk. It is a granular token that expires within 90 days, so
+   rotate it before then.
 
 ## License
 
