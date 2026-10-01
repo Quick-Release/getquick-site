@@ -9,8 +9,9 @@ vendored `shop-devtools`. The package is being extracted from the Lombardi
 site (phase 1 of the GETQUICK blueprint rollout); release and version sync,
 Ploi provisioning and releases, database sync and backups, Cloudflare CI and
 media, Sigillo secret injection, and the `setup`/`doctor`/`verify` runners
-move in over the coming releases. Today it carries `gq-ops`'s commands: Ploi,
-Cloudflare, and GitHub Actions sync.
+move in over the coming releases. Today it carries `gq-ops`'s commands (Ploi,
+Cloudflare, and GitHub Actions sync) and `shop-devtools`'s release and version
+commands.
 
 ## Install
 
@@ -87,6 +88,12 @@ gq cloudflare zone show [--zone <id>]
 gq cloudflare dns list [--zone <id>] [--name <hostname>] [--type <type>]
 
 gq github actions sync [--dry-run] [--yes]
+
+gq version check [version]
+gq version sync [version]
+gq release prepare [version]
+gq release tag [version]
+gq release push <major|minor|fix> [--no-deploy]
 ```
 
 `--json` prints machine-readable output; `ploi api` always prints the
@@ -99,6 +106,42 @@ a terminal); `--dry-run` prints the resolved request without sending it.
 Cloudflare commands are read-only. `github actions sync` pipes each value to
 `gh` on stdin and never prints it.
 
+## Release and version commands
+
+The release commands read the site's own release config,
+`shop-devtools.config.mjs` in the site root (the name carries over from the
+tool they replace). Every path in it is relative to the site root:
+
+```js
+export default {
+  versionFile: "VERSION", // the site's version; the default
+  changelogPath: "CHANGELOG.md", // the default
+  jsonFiles: ["package.json"], // files whose `version` field follows VERSION
+  textFiles: [
+    {
+      path: "web/app/themes/example-theme/style.css",
+      patterns: [{ regexp: /^Version: .+$/m, replacement: (version) => `Version: ${version}` }],
+    },
+  ],
+  // Optional: Composer packages pinned to the release version.
+  composer: { manifest, lock, workingDir, packages: [], disableNetwork },
+  releasePaths: ["VERSION", "CHANGELOG.md", "package.json"], // what a release commits
+  checks: [{ cmd: "pnpm", args: ["run", "check"] }], // run before a release commits
+  deploys: [], // run after it pushes, unless --no-deploy
+};
+```
+
+- `version check` fails, listing each file, when any of them (and the
+  Composer lock) doesn't carry `VERSION` or the given version.
+- `version sync` writes `VERSION` (or the given version) into every file.
+- `release prepare` also writes the version to the version file first.
+- `release tag` checks the version and a clean tree, then creates an
+  annotated `v<version>` tag.
+- `release push` bumps the version (`fix` and `patch` bump the third number),
+  syncs it, adds the commits since the last `v*` tag to the changelog, runs
+  `checks`, commits `releasePaths`, tags, pushes the branch and the tag, and
+  runs `deploys`. Command output streams through as it runs.
+
 ## Programmatic use
 
 The CLI is a thin shell over `run()`, which resolves to an exit code:
@@ -110,7 +153,7 @@ const code = await run(["ploi", "site", "show", "--json"], {
   cwd, // where discovery starts
   env, // replaces process.env
   fetch, // every provider request
-  exec, // every child process: (command, args, { cwd, env, input }) => { code, stdout, stderr }
+  exec, // every child process: (command, args, { cwd, env, input, stdout, stderr }) => { code, stdout, stderr }
   stdout, // anything with write()
   stderr,
 });

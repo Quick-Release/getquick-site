@@ -15,3 +15,17 @@ test("exec keeps multibyte characters split across output chunks", async () => {
   const result = await exec(process.execPath, ["-e", "process.stdout.write('ção€'.repeat(50000))"]);
   assert.equal(result.stdout, "ção€".repeat(50_000));
 });
+
+test("exec forwards output to the given streams as well as returning it", async () => {
+  const seen = { out: "", err: "" };
+  const result = await exec(
+    process.execPath,
+    ["-e", "process.stdout.write('out'); process.stderr.write('err')"],
+    {
+      stdout: { write: (chunk) => (seen.out += chunk) },
+      stderr: { write: (chunk) => (seen.err += chunk) },
+    },
+  );
+  assert.deepEqual(seen, { out: "out", err: "err" });
+  assert.deepEqual(result, { code: 0, stdout: "out", stderr: "err" });
+});

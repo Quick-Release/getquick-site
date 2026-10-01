@@ -3,6 +3,38 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## 0.2.0 — 2026-10-01
+
+### Added
+
+- The release and version commands of the vendored `shop-devtools`
+  (Lombardi's copy) under `gq`, still reading the site's
+  `shop-devtools.config.mjs`: `gq version check|sync [version]`,
+  `gq release prepare [version]`, `gq release tag [version]`, and
+  `gq release push <major|minor|fix> [--no-deploy]`. They replace
+  `shop-devtools check|sync`, `prepare`/`release`, `tag` and `push`. Every git,
+  check and deploy command runs through `run()`'s `exec`.
+- `exec` forwards a child's output to `stdout`/`stderr` streams passed in its
+  options as it arrives, so a release's checks and pushes stream as before.
+
+### Changed
+
+- `release prepare` covers both `shop-devtools prepare` and
+  `shop-devtools release`, which differed only in the closing hint; it always
+  prints it, naming `gq release tag`.
+- File paths in the release config resolve from the site root (the directory
+  with `gq.ops.json`), not the current directory.
+
+### Fixed
+
+- `release push` leaves a blank line between the new changelog entry and the
+  previous one.
+
+### Not carried over
+
+- `docsChangelogPath` (the Starlight docs changelog page) and the legacy
+  `wrangler` deploys, which Lombardi no longer used.
+
 ## 0.1.1 — 2026-10-01
 
 ### Fixed

@@ -23,6 +23,8 @@ export async function run(
     throw new TypeError("run() requires stdout and stderr streams.");
   }
   const io = {
+    stdout,
+    stderr,
     out: (line) => stdout.write(`${line}\n`),
     err: (line) => stderr.write(`${line}\n`),
   };

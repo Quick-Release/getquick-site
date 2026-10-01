@@ -11,6 +11,12 @@ import {
 } from "./ploi-api-command.mjs";
 import { PLOI_ENDPOINTS } from "./providers/ploi-endpoints.mjs";
 import { chooseCommand } from "./ui.mjs";
+import {
+  isReleaseCommand,
+  RELEASE_USAGE,
+  runReleaseCommand,
+  validateReleaseCommand,
+} from "../release/release.mjs";
 import { VERSION } from "../version.mjs";
 
 const COMMAND_OPTIONS = new Map([
@@ -43,7 +49,8 @@ export async function runCli(argv, { cwd, env, fetch, exec, io, interactive }) {
     printHelp(io);
     return;
   }
-  validateCommand(parsed);
+  if (isReleaseCommand(parsed.command)) validateReleaseCommand(parsed);
+  else validateCommand(parsed);
   if (isPloiApiCommand(parsed.command) && runPloiApiCatalogCommand(parsed, io)) {
     return;
   }
@@ -55,6 +62,11 @@ export async function runCli(argv, { cwd, env, fetch, exec, io, interactive }) {
     config: parsed.config,
   });
   const [provider, resource, action = "list"] = parsed.command;
+
+  if (isReleaseCommand(parsed.command)) {
+    await runReleaseCommand({ parsed, context, env, exec, io });
+    return;
+  }
 
   if (provider === "context" && resource === "show") {
     printValue(io, contextSummary(context), parsed);
@@ -191,7 +203,7 @@ function parseArguments(argv) {
     "--max-pages",
   ]);
   const repeatedValueOptions = new Set(["--path", "--query"]);
-  const booleanOptions = new Set(["--all", "--dry-run", "--yes"]);
+  const booleanOptions = new Set(["--all", "--dry-run", "--yes", "--no-deploy"]);
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -337,6 +349,9 @@ Cloudflare:
   gq cloudflare zones list [--account <id>]
   gq cloudflare zone show [--zone <id>]
   gq cloudflare dns list [--zone <id>] [--name <hostname>] [--type <type>]
+
+Release:
+${RELEASE_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Global options:
   --project <directory>  Select a project explicitly
