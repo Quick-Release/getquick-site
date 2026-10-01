@@ -144,6 +144,13 @@ test the code rollback and data recovery procedures separately.
 
 **Phase 2** is specified in [#1](https://github.com/Quick-Release/getquick-site/issues/1);
 its design decisions are [ADR 0002](../adr/0002-generate-sites-from-a-versioned-manifest.md).
+Its gate runs on the throwaway site `gq-smoke`
+([#7](https://github.com/Quick-Release/getquick-site/issues/7)):
+[`scripts/smoke/gq-smoke-up.sh`](../../scripts/smoke/gq-smoke-up.sh) walks
+through generating, verifying, provisioning and releasing it, and
+[`scripts/smoke/gq-smoke-down.sh`](../../scripts/smoke/gq-smoke-down.sh)
+tears its infrastructure down, keeping the repository and Sigillo project
+for repeat runs.
 
 The `getquick-site` repository was created at the start of phase 1. Root
 commands become thin wrappers over `@getquick/site` where appropriate, while
