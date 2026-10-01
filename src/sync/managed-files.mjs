@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 
 import ownership from "../../blueprint/ownership.json" with { type: "json" };
 import packageTemplate from "../../blueprint/templates/package.json" with { type: "json" };
+import { deployStatusMarker } from "../ploi/provision.mjs";
 import { VERSION } from "../version.mjs";
 
 export const LOCK_FILENAME = "gq.lock.json";
@@ -44,7 +45,10 @@ async function renderTemplate(template, manifest) {
 
 // What a template's `{{name}}` stands for: the manifest's site values under
 // their key paths, `Project` (project in PascalCase, for names and prose),
-// and the blueprint's own pins in the root package.json, `packageManager`
+// `deployStatusMarker` (the CMS deploy's status line, which gq ploi release
+// waits for), `wordpress.plugins` space-separated (none until the manifest
+// lists some, so the deploy script stays valid shell) and the blueprint's
+// own pins in the root package.json, `packageManager`
 // and `nodeEngine` (engines.node), so a copy of one can't drift. Only fully
 // generated and create-once templates are rendered; a section's or managed
 // keys' template is used as it ships.
@@ -59,6 +63,8 @@ function templateValues(manifest) {
       .join(""),
     packageManager: packageTemplate.packageManager,
     nodeEngine: packageTemplate.engines.node,
+    deployStatusMarker: deployStatusMarker(project),
+    "wordpress.plugins": (manifest.wordpress?.plugins ?? []).join(" "),
     "ci.worker": manifest.ci?.worker,
     "ci.backupBucket": manifest.ci?.backupBucket,
     "artifacts.namespace": manifest.artifacts?.namespace,

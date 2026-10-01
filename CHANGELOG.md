@@ -42,9 +42,22 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   `deploy:frontend:raw` (the release step's Frontend deploy),
   `plan:frontend`, `infra:check`, `ci:check` and `test:scripts` (checks the
   content variant's `gq verify` runs).
+- The CMS deploy script Ploi runs (`deploy/ploi/admin.sh`), fully generated
+  and extracted from Lombardi: release download, Composer with the registry
+  login, the copy-back of shipped plugins and themes, maintenance mode, the
+  PHP-FPM reload and the `<PROJECT>_DEPLOY_STATUS` line. It activates the
+  plugins `wordpress.plugins` lists, in order, then runs the site's deploy
+  extensions (`deploy/ploi/admin.d/*.sh`, created once with a README) in
+  lexical order; one that exits non-zero fails the deploy. Lombardi's
+  manifest renders Lombardi's script without its own steps (its theme, the
+  plugin retirements and the clean-up of its git-based deploys), which move
+  to an extension.
 
 ### Changed
 
+- `wordpress.plugins` in `gq.ops.json` takes plugin slugs only (letters,
+  digits, `-`, `_` and `.`, starting with a letter or digit), since the
+  deploy script activates each one.
 - `gq.lock.json` also records a hash for each generated section
   (`sections`) and managed key (`keys`), and the create-once files it has
   created (`created`). A lock from 0.11.0 is upgraded on the next sync. An

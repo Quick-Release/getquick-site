@@ -123,7 +123,8 @@ Workflows, webhook, release check and sandbox image), the Frontend deploy
 configuration and script (`infra/frontend.run.ts`,
 `infra/scripts/deploy-frontend.mjs`, `infra/package.json`), the CI release
 step (`scripts/ci-release.mjs`) and the tests of the CI Worker and release
-step (`scripts/ci.test.mjs`).
+step (`scripts/ci.test.mjs`), and the CMS deploy script Ploi runs
+(`deploy/ploi/admin.sh`).
 
 The deploy wiring is rendered from `gq.ops.json`: the Worker, its Workflows
 and its vars from `ci.worker`, `ci.backupBucket`, `artifacts`,
@@ -135,6 +136,17 @@ written as a placeholder naming its key (`"<ci.worker>"`), so a new site can
 be generated before it is provisioned; fill the value in and `gq sync`
 rewrites the files. The Frontend deploy reads `domains` and
 `cloudflare.accountId` from `gq.ops.json` when it runs.
+
+The CMS deploy script activates the plugins `wordpress.plugins` lists, in
+order (each must be installed by Composer; a name must be a plugin slug),
+and prints the `<PROJECT>_DEPLOY_STATUS` line named after `project`. To add
+a plugin, list it in `gq.ops.json` and run `gq sync`. Any other site step
+goes in a deploy extension: each `deploy/ploi/admin.d/*.sh` runs with `bash`
+from `apps/cms` after the plugins are activated and the database is updated,
+in lexical (byte) order of file name, with `SITE_PATH` and `APP_PATH` set. One that exits non-zero
+fails the deploy with its exit code (maintenance mode is still turned off).
+Extensions run only once WordPress is installed, and not on a Composer-only
+deploy. `deploy/ploi/admin.d` is the site's, created once with a README.
 
 A site shares three more kinds of file with the blueprint:
 
@@ -155,12 +167,13 @@ A site shares three more kinds of file with the blueprint:
   back after its siblings, in the file's indentation. One the blueprint
   retires is removed, unless the site changed it, in which case it is the
   site's.
-- **Create-once files.** `gq.ops.json`, the glossary (`CONTEXT.md`) and
-  `README.md` are written when absent, and recorded in the lock as created
-  once they exist, whoever wrote them.
-  From then on they are the site's: `gq sync` never rewrites them, nor
-  restores one the site deleted, unless `gq sync --recreate <path>` asks
-  for it (repeat it for several files; `gq.ops.json` can't be recreated).
+- **Create-once files.** `gq.ops.json`, the glossary (`CONTEXT.md`),
+  `README.md` and the deploy extension directory's README
+  (`deploy/ploi/admin.d/README.md`) are written when absent, and recorded
+  in the lock as created once they exist, whoever wrote them. From then on
+  they are the site's: `gq sync` never rewrites them, nor restores one the
+  site deleted, unless `gq sync --recreate <path>` asks for it (repeat it
+  for several files; `gq.ops.json` can't be recreated).
 
 `gq.lock.json`, committed at the site root, records the `gq` version, the
 schema version, a hash of each managed file (a symlink's target), section
@@ -406,7 +419,9 @@ These run through `gq sigillo run <environment> --`, which injects
 The site's deploy script is the other half of the contract: it reads
 `$ARCHIVE_URL` and `$COMPOSER_AUTH`, deploys the paths in
 `ploiReleaseShippedPaths` (exported for a site test), and prints the status
-line.
+line. `gq sync` generates it at `deploy/ploi/admin.sh` (see
+[Generate and sync a site](#generate-and-sync-a-site)), which is what
+`ploi.deployScript` should name.
 
 ## Database sync and backup
 

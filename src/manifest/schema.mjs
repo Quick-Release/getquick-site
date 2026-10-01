@@ -20,6 +20,14 @@ export const SCHEMA_URL = "./node_modules/@getquick/site/schema/gq.ops.schema.js
 const name = z.string().trim().min(1);
 const hostname = z.string().trim().min(1);
 const path = z.string().trim().min(1);
+// A plugin's directory name: the CMS deploy script activates each one, so
+// nothing that means something to the shell (or to wp, like a leading -).
+const pluginSlug = z
+  .string()
+  .regex(
+    /^[A-Za-z0-9][\w.-]*$/u,
+    "must be a plugin slug (letters, digits, -, _ and ., starting with a letter or digit)",
+  );
 
 // A pattern whose match is replaced by `replacement`, `{version}` standing
 // for the release version: the JSON form of a release config's
@@ -69,7 +77,13 @@ export const manifestSchema = z
         deployScript: z.string().optional(),
       })
       .optional(),
-    wordpress: z.strictObject({ plugins: z.array(name) }).optional(),
+    wordpress: z
+      .strictObject({
+        plugins: z
+          .array(pluginSlug)
+          .describe("The plugins the CMS deploy script activates, in order."),
+      })
+      .optional(),
     releases: z.strictObject({ bucket: z.string(), prefix: z.string().optional() }).optional(),
     media: z.strictObject({ bucket: z.string(), domain: hostname }).optional(),
     backups: z.strictObject({ bucket: z.string(), prefix: z.string().optional() }).optional(),

@@ -113,7 +113,10 @@ function describeIssue(issue) {
   const path = keyPath(issue.path);
   if (issue.code === "invalid_type" && issue.input === undefined) return `${path} is required`;
   if (issue.code === "too_small" && issue.origin === "string") return `${path} must not be empty`;
-  if (issue.code === "custom") return `${path} ${issue.message}`;
+  // A refinement's or a pattern's own message says what is wrong.
+  if (issue.code === "custom" || (issue.code === "invalid_format" && issue.format === "regex")) {
+    return `${path} ${issue.message}`;
+  }
   if (issue.code === "invalid_value") {
     return `${path} must be ${issue.values.map((value) => JSON.stringify(value)).join(" or ")}`;
   }

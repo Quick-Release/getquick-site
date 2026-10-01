@@ -40,6 +40,7 @@ const MANAGED_PATHS = [
   ".nvmrc",
   ".vite-hooks/pre-commit",
   ".vite-hooks/pre-push",
+  "deploy/ploi/admin.sh",
   "docs/adr/README.md",
   "docs/agents/README.md",
   "docs/agents/domain.md",
@@ -68,7 +69,7 @@ const MANAGED_PATHS = [
 // The files gq manages a part of (a section, or keys), and the ones it
 // creates once besides gq.ops.json.
 const SHARED_PATHS = [".gitignore", "AGENTS.md", "package.json"];
-const CREATED_PATHS = ["CONTEXT.md", "README.md"];
+const CREATED_PATHS = ["CONTEXT.md", "README.md", "deploy/ploi/admin.d/README.md"];
 
 test("gq new writes a v1 manifest, the managed files and the lock, then runs git init", async () => {
   const parent = await temporaryDirectory();
@@ -244,6 +245,7 @@ test("gq sync leaves site-owned files byte-identical", async () => {
     "apps/cms/web/app/plugins/acme-blocks/acme-blocks.php": "<?php\n",
     "apps/frontend/package.json": '{ "name": "@acme/frontend" }\n',
     "apps/cms/.gitignore": "vendor/\n",
+    "deploy/ploi/admin.d/10-acme.sh": "wp theme activate acme-theme\n",
   };
   const site = await siteFromOlderGq(owned);
   const before = await snapshot(site.root);

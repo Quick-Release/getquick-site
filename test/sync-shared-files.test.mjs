@@ -443,7 +443,12 @@ test("gq new writes the create-once glossary and README, recorded in the lock as
   const readme = await readSite(site.root, "README.md");
   assert.match(readme, /^# acme$/mu);
   assert.doesNotMatch(readme, /\{\{/u);
-  assert.deepEqual((await readLock(site.root)).created, ["CONTEXT.md", "README.md", "gq.ops.json"]);
+  assert.deepEqual((await readLock(site.root)).created, [
+    "CONTEXT.md",
+    "README.md",
+    "deploy/ploi/admin.d/README.md",
+    "gq.ops.json",
+  ]);
 });
 
 test("gq sync leaves an edited or deleted create-once file alone", async () => {
@@ -508,7 +513,7 @@ test("gq sync --recreate refuses a path the blueprint doesn't create once", asyn
     assert.equal(
       result.stderr,
       `gq: gq sync can't recreate ${path}: --recreate takes a file the blueprint creates once ` +
-        "(CONTEXT.md, README.md).\n",
+        "(CONTEXT.md, README.md, deploy/ploi/admin.d/README.md).\n",
     );
   }
   const manifestOnly = await site.run(["sync", "--manifest", "--recreate", "README.md"]);
@@ -532,6 +537,11 @@ test("gq sync creates a missing create-once file the lock doesn't record", async
   assert.match(result.stdout, /^CONTEXT\.md: created\.$/mu);
   assert.doesNotMatch(result.stdout, /^README\.md/mu);
   assert.equal(await readSite(site.root, "README.md"), "# Acme\n");
-  assert.deepEqual((await readLock(site.root)).created, ["CONTEXT.md", "README.md", "gq.ops.json"]);
+  assert.deepEqual((await readLock(site.root)).created, [
+    "CONTEXT.md",
+    "README.md",
+    "deploy/ploi/admin.d/README.md",
+    "gq.ops.json",
+  ]);
   assert.match(await readSite(site.root, "CONTEXT.md"), /^# acme$/mu);
 });

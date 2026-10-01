@@ -26,6 +26,11 @@
       "path": "docs/agents/triage-labels.md",
       "template": "templates/docs/agents/triage-labels.md"
     },
+    {
+      "path": "deploy/ploi/admin.sh",
+      "template": "templates/deploy/ploi/admin.sh",
+      "executable": true
+    },
     { "path": "infra/ci/Dockerfile", "template": "templates/infra/ci/Dockerfile" },
     { "path": "infra/ci/cloudflare.ci.ts", "template": "templates/infra/ci/cloudflare.ci.ts" },
     { "path": "infra/ci/env.ts", "template": "templates/infra/ci/env.ts" },
@@ -55,6 +60,10 @@
   "createOnce": [
     { "path": "gq.ops.json" },
     { "path": "CONTEXT.md", "template": "templates/CONTEXT.md" },
-    { "path": "README.md", "template": "templates/README.md" }
+    { "path": "README.md", "template": "templates/README.md" },
+    {
+      "path": "deploy/ploi/admin.d/README.md",
+      "template": "templates/deploy/ploi/admin.d/README.md"
+    }
   ]
 }

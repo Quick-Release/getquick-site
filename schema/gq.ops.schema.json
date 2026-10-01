@@ -100,8 +100,9 @@
           "type": "array",
           "items": {
             "type": "string",
-            "minLength": 1
-          }
+            "pattern": "^[A-Za-z0-9][\\w.-]*$"
+          },
+          "description": "The plugins the CMS deploy script activates, in order."
         }
       },
       "required": [
