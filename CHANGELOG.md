@@ -3,6 +3,34 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## 0.5.0 — 2026-10-01
+
+### Added
+
+- Lombardi's database sync as `gq db sync [--yes]` (`scripts/db-sync.mjs`
+  with `db-sync-run.mjs`'s relaunch under mkcert's CA) and `gq db backup`
+  (`db-sync.mjs --backup-only`). It stays live → local only, and the
+  export-only guard still refuses, before Ploi receives it, any server script
+  that could write to a database. Site values come from `gq.ops.json`
+  `backups`, `domains`, `ploi` and `cloudflare`, plus the new `local`:
+  `local.adminEmail` (required by `sync`) is the local `dev` administrator's
+  address, and `local.frontendUrl` (default `http://localhost:4321`) the
+  local frontend the live one is replaced with.
+- The modules `db sync` needs from Lombardi's local CMS tooling, as is: the
+  local Design source override (`scripts/lib/cms-local-design.mjs`, with an
+  async `withDesignRegistryInstall` and `runDesignCommand` through `exec`),
+  the host Composer install around it (`cms-composer.mjs`'s
+  `composerInstall`), DDEV status and `apps/cms/.env` wiring
+  (`scripts/lib/ddev.mjs`, `cms-env.mjs`; `S3_UPLOADS_BUCKET_URL` defaults
+  from `media.domain`). They have no commands of their own yet, and the
+  override's generated DDEV hooks still run Lombardi's
+  `scripts/cms-local-design.mjs` until its DDEV startup moves into `gq`.
+
+### Changed
+
+- The export marker is named after `gq.ops.json` `project`:
+  `<PROJECT>_DB_EXPORT`, so Lombardi's `LOMBARDI_DB_EXPORT` is unchanged.
+
 ## 0.4.0 — 2026-10-01
 
 ### Added

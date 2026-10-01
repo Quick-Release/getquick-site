@@ -86,6 +86,9 @@ gq ploi provision [--dry-run | --yes]
 gq ploi release [--ref <ref>] [--git-dir <dir>]
 gq ploi media [--dry-run]
 
+gq db sync [--yes]
+gq db backup
+
 gq cloudflare accounts list
 gq cloudflare zones list [--account <id>]
 gq cloudflare zone show [--zone <id>]
@@ -241,6 +244,38 @@ The site's deploy script is the other half of the contract: it reads
 `$ARCHIVE_URL` and `$COMPOSER_AUTH`, deploys the paths in
 `ploiReleaseShippedPaths` (exported for a site test), and prints the status
 line.
+
+## Database sync and backup
+
+Live → local only: no `gq` command sends a database to the server. Both run
+through `gq sigillo run <environment> --` for `PLOI_API_TOKEN`, the backup
+bucket's `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` and, for `sync`,
+`COMPOSER_AUTH`. Beside the `domains`, `ploi` and `cloudflare` values above,
+they read:
+
+```json
+{
+  "backups": { "bucket": "example-releases", "prefix": "db/" },
+  "local": { "adminEmail": "dev@example.com", "frontendUrl": "http://localhost:4321" }
+}
+```
+
+- `db backup` runs one Ploi script on the server: `wp db export`, gzipped
+  and uploaded to `<backups.prefix><ploi.database>/<UTC time>.sql.gz` in the
+  `backups` bucket through a 15-minute presigned URL, then
+  `<PROJECT>_DB_EXPORT=success …` with its size and checksum. The script is
+  refused, before Ploi gets it, if it could write to a database (`wp db
+import`, `search-replace`, `wp user`, `mysql`, …).
+- `db sync` first checks that `apps/cms/.env` targets the site's DDEV
+  project (starting DDEV and wiring its database and URL into the `.env`),
+  takes the backup, downloads and verifies it, runs `composer install` with
+  the host Composer, snapshots the local database (`ddev snapshot`), imports
+  the backup, replaces the live `domains` with the DDEV URL and
+  `local.frontendUrl` (default `http://localhost:4321`), and resets the local
+  administrator `dev` / `dev` with `local.adminEmail`. It confirms first in a
+  terminal and needs `--yes` elsewhere. It relaunches itself with mkcert's
+  public CA (`NODE_EXTRA_CA_CERTS`) so its last check can reach the local
+  site over HTTPS.
 
 ## Programmatic use
 

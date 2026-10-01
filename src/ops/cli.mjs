@@ -24,6 +24,7 @@ import {
   PLOI_WORKFLOW_USAGE,
   runPloiWorkflow,
 } from "../ploi/commands.mjs";
+import { DB_USAGE, dbCommandOptions, isDbCommand, runDbCommand } from "../db/commands.mjs";
 import { VERSION } from "../version.mjs";
 
 const COMMAND_OPTIONS = new Map([
@@ -88,6 +89,19 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, io, interact
       fetch,
       exec,
       lookup,
+      io,
+      interactive,
+    });
+  }
+
+  if (isDbCommand(parsed.command)) {
+    return runDbCommand(parsed.command, {
+      argv: effectiveArguments,
+      context,
+      parsed,
+      env,
+      fetch,
+      exec,
       io,
       interactive,
     });
@@ -272,7 +286,9 @@ function validateCommand(parsed) {
     : {
         command: parsed.command.join(" "),
         allowedOptions:
-          COMMAND_OPTIONS.get(parsed.command.join(" ")) ?? ploiWorkflowOptions(parsed.command),
+          COMMAND_OPTIONS.get(parsed.command.join(" ")) ??
+          ploiWorkflowOptions(parsed.command) ??
+          dbCommandOptions(parsed.command),
       };
   if (!allowedOptions) throw new Error(`Unknown command: ${command}. Run gq --help.`);
 
@@ -382,6 +398,9 @@ Cloudflare:
   gq cloudflare zones list [--account <id>]
   gq cloudflare zone show [--zone <id>]
   gq cloudflare dns list [--zone <id>] [--name <hostname>] [--type <type>]
+
+Database (live → local only):
+${DB_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Secrets (Sigillo):
 ${SIGILLO_USAGE.map((usage) => `  ${usage}`).join("\n")}
