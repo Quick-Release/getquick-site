@@ -4,14 +4,51 @@
 // network or a provider.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { join, sep } from "node:path";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { VERSION } from "../src/version.mjs";
 import { createFixtureSite, runGq, temporaryDirectory } from "./support/fixture-site.mjs";
 
 const MISE = '[tools]\nnode = "24.21.0"\n';
+const PRE_COMMIT = "#!/bin/sh\nset -e\n\nvp staged\npnpm check\n";
+const PRE_PUSH = [
+  "#!/bin/sh",
+  "set -e",
+  "",
+  "# The same checks `pnpm push` and Cloudflare CI run (gq verify: the content",
+  "# variant's checks plus gq.ops.json `verify.checks`).",
+  "# Skip once with: git push --no-verify",
+  "pnpm verify",
+  "",
+].join("\n");
+const SKILLS = ".claude/skills";
+const MANAGED_PATHS = [
+  ".claude/skills",
+  ".mise.toml",
+  ".nvmrc",
+  ".vite-hooks/pre-commit",
+  ".vite-hooks/pre-push",
+  "docs/adr/README.md",
+  "docs/agents/README.md",
+  "docs/agents/domain.md",
+  "docs/agents/issue-tracker.md",
+  "docs/agents/triage-labels.md",
+  "docs/plans/README.md",
+  "docs/research/README.md",
+  "vite.config.ts",
+];
 
 function hash(content) {
   return `sha256:${createHash("sha256").update(content).digest("hex")}`;
@@ -21,7 +58,7 @@ async function readSite(root, path) {
   return readFile(join(root, path), "utf8");
 }
 
-test("gq new writes a v1 manifest, the toolchain pins and the lock, then runs git init", async () => {
+test("gq new writes a v1 manifest, the managed files and the lock, then runs git init", async () => {
   const parent = await temporaryDirectory();
   const root = join(parent, "acme");
 
@@ -37,11 +74,36 @@ test("gq new writes a v1 manifest, the toolchain pins and the lock, then runs gi
     variant: "content",
   });
   assert.equal(await readSite(root, ".mise.toml"), MISE);
-  assert.deepEqual(JSON.parse(await readSite(root, "gq.lock.json")), {
-    gq: VERSION,
-    schemaVersion: 1,
-    files: { ".mise.toml": hash(MISE) },
-  });
+  assert.equal(await readSite(root, ".nvmrc"), "24.21.0\n");
+  assert.equal(await readSite(root, ".vite-hooks/pre-commit"), PRE_COMMIT);
+  assert.equal(await readSite(root, ".vite-hooks/pre-push"), PRE_PUSH);
+  for (const hook of [".vite-hooks/pre-commit", ".vite-hooks/pre-push"]) {
+    assert.equal((await lstat(join(root, hook))).mode & 0o777, 0o755, hook);
+  }
+  assert.match(await readSite(root, "vite.config.ts"), /^ {2}staged: \{$/mu);
+  assert.match(await readSite(root, "docs/adr/README.md"), /^# Architecture Decision Records$/mu);
+  assert.equal((await lstat(join(root, SKILLS))).isSymbolicLink(), true);
+  assert.equal(await readlink(join(root, SKILLS)), "../.agents/skills");
+
+  const lock = JSON.parse(await readSite(root, "gq.lock.json"));
+  assert.deepEqual(Object.keys(lock), ["gq", "schemaVersion", "files"]);
+  assert.equal(lock.gq, VERSION);
+  assert.equal(lock.schemaVersion, 1);
+  assert.deepEqual(Object.keys(lock.files), MANAGED_PATHS);
+  for (const path of MANAGED_PATHS.filter((path) => path !== SKILLS)) {
+    assert.equal(lock.files[path], hash(await readFile(join(root, path))), path);
+  }
+  assert.match(lock.files[SKILLS], /^sha256:[0-9a-f]{64}$/u);
+  assert.equal(
+    result.stdout,
+    [
+      `Created acme (content) in ${root}:`,
+      "  gq.ops.json",
+      ...MANAGED_PATHS.map((path) => `  ${path}`),
+      "  gq.lock.json",
+      "",
+    ].join("\n"),
+  );
   assert.deepEqual(
     result.exec.calls.map(({ command, args, cwd }) => ({ command, args, cwd })),
     [{ command: "git", args: ["init", "--quiet"], cwd: root }],
@@ -60,13 +122,19 @@ async function newSite() {
   return { root, run: (argv) => runGq(argv, { cwd: root }) };
 }
 
-// Every working-tree file's content and modification time.
-async function snapshot(root) {
+// Every working-tree file's content, mode and modification time, and every
+// symlink's target. Symlinks aren't followed.
+async function snapshot(root, directory = "") {
   const files = {};
-  for (const path of await readdir(root, { recursive: true })) {
-    if (path === ".git" || path.startsWith(`.git${sep}`)) continue;
-    const stats = await stat(join(root, path));
-    if (stats.isFile()) files[path] = { content: await readSite(root, path), mtime: stats.mtimeMs };
+  for (const entry of await readdir(join(root, directory), { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (path === ".git") continue;
+    if (entry.isDirectory()) Object.assign(files, await snapshot(root, path));
+    else if (entry.isSymbolicLink()) files[path] = { symlink: await readlink(join(root, path)) };
+    else {
+      const stats = await lstat(join(root, path));
+      files[path] = { content: await readSite(root, path), mode: stats.mode, mtime: stats.mtimeMs };
+    }
   }
   return files;
 }
@@ -120,18 +188,21 @@ test("a hand-edited managed file stops gq sync with a diff, and nothing is writt
 });
 
 // A site an older gq generated: its lock records the toolchain pins that gq
-// wrote, which the installed blueprint has since changed.
+// wrote, which the installed blueprint has since changed. `files` are the
+// site's own, written after.
 async function siteFromOlderGq(files = {}) {
+  const site = await newSite();
   const oldMise = '[tools]\nnode = "24.20.0"\n';
-  const lock = { gq: "0.8.0", schemaVersion: 1, files: { ".mise.toml": hash(oldMise) } };
-  return createFixtureSite({
-    ops: { schemaVersion: 1, project: "acme", variant: "content" },
-    files: {
-      ".mise.toml": oldMise,
-      "gq.lock.json": `${JSON.stringify(lock, null, 2)}\n`,
-      ...files,
-    },
-  });
+  await writeFile(join(site.root, ".mise.toml"), oldMise);
+  const lock = JSON.parse(await readSite(site.root, "gq.lock.json"));
+  lock.gq = "0.8.0";
+  lock.files[".mise.toml"] = hash(oldMise);
+  await writeFile(join(site.root, "gq.lock.json"), `${JSON.stringify(lock, null, 2)}\n`);
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(dirname(join(site.root, path)), { recursive: true });
+    await writeFile(join(site.root, path), content);
+  }
+  return site;
 }
 
 test("a template change to an unedited managed file is applied and the lock updated", async () => {
@@ -158,11 +229,9 @@ test("a template change to an unedited managed file is applied and the lock upda
     "gq.ops.json: up to date (schema v1).\n.mise.toml: updated.\ngq.lock.json: updated.\n",
   );
   assert.equal(await readSite(site.root, ".mise.toml"), MISE);
-  assert.deepEqual(JSON.parse(await readSite(site.root, "gq.lock.json")), {
-    gq: VERSION,
-    schemaVersion: 1,
-    files: { ".mise.toml": hash(MISE) },
-  });
+  const lock = JSON.parse(await readSite(site.root, "gq.lock.json"));
+  assert.equal(lock.gq, VERSION);
+  assert.equal(lock.files[".mise.toml"], hash(MISE));
   assert.equal((await site.run(["sync", "--check"])).code, 0);
   for (const { fetch, exec } of [check, sync]) {
     assert.deepEqual(fetch.requests, []);
@@ -174,6 +243,11 @@ test("gq sync leaves site-owned files byte-identical", async () => {
   const owned = {
     "README.md": "# Acme\n",
     "docs/adr/0001-use-astro.md": "# ADR 0001\n",
+    "docs/plans/launch.md": "# Launch\n",
+    "docs/research/hosting.md": "# Hosting\n",
+    "docs/agents/deploys.md": "# Deploys\n",
+    ".agents/skills/acme/SKILL.md": "# Acme skill\n",
+    ".vite-hooks/commit-msg": "#!/bin/sh\n",
     "apps/cms/web/app/plugins/acme-blocks/acme-blocks.php": "<?php\n",
     "package.json": '{ "name": "acme" }\n',
     ".gitignore": "node_modules\n",
@@ -188,7 +262,7 @@ test("gq sync leaves site-owned files byte-identical", async () => {
   for (const path of Object.keys(owned)) assert.deepEqual(after[path], before[path], path);
   assert.deepEqual(
     Object.keys(after).sort(),
-    [...Object.keys(owned), ".mise.toml", "gq.lock.json", "gq.ops.json"].sort(),
+    [...Object.keys(owned), ...MANAGED_PATHS, "gq.lock.json", "gq.ops.json"].sort(),
   );
 });
 
@@ -201,6 +275,136 @@ test("gq sync regenerates a deleted managed file", async () => {
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.stdout, "gq.ops.json: up to date (schema v1).\n.mise.toml: created.\n");
   assert.equal(await readSite(site.root, ".mise.toml"), MISE);
+});
+
+test("a local edit to any managed file, or a retargeted symlink, stops gq sync", async () => {
+  const site = await newSite();
+  for (const path of MANAGED_PATHS) {
+    if (path === SKILLS) {
+      await rm(join(site.root, path));
+      await symlink("../skills", join(site.root, path));
+    } else await writeFile(join(site.root, path), `${await readSite(site.root, path)}local\n`);
+  }
+  const before = await snapshot(site.root);
+
+  for (const argv of [["sync"], ["sync", "--check"]]) {
+    const result = await site.run(argv);
+    assert.equal(result.code, 1);
+    for (const path of MANAGED_PATHS) {
+      assert.ok(result.stdout.includes(`\n${path}: edited since gq last wrote it`), path);
+    }
+    assert.equal(
+      result.stderr,
+      `gq: Local edits to managed files: ${MANAGED_PATHS.join(", ")}. gq sync writes nothing ` +
+        "until each is reverted, or deleted to be regenerated.\n",
+    );
+    assert.deepEqual(await snapshot(site.root), before);
+  }
+});
+
+test("a retargeted agent-skills symlink shows as a diff of its targets", async () => {
+  const site = await newSite();
+  await rm(join(site.root, SKILLS));
+  await symlink("../skills", join(site.root, SKILLS));
+
+  const result = await site.run(["sync"]);
+
+  assert.equal(result.code, 1);
+  assert.equal(
+    result.stdout,
+    [
+      "gq.ops.json: up to date (schema v1).",
+      ".claude/skills: edited since gq last wrote it (gq.lock.json); gq sync would write:",
+      "--- .claude/skills",
+      "+++ .claude/skills (gq sync)",
+      "@@ -1,1 +1,1 @@",
+      "-symlink -> ../skills",
+      "+symlink -> ../.agents/skills",
+      "",
+    ].join("\n"),
+  );
+  assert.equal(await readlink(join(site.root, SKILLS)), "../skills");
+});
+
+test("a directory in place of the agent-skills symlink counts as edited", async () => {
+  const site = await newSite();
+  await rm(join(site.root, SKILLS));
+  await mkdir(join(site.root, SKILLS, "tdd"), { recursive: true });
+  await writeFile(join(site.root, SKILLS, "tdd", "SKILL.md"), "# TDD\n");
+  const before = await snapshot(site.root);
+
+  const result = await site.run(["sync"]);
+
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /^-directory\n\+symlink -> \.\.\/\.agents\/skills$/mu);
+  assert.deepEqual(await snapshot(site.root), before);
+});
+
+test("without a lock, a directory in place of the agent-skills symlink counts as edited", async () => {
+  const site = await createFixtureSite({
+    ops: { schemaVersion: 1, project: "acme", variant: "content" },
+    files: { ".claude/skills/tdd/SKILL.md": "# TDD\n" },
+  });
+  const before = await snapshot(site.root);
+
+  const result = await site.run(["sync"]);
+
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /^\.claude\/skills: edited since gq last wrote it/mu);
+  assert.deepEqual(await snapshot(site.root), before);
+});
+
+test("gq sync recreates a deleted agent-skills symlink, and keeps it on the next sync", async () => {
+  const site = await newSite();
+  await rm(join(site.root, SKILLS));
+
+  const result = await site.run(["sync"]);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout, "gq.ops.json: up to date (schema v1).\n.claude/skills: created.\n");
+  assert.equal(await readlink(join(site.root, SKILLS)), "../.agents/skills");
+  const before = await snapshot(site.root);
+  const again = await site.run(["sync"]);
+  assert.equal(again.stdout, "gq.ops.json: up to date (schema v1).\nManaged files: up to date.\n");
+  assert.deepEqual(await snapshot(site.root), before);
+});
+
+test("gq sync makes a hook that lost its executable bit executable again", async () => {
+  const site = await newSite();
+  const hook = join(site.root, ".vite-hooks/pre-push");
+  await chmod(hook, 0o644);
+
+  const check = await site.run(["sync", "--check"]);
+  assert.equal(check.code, 1);
+  assert.equal(
+    check.stdout,
+    "gq.ops.json: up to date (schema v1).\n.vite-hooks/pre-push: pending, gq sync would update it.\n",
+  );
+  assert.equal((await lstat(hook)).mode & 0o777, 0o644);
+
+  const sync = await site.run(["sync"]);
+  assert.equal(sync.code, 0, sync.stderr);
+  assert.equal(
+    sync.stdout,
+    "gq.ops.json: up to date (schema v1).\n.vite-hooks/pre-push: updated.\n",
+  );
+  assert.equal((await lstat(hook)).mode & 0o777, 0o755);
+  assert.equal(await readSite(site.root, ".vite-hooks/pre-push"), PRE_PUSH);
+});
+
+test("without a lock, a hook that differs only in its executable bit is not an edit", async () => {
+  const site = await createFixtureSite({
+    ops: { schemaVersion: 1, project: "acme", variant: "content" },
+    files: { ".vite-hooks/pre-push": PRE_PUSH },
+  });
+  const hook = join(site.root, ".vite-hooks/pre-push");
+  await chmod(hook, 0o644);
+
+  const result = await site.run(["sync"]);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /^\.vite-hooks\/pre-push: updated\.$/mu);
+  assert.equal((await lstat(hook)).mode & 0o777, 0o755);
 });
 
 test("without a lock, a managed file that differs from the template counts as edited", async () => {

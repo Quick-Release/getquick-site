@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+
+# The same checks `pnpm push` and Cloudflare CI run (gq verify: the content
+# variant's checks plus gq.ops.json `verify.checks`).
+# Skip once with: git push --no-verify
+pnpm verify

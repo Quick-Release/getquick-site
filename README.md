@@ -106,16 +106,26 @@ gq sync --check   # report every pending change, exit 1, write nothing
 [`blueprint/ownership.json`](blueprint/ownership.json), published with the
 package, lists every path the blueprint touches by category: fully
 generated, generated section, managed keys, and create-once. Anything it
-doesn't list is site-owned, and `gq sync` never reads or writes it. Today
-the one managed file is the toolchain pins (`.mise.toml`); `gq.ops.json` is
+doesn't list is site-owned, and `gq sync` never reads or writes it. The
+fully generated files so far are the ones that need no site values,
+extracted from Lombardi: the toolchain pins (`.mise.toml`, `.nvmrc`), the
+Git hooks (`.vite-hooks/pre-commit` formats and lints staged files,
+`pre-push` runs `pnpm verify`), the staged lint/format config
+(`vite.config.ts`), the READMEs of `docs/adr`, `docs/plans`, `docs/research`
+and `docs/agents`, the agent reference docs in `docs/agents`, and the
+`.claude/skills` symlink to `../.agents/skills`. A site's own ADRs, plans
+and research beside those READMEs are site-owned. `gq.ops.json` is
 create-once. Only `--variant content` is generated until phase 4.
 
 `gq.lock.json`, committed at the site root, records the `gq` version, the
-schema version and a hash of each managed file as `gq` last wrote it. A
-managed file whose hash differs from the lock (or that differs from the
-template when the site has no lock yet) is a local edit: `gq sync` prints a
-diff against what it would write and writes nothing, not even a pending
-migration. Revert the edit, or delete the file and `gq sync` regenerates it.
+schema version and a hash of each managed file (a symlink's target) as `gq`
+last wrote it. A managed file whose hash differs from the lock (or that
+differs from the template when the site has no lock yet), a retargeted
+symlink, or a directory where either belongs is a local edit: `gq sync`
+prints a diff against what it would write and writes nothing, not even a
+pending migration. A managed file that lost its executable bit (a hook) is
+not an edit: `gq sync` makes it executable again. Revert the edit, or delete
+the file and `gq sync` regenerates it.
 A lock written by a newer `gq` is refused rather than downgraded. Neither
 command needs network access or secrets.
 

@@ -3,6 +3,26 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## Unreleased
+
+### Added
+
+- The managed files that need no site values, extracted from Lombardi: the
+  Git hooks (`.vite-hooks/pre-commit` and `pre-push`, written executable),
+  the Node version file (`.nvmrc`), the staged lint/format config
+  (`vite.config.ts`), the docs skeleton's READMEs (`docs/adr`, `docs/plans`,
+  `docs/research`, `docs/agents`), the agent reference docs (issue tracker,
+  triage labels, domain) and the agent-skills symlink
+  (`.claude/skills` → `../.agents/skills`). A site's own ADRs, plans and
+  research next to them stay site-owned.
+
+### Changed
+
+- `gq sync` manages symlinks and executable files. A retargeted symlink, or
+  anything else standing in its place, is a local edit, shown as a diff of
+  the targets. A managed file that lost its executable bit is made
+  executable again rather than taken for an edit.
+
 ## 0.11.0 — 2026-10-01
 
 ### Added

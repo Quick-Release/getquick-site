@@ -1,5 +1,33 @@
 {
-  "fullyGenerated": [{ "path": ".mise.toml", "template": "templates/mise.toml" }],
+  "fullyGenerated": [
+    { "path": ".mise.toml", "template": "templates/mise.toml" },
+    { "path": ".nvmrc", "template": "templates/nvmrc" },
+    {
+      "path": ".vite-hooks/pre-commit",
+      "template": "templates/vite-hooks/pre-commit",
+      "executable": true
+    },
+    {
+      "path": ".vite-hooks/pre-push",
+      "template": "templates/vite-hooks/pre-push",
+      "executable": true
+    },
+    { "path": "vite.config.ts", "template": "templates/vite.config.ts" },
+    { "path": "docs/adr/README.md", "template": "templates/docs/adr/README.md" },
+    { "path": "docs/plans/README.md", "template": "templates/docs/plans/README.md" },
+    { "path": "docs/research/README.md", "template": "templates/docs/research/README.md" },
+    { "path": "docs/agents/README.md", "template": "templates/docs/agents/README.md" },
+    { "path": "docs/agents/domain.md", "template": "templates/docs/agents/domain.md" },
+    {
+      "path": "docs/agents/issue-tracker.md",
+      "template": "templates/docs/agents/issue-tracker.md"
+    },
+    {
+      "path": "docs/agents/triage-labels.md",
+      "template": "templates/docs/agents/triage-labels.md"
+    },
+    { "path": ".claude/skills", "symlink": "../.agents/skills" }
+  ],
   "generatedSections": [],
   "managedKeys": [],
   "createOnce": [{ "path": "gq.ops.json" }]
