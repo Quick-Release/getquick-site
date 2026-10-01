@@ -53,6 +53,12 @@ async function writeManifest(root, manifest) {
   await writeFile(join(root, "gq.ops.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
+// A gq new site's manifest with ACME's site values filled in.
+async function fillManifest(root) {
+  const current = JSON.parse(await readSite(root, "gq.ops.json"));
+  await writeManifest(root, { ...current, ...ACME, project: current.project });
+}
+
 test("Lombardi's manifest renders Lombardi's CI Worker, Frontend deploy and release step", async () => {
   const fixture = await createFixtureSite({ ops: LOMBARDI });
 
@@ -117,7 +123,7 @@ test("a gq new site's deploy files hold placeholders until gq.ops.json has the v
   assert.match(wrangler, /^ {4}"CLOUDFLARE_ACCOUNT_ID": "<cloudflare\.accountId>",$/mu);
   assert.match(wrangler, /^ {4}"GITHUB_REPOSITORY": "<github\.repository>",$/mu);
 
-  await writeManifest(site.root, { ...ACME, project: "acme" });
+  await fillManifest(site.root);
   const check = await site.run(["sync", "--check"]);
   assert.equal(check.code, 1);
   assert.equal(
@@ -151,7 +157,7 @@ test("a hand-edited deploy file stops gq sync even when gq.ops.json changed too"
     '"max_instances": 9,',
   );
   await writeFile(join(site.root, path), edited);
-  await writeManifest(site.root, { ...ACME, project: "acme" });
+  await fillManifest(site.root);
   const before = await snapshot(site.root);
 
   const result = await site.run(["sync"]);

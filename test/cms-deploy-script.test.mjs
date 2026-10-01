@@ -231,7 +231,7 @@ test("gq new writes the deploy script and the deploy extension directory", async
 
   const script = await readSite(site.root, "deploy/ploi/admin.sh");
   assert.equal((await lstat(join(site.root, "deploy/ploi/admin.sh"))).mode & 0o777, 0o755);
-  assert.match(script, /^ {2}for plugin in ; do$/mu);
+  assert.match(script, /^ {2}for plugin in getquick-design gq-support .* safe-svg; do$/mu);
   assert.match(script, /^ {4}echo "ACME_DEPLOY_STATUS=success SHA=\$deployed_sha"$/mu);
   assert.match(
     await readSite(site.root, "deploy/ploi/admin.d/README.md"),
@@ -241,10 +241,21 @@ test("gq new writes the deploy script and the deploy extension directory", async
   assert.equal(lock.files["deploy/ploi/admin.sh"], hash(script));
   assert.ok(lock.created.includes("deploy/ploi/admin.d/README.md"));
 
-  // With no plugins listed yet, it deploys and activates none.
-  const result = await deploy(script);
+  // It activates the CMS skeleton's plugins, then its theme extension
+  // activates getquick-theme.
+  const extension = "deploy/ploi/admin.d/10-theme.sh";
+  const result = await deploy(script, {
+    releaseFiles: { [extension]: await readSite(site.root, extension) },
+  });
   assert.equal(result.code, 0, result.output);
-  assert.deepEqual(wpCalls(result.calls, "plugin activate"), []);
+  const { plugins } = JSON.parse(await readSite(site.root, "gq.ops.json")).wordpress;
+  assert.deepEqual(
+    wpCalls(result.calls, "plugin activate").map(([, , , plugin]) => plugin),
+    plugins,
+  );
+  assert.deepEqual(wpCalls(result.calls, "theme activate"), [
+    ["wp", "theme", "activate", "getquick-theme"],
+  ]);
 });
 
 test("listing a plugin in gq.ops.json makes gq sync add it to the deploy script", async () => {

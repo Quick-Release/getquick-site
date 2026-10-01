@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+## Description: Copy the live database into this DDEV project (live → local only; see pnpm db:sync)
+## Usage: db-sync [--yes]
+## Example: "ddev db-sync"
+
+set -euo pipefail
+cd "$DDEV_APPROOT/../.."
+exec pnpm db:sync "$@"

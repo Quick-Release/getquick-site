@@ -100,14 +100,33 @@ export function recordingExec(respond = () => ({})) {
 
 export async function runGq(
   argv,
-  { cwd, env = {}, fetch = recordingFetch(), exec = recordingExec(), lookup, stdin } = {},
+  {
+    cwd,
+    env = {},
+    fetch = recordingFetch(),
+    exec = recordingExec(),
+    lookup,
+    stdin,
+    interactive = false,
+  } = {},
 ) {
   const stdout = captureStream();
   const stderr = captureStream();
-  const code = await run(argv, { cwd, env, fetch, exec, lookup, stdin, stdout, stderr });
+  const code = await run(argv, {
+    cwd,
+    env,
+    fetch,
+    exec,
+    lookup,
+    stdin,
+    stdout,
+    stderr,
+    interactive,
+  });
   return { code, stdout: stdout.text(), stderr: stderr.text(), fetch, exec };
 }
 
+// A terminal's output as far as a prompt needs one: it never resizes.
 function captureStream() {
   const chunks = [];
   return {
@@ -115,6 +134,8 @@ function captureStream() {
       chunks.push(String(chunk));
       return true;
     },
+    on() {},
+    off() {},
     text: () => chunks.join(""),
   };
 }

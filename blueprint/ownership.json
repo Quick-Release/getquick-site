@@ -56,14 +56,251 @@
     { "path": ".gitignore", "template": "templates/gitignore" },
     { "path": "AGENTS.md", "template": "templates/AGENTS.md" }
   ],
-  "managedKeys": [{ "path": "package.json", "template": "templates/package.json" }],
+  "managedKeys": [
+    {
+      "path": "package.json",
+      "template": "templates/package.json",
+      "initial": "templates/package.initial.json"
+    }
+  ],
   "createOnce": [
     { "path": "gq.ops.json" },
     { "path": "CONTEXT.md", "template": "templates/CONTEXT.md" },
     { "path": "README.md", "template": "templates/README.md" },
+    { "path": "VERSION", "template": "templates/VERSION" },
     {
       "path": "deploy/ploi/admin.d/README.md",
       "template": "templates/deploy/ploi/admin.d/README.md"
+    },
+    { "path": "pnpm-workspace.yaml", "template": "templates/pnpm-workspace.yaml" },
+    {
+      "path": "apps/cms/.ddev/commands/host/db-sync",
+      "template": "templates/apps/cms/ddev/commands/host/db-sync",
+      "app": "apps/cms",
+      "executable": true
+    },
+    {
+      "path": "apps/cms/.ddev/config.yaml",
+      "template": "templates/apps/cms/ddev/config.yaml",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/.env.example",
+      "template": "templates/apps/cms/env.example",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/.env.production.example",
+      "template": "templates/apps/cms/env.production.example",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/.gitignore",
+      "template": "templates/apps/cms/gitignore",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/LICENSE.md",
+      "template": "templates/apps/cms/LICENSE.md",
+      "app": "apps/cms"
+    },
+    { "path": "apps/cms/README.md", "template": "templates/apps/cms/README.md", "app": "apps/cms" },
+    {
+      "path": "apps/cms/composer.json",
+      "template": "templates/apps/cms/composer.json",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/config/application.php",
+      "template": "templates/apps/cms/config/application.php",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/config/environments/development.php",
+      "template": "templates/apps/cms/config/environments/development.php",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/config/environments/staging.php",
+      "template": "templates/apps/cms/config/environments/staging.php",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/phpunit.xml.dist",
+      "template": "templates/apps/cms/phpunit.xml.dist",
+      "app": "apps/cms"
+    },
+    { "path": "apps/cms/pint.json", "template": "templates/apps/cms/pint.json", "app": "apps/cms" },
+    {
+      "path": "apps/cms/scripts/.gitkeep",
+      "template": "templates/apps/cms/scripts/gitkeep",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/tests/Feature/ExampleTest.php",
+      "template": "templates/apps/cms/tests/Feature/ExampleTest.php",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/tests/Pest.php",
+      "template": "templates/apps/cms/tests/Pest.php",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/web/app/mu-plugins/bedrock-autoloader.php",
+      "template": "templates/apps/cms/web/app/mu-plugins/bedrock-autoloader.php",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/web/app/mu-plugins/content-api.php",
+      "template": "templates/apps/cms/web/app/mu-plugins/content-api.php",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/web/app/plugins/.gitkeep",
+      "template": "templates/apps/cms/web/app/plugins/gitkeep",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/web/app/themes/.gitkeep",
+      "template": "templates/apps/cms/web/app/themes/gitkeep",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/web/app/uploads/.gitkeep",
+      "template": "templates/apps/cms/web/app/uploads/gitkeep",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/web/index.php",
+      "template": "templates/apps/cms/web/index.php",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/web/wp-config.php",
+      "template": "templates/apps/cms/web/wp-config.php",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/cms/wp-cli.yml",
+      "template": "templates/apps/cms/wp-cli.yml",
+      "app": "apps/cms"
+    },
+    {
+      "path": "apps/frontend/.env.example",
+      "template": "templates/apps/frontend/env.example",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/.gitignore",
+      "template": "templates/apps/frontend/gitignore",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/README.md",
+      "template": "templates/apps/frontend/README.md",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/astro.config.mjs",
+      "template": "templates/apps/frontend/astro.config.mjs",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/package.json",
+      "template": "templates/apps/frontend/package.json",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/public/favicon.svg",
+      "template": "templates/apps/frontend/public/favicon.svg",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/public/robots.txt",
+      "template": "templates/apps/frontend/public/robots.txt",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/env.d.ts",
+      "template": "templates/apps/frontend/src/env.d.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/layouts/Layout.astro",
+      "template": "templates/apps/frontend/src/layouts/Layout.astro",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/lib/wordpress.test.ts",
+      "template": "templates/apps/frontend/src/lib/wordpress.test.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/lib/wordpress.ts",
+      "template": "templates/apps/frontend/src/lib/wordpress.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/lib/wp-block-renderer.test.ts",
+      "template": "templates/apps/frontend/src/lib/wp-block-renderer.test.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/lib/wp-block-renderer.ts",
+      "template": "templates/apps/frontend/src/lib/wp-block-renderer.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/lib/wp-block-styles.test.ts",
+      "template": "templates/apps/frontend/src/lib/wp-block-styles.test.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/lib/wp-block-styles.ts",
+      "template": "templates/apps/frontend/src/lib/wp-block-styles.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/lib/wp-container-layout.test.ts",
+      "template": "templates/apps/frontend/src/lib/wp-container-layout.test.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/lib/wp-container-layout.ts",
+      "template": "templates/apps/frontend/src/lib/wp-container-layout.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/pages/[...slug].astro",
+      "template": "templates/apps/frontend/src/pages/[...slug].astro",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/pages/index.astro",
+      "template": "templates/apps/frontend/src/pages/index.astro",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/styles/global.css",
+      "template": "templates/apps/frontend/src/styles/global.css",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/tsconfig.json",
+      "template": "templates/apps/frontend/tsconfig.json",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/vite.config.ts",
+      "template": "templates/apps/frontend/vite.config.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "deploy/ploi/admin.d/10-theme.sh",
+      "template": "templates/deploy/ploi/admin.d/10-theme.sh",
+      "app": "apps/cms",
+      "executable": true
     }
   ]
 }

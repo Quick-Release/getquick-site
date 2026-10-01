@@ -1,0 +1,44 @@
+---
+import { getSiteChrome } from "../lib/wordpress";
+import "../styles/global.css";
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const { title = "{{Project}}", description = "" } = Astro.props;
+const { menuItems, siteIcon, siteLogo } = await getSiteChrome(Astro.site?.origin);
+const canonical = Astro.site ? new URL(Astro.url.pathname, Astro.site) : Astro.url;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    {description && <meta name="description" content={description} />}
+    <link rel="icon" href={siteIcon?.sourceUrl || "/favicon.svg"} />
+    <link rel="canonical" href={canonical} />
+    <title>{title === "{{Project}}" ? title : `${title} — {{Project}}`}</title>
+  </head>
+  <body>
+    <header class="site-header">
+      <a href="/" class="site-header__home">
+        {siteLogo ? <img src={siteLogo.sourceUrl} alt={siteLogo.altText || "{{Project}}"} /> : "{{Project}}"}
+      </a>
+      {menuItems.length > 0 && (
+        <nav aria-label="Primary">
+          <ul>
+            {menuItems.map((item) => (
+              <li>
+                <a href={item.href} target={item.target ?? undefined}>{item.label}</a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
+    </header>
+    <slot />
+  </body>
+</html>

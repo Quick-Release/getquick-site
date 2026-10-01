@@ -1,0 +1,50 @@
+# {{Project}} CMS
+
+A [Bedrock](https://roots.io/bedrock/) WordPress installation for managing
+{{Project}}'s content. The Frontend reads it through
+[WPGraphQL](https://www.wpgraphql.com/) at `/wp/graphql`; this host serves no
+public WordPress frontend (`web/app/mu-plugins/content-api.php`).
+
+## Stack
+
+- Bedrock, with WordPress exact-pinned (`roots/wordpress`)
+- The GETQUICK plugins and `getquick-theme`, from the private GETQUICK
+  Composer registry
+- [WPGraphQL](https://wp-packages.org/packages/wp-plugin/wp-graphql) and
+  [WPGraphQL Blocks](https://wp-packages.org/packages/wp-plugin/wpgraphql-blocks),
+  S3 Uploads (media on R2), Simple History, Cimo Image Optimizer and Safe SVG,
+  from [WP Packages](https://wp-packages.org/)
+- PHP 8.3+, MariaDB
+
+Composer installs every plugin and theme, so none is committed. A plugin or
+child theme of the site's own goes in `web/app/plugins` or `web/app/themes`,
+unignored in `.gitignore`. Commit `composer.lock` once the first
+`pnpm cms:composer` writes it, so deploys install exactly what you tested.
+
+## Local setup
+
+DDEV is the local runtime. From the repository root:
+
+```sh
+pnpm cms:composer   # install through the GETQUICK registry login in Sigillo
+pnpm cms:dev        # start DDEV and write apps/cms/.env from .env.example
+```
+
+Install WordPress at `https://{{project}}-admin.ddev.site/wp/wp-admin/install.php`.
+The GraphQL endpoint is `https://{{project}}-admin.ddev.site/wp/graphql`.
+`.env.example` holds DDEV's database and local-only salts; never copy it to a
+server.
+
+## Deploys
+
+`gq ploi provision` renders the server's `.env` from `.env.production.example`
+(real database credentials and salts replace its placeholders) and
+`gq ploi release` deploys a release with `deploy/ploi/admin.sh`. That script is
+generated from `gq.ops.json`: it activates `wordpress.plugins`, then runs the
+site's own steps in `deploy/ploi/admin.d` (`10-theme.sh` activates
+`getquick-theme`).
+
+## Checks
+
+`pnpm cms:lint` (Pint) and `pnpm cms:test` (Pest) cover this site's own PHP.
+Registry packages run their own checks in their repositories.

@@ -1,0 +1,15 @@
+name: {{project}}-admin
+type: wordpress
+docroot: web
+php_version: "8.4"
+webserver_type: nginx-fpm
+xdebug_enabled: false
+database:
+  type: mariadb
+  version: "10.11"
+composer_version: "2"
+upload_dirs:
+  - web/app/uploads
+# Bedrock owns web/wp-config.php and reads the database/URL from apps/cms/.env
+# (`pnpm cms:dev` writes DDEV's values there); DDEV must not generate its own.
+disable_settings_management: true

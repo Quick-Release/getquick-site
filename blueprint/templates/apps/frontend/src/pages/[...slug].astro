@@ -1,0 +1,39 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { formatDate, getEntryByUri } from "../lib/wordpress";
+import { blockPresetStyles } from "../lib/wp-block-styles";
+
+const uri = Astro.url.pathname.endsWith("/") ? Astro.url.pathname : `${Astro.url.pathname}/`;
+const entry = await getEntryByUri(uri);
+const { vars, colorRules } = blockPresetStyles(entry?.spacingSizes ?? [], entry?.colors ?? []);
+if (!entry) Astro.response.status = 404;
+const isPost = Boolean(entry?.date);
+const title = entry?.title || "Page not found";
+---
+
+<Layout title={title}>
+  {entry ? (
+    entry.hasVideoHero ? (
+      <>
+        <style is:global set:html={colorRules} />
+        <main class="prose-wp prose-wp--video-hero" style={vars} set:html={entry.content}></main>
+      </>
+    ) : (
+      <main>
+        <h1>{entry.title}</h1>
+        {isPost && <time datetime={entry.date}>{formatDate(entry.date)}</time>}
+        {entry.featuredImage && (
+          <img class="featured-image" src={entry.featuredImage.sourceUrl} alt={entry.featuredImage.altText || ""} />
+        )}
+        <style is:global set:html={colorRules} />
+        <div class="prose-wp" style={vars} set:html={entry.content}></div>
+      </main>
+    )
+  ) : (
+    <main class="empty-state">
+      <h1>Nothing here.</h1>
+      <p>This page doesn't exist in WordPress yet.</p>
+      <a href="/">Back to the front page</a>
+    </main>
+  )}
+</Layout>

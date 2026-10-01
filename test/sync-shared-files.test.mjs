@@ -4,10 +4,11 @@
 // What the site owns in each (content outside the markers, every other
 // package key, a create-once file once written) is never touched.
 import assert from "node:assert/strict";
-import { appendFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, lstat, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
+import { VERSION } from "../src/version.mjs";
 import { createFixtureSite } from "./support/fixture-site.mjs";
 import { hash, newSite, readSite, snapshot } from "./support/new-site.mjs";
 
@@ -260,6 +261,17 @@ const MANAGED_KEYS = [
   "packageManager",
 ];
 
+// What a new site's lock records as created, outside its app skeletons.
+const CREATED_OUTSIDE_APPS = [
+  "CONTEXT.md",
+  "README.md",
+  "VERSION",
+  "deploy/ploi/admin.d/10-theme.sh",
+  "deploy/ploi/admin.d/README.md",
+  "gq.ops.json",
+  "pnpm-workspace.yaml",
+];
+
 async function readPackage(root) {
   return JSON.parse(await readSite(root, "package.json"));
 }
@@ -268,12 +280,28 @@ test("gq new writes package.json with the managed keys, each hashed in the lock"
   const site = await newSite();
 
   const pkg = await readPackage(site.root);
+  // The site's own keys it starts with, then the managed ones.
   assert.deepEqual(pkg, {
     name: "acme",
     version: "0.0.0",
     private: true,
     type: "module",
-    scripts: GQ_SCRIPTS,
+    scripts: {
+      dev: "pnpm frontend:dev",
+      "frontend:dev": "pnpm --filter @acme/frontend dev",
+      build: "pnpm --filter @acme/frontend build",
+      check: "pnpm --filter @acme/frontend check",
+      lint: "pnpm --filter @acme/frontend lint",
+      format: "pnpm --filter @acme/frontend format",
+      test: "pnpm --filter @acme/frontend test",
+      ...GQ_SCRIPTS,
+    },
+    devDependencies: {
+      "@getquick/site": VERSION,
+      sigillo: "0.13.0",
+      vite: "catalog:",
+      "vite-plus": "catalog:",
+    },
     engines: { node: ">=22.12.0" },
     packageManager: "pnpm@12.6.0",
   });
@@ -302,8 +330,8 @@ test("an edit to a managed package key stops gq sync with a diff, and nothing is
         "package.json (managed keys scripts.verify): edited since gq last wrote it (gq.lock.json); gq sync would write:",
         "--- package.json",
         "+++ package.json (gq sync)",
-        "@@ -6,7 +6,7 @@",
-        '   "scripts": {',
+        "@@ -13,7 +13,7 @@",
+        '     "test": "pnpm --filter @acme/frontend test",',
         '     "setup": "gq setup",',
         '     "doctor": "gq doctor",',
         '-    "verify": "gq verify --skip php",',
@@ -325,9 +353,14 @@ test("an edit to a managed package key stops gq sync with a diff, and nothing is
 
 test("a template change to an unedited package key is applied, leaving every other key as it was", async () => {
   const site = await newSite();
-  // As an older gq wrote it: an older pnpm pin, no ploi:log script yet, and
-  // two scripts the blueprint has since retired, one the site has edited.
+  // As an older gq wrote it (before gq new started a site with its own keys):
+  // an older pnpm pin, no ploi:log script yet, and two scripts the blueprint
+  // has since retired, one the site has edited.
   const pkg = await readPackage(site.root);
+  delete pkg.devDependencies;
+  pkg.scripts = Object.fromEntries(
+    Object.entries(pkg.scripts).filter(([name]) => Object.hasOwn(GQ_SCRIPTS, name)),
+  );
   delete pkg.scripts["ploi:log"];
   pkg.scripts = {
     dev: "pnpm --filter @acme/frontend dev",
@@ -443,12 +476,14 @@ test("gq new writes the create-once glossary and README, recorded in the lock as
   const readme = await readSite(site.root, "README.md");
   assert.match(readme, /^# acme$/mu);
   assert.doesNotMatch(readme, /\{\{/u);
-  assert.deepEqual((await readLock(site.root)).created, [
-    "CONTEXT.md",
-    "README.md",
-    "deploy/ploi/admin.d/README.md",
-    "gq.ops.json",
-  ]);
+  const created = (await readLock(site.root)).created;
+  assert.deepEqual(
+    created.filter((path) => !path.startsWith("apps/")),
+    CREATED_OUTSIDE_APPS,
+  );
+  for (const path of ["apps/cms/composer.json", "apps/frontend/package.json"]) {
+    assert.ok(created.includes(path), path);
+  }
 });
 
 test("gq sync leaves an edited or deleted create-once file alone", async () => {
@@ -513,7 +548,8 @@ test("gq sync --recreate refuses a path the blueprint doesn't create once", asyn
     assert.equal(
       result.stderr,
       `gq: gq sync can't recreate ${path}: --recreate takes a file the blueprint creates once ` +
-        "(CONTEXT.md, README.md, deploy/ploi/admin.d/README.md).\n",
+        "(CONTEXT.md, README.md, VERSION, deploy/ploi/admin.d/README.md, pnpm-workspace.yaml, " +
+        "or a file of the apps/cms or apps/frontend skeleton).\n",
     );
   }
   const manifestOnly = await site.run(["sync", "--manifest", "--recreate", "README.md"]);
@@ -537,11 +573,64 @@ test("gq sync creates a missing create-once file the lock doesn't record", async
   assert.match(result.stdout, /^CONTEXT\.md: created\.$/mu);
   assert.doesNotMatch(result.stdout, /^README\.md/mu);
   assert.equal(await readSite(site.root, "README.md"), "# Acme\n");
-  assert.deepEqual((await readLock(site.root)).created, [
-    "CONTEXT.md",
-    "README.md",
-    "deploy/ploi/admin.d/README.md",
-    "gq.ops.json",
-  ]);
+  // Without a CMS or Frontend, the site gets their skeletons too.
+  const created = (await readLock(site.root)).created;
+  assert.deepEqual(
+    created.filter((path) => !path.startsWith("apps/")),
+    CREATED_OUTSIDE_APPS,
+  );
+  assert.ok(created.includes("apps/cms/composer.json"));
+  assert.ok(created.includes("apps/frontend/package.json"));
   assert.match(await readSite(site.root, "CONTEXT.md"), /^# acme$/mu);
+});
+
+test("an app the site already has gains no skeleton files, now or on a later sync", async () => {
+  const site = await createFixtureSite({
+    ops: { schemaVersion: 1, project: "acme", variant: "content" },
+    files: {
+      "apps/cms/composer.json": '{ "name": "acme/cms" }\n',
+      "apps/frontend/package.json": '{ "name": "@acme/frontend" }\n',
+    },
+  });
+
+  const result = await site.run(["sync"]);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /^apps\//mu);
+  assert.doesNotMatch(result.stdout, /^deploy\/ploi\/admin\.d\/10-theme\.sh/mu);
+  const files = Object.keys(await snapshot(site.root));
+  assert.deepEqual(
+    files.filter((path) => path.startsWith("apps/")),
+    ["apps/cms/composer.json", "apps/frontend/package.json"],
+  );
+  assert.ok(!files.includes("deploy/ploi/admin.d/10-theme.sh"));
+  const created = (await readLock(site.root)).created;
+  assert.deepEqual(
+    created.filter((path) => path.startsWith("apps/")),
+    ["apps/cms/composer.json", "apps/frontend/package.json"],
+  );
+  assert.equal(await readSite(site.root, "apps/cms/composer.json"), '{ "name": "acme/cms" }\n');
+  const check = await site.run(["sync", "--check"]);
+  assert.equal(check.code, 0, check.stdout);
+});
+
+test("a deleted skeleton file stays deleted until --recreate, which restores its mode", async () => {
+  const site = await newSite();
+  const extension = "deploy/ploi/admin.d/10-theme.sh";
+  const written = await readSite(site.root, extension);
+  await rm(join(site.root, extension));
+  await rm(join(site.root, "apps/frontend/src/pages/index.astro"));
+
+  const sync = await site.run(["sync"]);
+  assert.equal(sync.code, 0, sync.stderr);
+  assert.equal(sync.stdout, "gq.ops.json: up to date (schema v1).\nManaged files: up to date.\n");
+  const files = Object.keys(await snapshot(site.root));
+  assert.ok(!files.includes(extension));
+  assert.ok(!files.includes("apps/frontend/src/pages/index.astro"));
+
+  const recreate = await site.run(["sync", "--recreate", extension]);
+  assert.equal(recreate.code, 0, recreate.stderr);
+  assert.match(recreate.stdout, /^deploy\/ploi\/admin\.d\/10-theme\.sh: created\.$/mu);
+  assert.equal(await readSite(site.root, extension), written);
+  assert.equal((await lstat(join(site.root, extension))).mode & 0o777, 0o755);
 });

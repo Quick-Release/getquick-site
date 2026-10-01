@@ -27,6 +27,11 @@ _Avoid_: generated file (when a section or key set is meant)
 A file the blueprint never overwrites, such as a site's ADRs, research,
 plugins, theme and apps.
 
+**App skeleton**:
+The files a new site's CMS or Frontend starts from, written once and only
+while that app doesn't exist yet; site-owned from then on.
+_Avoid_: app template (a template is the blueprint's source for a file)
+
 **Variant**:
 The kind of site the blueprint supports: content or commerce. Lombardi is a
 content site; Ekis is a commerce site.

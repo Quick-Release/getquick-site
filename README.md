@@ -98,11 +98,24 @@ Provider IDs are safe to commit; tokens are not. `gq` reads `PLOI_API_TOKEN`,
 the installed `gq` ([ADR 0002](docs/adr/0002-generate-sites-from-a-versioned-manifest.md)):
 
 ```sh
-gq new acme --project acme --variant content   # gq.ops.json, managed files, gq.lock.json, git init
+gq new acme --project acme --variant content   # a complete content site, gq.lock.json, git init
 gq sync           # migrate gq.ops.json, regenerate managed files, update gq.lock.json
 gq sync --check   # report every pending change, exit 1, write nothing
 gq sync --recreate README.md   # write a create-once file again
 ```
+
+`gq new` writes everything a content site needs to pass `pnpm verify`
+without network access or secrets: a v1 `gq.ops.json` whose
+`wordpress.plugins` are the CMS skeleton's, the managed files below, and
+the create-once scaffolding, the CMS and Frontend skeletons among it. In a
+terminal it asks for the directory, project or variant its arguments lack;
+elsewhere it names them and stops. The project must be lowercase letters,
+digits and hyphens starting with a letter, since it names the site's
+packages, Workers and DDEV project. `--variant commerce` is refused until
+phase 4, and so is a target directory that isn't empty. It then prints the
+provisioning sequence (fill in `gq.ops.json`, `gq sync`, `ploi provision`,
+`cloudflare deploy-token`/`releases`/`media`/`ci`, `github setup`,
+`ci deploy`) and runs none of it.
 
 [`blueprint/ownership.json`](blueprint/ownership.json), published with the
 package, lists every path the blueprint touches by category: fully
@@ -148,7 +161,7 @@ fails the deploy with its exit code (maintenance mode is still turned off).
 Extensions run only once WordPress is installed, and not on a Composer-only
 deploy. `deploy/ploi/admin.d` is the site's, created once with a README.
 
-A site shares three more kinds of file with the blueprint:
+A site shares four more kinds of file with the blueprint:
 
 - **Generated sections.** `AGENTS.md` holds the blueprint's base guidance
   and `.gitignore` its ignore rules, each between a `BEGIN gq` line and an
@@ -168,12 +181,29 @@ A site shares three more kinds of file with the blueprint:
   retires is removed, unless the site changed it, in which case it is the
   site's.
 - **Create-once files.** `gq.ops.json`, the glossary (`CONTEXT.md`),
-  `README.md` and the deploy extension directory's README
-  (`deploy/ploi/admin.d/README.md`) are written when absent, and recorded
-  in the lock as created once they exist, whoever wrote them. From then on
-  they are the site's: `gq sync` never rewrites them, nor restores one the
-  site deleted, unless `gq sync --recreate <path>` asks for it (repeat it
-  for several files; `gq.ops.json` can't be recreated).
+  `README.md`, `VERSION`, the workspace config (`pnpm-workspace.yaml`), the
+  deploy extension directory's README (`deploy/ploi/admin.d/README.md`) and
+  the app skeletons are written when absent, and recorded in the lock as
+  created once they exist, whoever wrote them. From then on they are the
+  site's: `gq sync` never rewrites them, nor restores one the site deleted,
+  unless `gq sync --recreate <path>` asks for it (repeat it for several
+  files; `gq.ops.json` can't be recreated). A missing root `package.json`
+  is created holding the site's own starting keys (Frontend scripts,
+  `@getquick/site` pinned to the installed version, Sigillo, Vite+) before
+  the managed ones.
+- **App skeletons.** The CMS (`apps/cms`: Bedrock with the GETQUICK
+  plugins and `getquick-theme` from the registry, the content API
+  mu-plugin, DDEV config, Pint and Pest, and its env templates) and the
+  Frontend (`apps/frontend`: Astro on WPGraphQL with its own copy of
+  Lombardi's block renderer, its tests and its env template) are extracted
+  from Lombardi without Lombardi's plugins, child theme and pages. The env
+  templates hold public configuration and placeholders only
+  (`gq ploi provision` renders the server's `.env` from
+  `.env.production.example`).
+  `deploy/ploi/admin.d/10-theme.sh`, which activates `getquick-theme`,
+  belongs to the CMS skeleton. A skeleton's files are written only with
+  their app: while its directory is missing, so `gq sync` never adds files
+  to an app the site already has.
 
 `gq.lock.json`, committed at the site root, records the `gq` version, the
 schema version, a hash of each managed file (a symlink's target), section

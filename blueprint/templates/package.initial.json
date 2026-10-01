@@ -1,0 +1,21 @@
+{
+  "name": "{{project}}",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm frontend:dev",
+    "frontend:dev": "pnpm --filter @{{project}}/frontend dev",
+    "build": "pnpm --filter @{{project}}/frontend build",
+    "check": "pnpm --filter @{{project}}/frontend check",
+    "lint": "pnpm --filter @{{project}}/frontend lint",
+    "format": "pnpm --filter @{{project}}/frontend format",
+    "test": "pnpm --filter @{{project}}/frontend test"
+  },
+  "devDependencies": {
+    "@getquick/site": "{{gqVersion}}",
+    "sigillo": "{{sigilloVersion}}",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

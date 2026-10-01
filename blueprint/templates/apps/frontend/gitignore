@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+!.env.example
+!.env.production
+!.env.ci
+.env.keys
+.env.*.keys
+node_modules/
+.alchemy/
+dist/
+.astro/
+.vite/
+
+worker-startup.cpuprofile

@@ -10,13 +10,16 @@
 // keys are the keys of a site's JSON file that gq sets, each hashed apart.
 // A create-once file is written only when absent and never written again
 // (the lock records it as created once it exists, whoever wrote it), unless
-// gq sync --recreate asks for it.
+// gq sync --recreate asks for it. One of an app skeleton (its `app`, the
+// app's directory) is written only with its app: while that directory is
+// missing, so an app the site already has never gains skeleton files.
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import ownership from "../../blueprint/ownership.json" with { type: "json" };
 import packageTemplate from "../../blueprint/templates/package.json" with { type: "json" };
+import packageJson from "../../package.json" with { type: "json" };
 import { deployStatusMarker } from "../ploi/provision.mjs";
 import { VERSION } from "../version.mjs";
 
@@ -47,11 +50,13 @@ async function renderTemplate(template, manifest) {
 // their key paths, `Project` (project in PascalCase, for names and prose),
 // `deployStatusMarker` (the CMS deploy's status line, which gq ploi release
 // waits for), `wordpress.plugins` space-separated (none until the manifest
-// lists some, so the deploy script stays valid shell) and the blueprint's
+// lists some, so the deploy script stays valid shell), the blueprint's
 // own pins in the root package.json, `packageManager`
-// and `nodeEngine` (engines.node), so a copy of one can't drift. Only fully
-// generated and create-once templates are rendered; a section's or managed
-// keys' template is used as it ships.
+// and `nodeEngine` (engines.node), so a copy of one can't drift, and the
+// versions a new site installs: `gqVersion` (this @getquick/site) and
+// `sigilloVersion` (the Sigillo CLI it is tested with). Only fully
+// generated and create-once templates, and managed keys' initial file, are
+// rendered; a section's or managed keys' template is used as it ships.
 function templateValues(manifest) {
   const { project } = manifest;
   return {
@@ -63,6 +68,8 @@ function templateValues(manifest) {
       .join(""),
     packageManager: packageTemplate.packageManager,
     nodeEngine: packageTemplate.engines.node,
+    gqVersion: VERSION,
+    sigilloVersion: packageJson.devDependencies.sigillo,
     deployStatusMarker: deployStatusMarker(project),
     "wordpress.plugins": (manifest.wordpress?.plugins ?? []).join(" "),
     "ci.worker": manifest.ci?.worker,
@@ -70,6 +77,8 @@ function templateValues(manifest) {
     "artifacts.namespace": manifest.artifacts?.namespace,
     "artifacts.repo": manifest.artifacts?.repo,
     "cloudflare.accountId": manifest.cloudflare?.accountId,
+    "domains.admin": manifest.domains?.admin,
+    "domains.frontend": manifest.domains?.frontend,
     "github.repository": manifest.github?.repository,
   };
 }
@@ -82,23 +91,29 @@ function templateValues(manifest) {
 // existing file, and the lock to record (`lock.status` `unchanged`, `create`
 // or `update`). `recreate` lists the create-once files to write again.
 export async function planManagedFiles(root, manifest, { recreate = [] } = {}) {
-  const recreatable = ownership.createOnce.flatMap(({ path, template }) =>
-    template ? [path] : [],
-  );
+  const recreatable = ownership.createOnce.filter(({ template }) => template !== undefined);
+  const apps = new Set(ownership.createOnce.flatMap(({ app }) => app ?? []));
   for (const path of recreate) {
-    if (!recreatable.includes(path)) {
+    if (!recreatable.some((entry) => entry.path === path)) {
+      const rootFiles = recreatable.flatMap((entry) => (entry.app ? [] : [entry.path]));
       throw new Error(
         `gq sync can't recreate ${path}: --recreate takes a file the blueprint creates once ` +
-          `(${recreatable.join(", ")}).`,
+          `(${rootFiles.join(", ")}, or a file of the ${[...apps].join(" or ")} skeleton).`,
       );
     }
   }
   const lock = await readLock(root);
+  const missingApps = new Set();
+  for (const app of apps) {
+    if ((await readEntry(join(root, app))) === undefined) missingApps.add(app);
+  }
   const planned = await Promise.all([
     ...ownership.fullyGenerated.map((entry) => planGeneratedFile(root, lock, manifest, entry)),
     ...ownership.generatedSections.map((entry) => planSection(root, lock, entry)),
     ...ownership.managedKeys.map((entry) => planKeys(root, lock, manifest, entry)),
-    ...ownership.createOnce.map((entry) => planCreateOnce(root, lock, manifest, entry, recreate)),
+    ...ownership.createOnce.map((entry) =>
+      planCreateOnce(root, lock, manifest, entry, { recreate, missingApps }),
+    ),
   ]);
   planned.sort((a, b) => (a.path < b.path ? -1 : 1));
   // A create-once file without a template (gq.ops.json) is only recorded.
@@ -219,16 +234,16 @@ async function planSection(root, lock, { path, template }) {
 // replaced where it stands, a missing key is added after its siblings in the
 // file's indentation, and a key the template no longer has is removed if
 // the site hasn't changed it since gq wrote it (else it is the site's now).
-// A missing file is created holding the managed keys after the ones every
-// package starts with.
-async function planKeys(root, lock, manifest, { path, template }) {
+// A missing file is created holding the managed keys after the site's own
+// that it starts with: the rendered `initial` template's.
+async function planKeys(root, lock, manifest, { path, template, initial }) {
   const managed = leafKeys(JSON.parse(await readTemplate(template)));
   const record = {
     keys: { [path]: Object.fromEntries(managed.map(({ key, value }) => [key, hashValue(value)])) },
   };
   const current = await readEntry(join(root, path));
   if (current === undefined) {
-    const object = { name: manifest.project, version: "0.0.0", private: true, type: "module" };
+    const object = JSON.parse(await renderTemplate(initial, manifest));
     for (const { segments, value } of managed) setNested(object, segments, value);
     const content = Buffer.from(`${JSON.stringify(object, null, 2)}\n`);
     return { path, status: "create", content, write: { bytes: content }, record };
@@ -447,16 +462,24 @@ function hashValue(value) {
 
 // A create-once file: written from its rendered template when it is missing
 // and the lock doesn't record it as created (or when `recreate` names it),
-// and never otherwise.
-async function planCreateOnce(root, lock, manifest, { path, template }, recreate) {
+// and never otherwise. A skeleton's file is written only while its `app` is
+// in `missingApps`, unless `recreate` names it.
+async function planCreateOnce(
+  root,
+  lock,
+  manifest,
+  { path, template, app, executable = false },
+  { recreate, missingApps },
+) {
   const current = await readEntry(join(root, path));
   const recorded = current !== undefined || lock?.created.includes(path) === true;
   if (template === undefined) return { path, record: { created: recorded ? [path] : [] } };
 
   const content = Buffer.from(await renderTemplate(template, manifest));
+  const creatable = app === undefined || missingApps.has(app);
   let status = "unchanged";
   if (current === undefined) {
-    if (!recorded || recreate.includes(path)) status = "create";
+    if ((!recorded && creatable) || recreate.includes(path)) status = "create";
   } else if (recreate.includes(path) && !current.bytes?.equals(content)) {
     if (current.bytes === undefined) {
       throw new Error(`${path} isn't a regular file, so gq sync --recreate won't replace it.`);
@@ -468,8 +491,8 @@ async function planCreateOnce(root, lock, manifest, { path, template }, recreate
     status,
     current: current?.bytes,
     content,
-    write: { replace: true, bytes: content },
-    record: { created: [path] },
+    write: { replace: true, bytes: content, executable },
+    record: { created: status === "unchanged" && !recorded ? [] : [path] },
   };
 }
 

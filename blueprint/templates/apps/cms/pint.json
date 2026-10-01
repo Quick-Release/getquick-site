@@ -1,0 +1,10 @@
+{
+  "preset": "per",
+  "exclude": [
+    "web/wp",
+    "web/wp-config-ddev.php",
+    "web/app/mu-plugins/bedrock-disallow-indexing",
+    "web/app/plugins",
+    "web/app/themes/twentytwentyfive"
+  ]
+}

@@ -67,9 +67,63 @@ const MANAGED_PATHS = [
   "vite.config.ts",
 ];
 // The files gq manages a part of (a section, or keys), and the ones it
-// creates once besides gq.ops.json.
+// creates once besides gq.ops.json: the root scaffolding, and the CMS and
+// Frontend skeletons.
 const SHARED_PATHS = [".gitignore", "AGENTS.md", "package.json"];
-const CREATED_PATHS = ["CONTEXT.md", "README.md", "deploy/ploi/admin.d/README.md"];
+const CREATED_PATHS = [
+  "CONTEXT.md",
+  "README.md",
+  "VERSION",
+  "apps/cms/.ddev/commands/host/db-sync",
+  "apps/cms/.ddev/config.yaml",
+  "apps/cms/.env.example",
+  "apps/cms/.env.production.example",
+  "apps/cms/.gitignore",
+  "apps/cms/LICENSE.md",
+  "apps/cms/README.md",
+  "apps/cms/composer.json",
+  "apps/cms/config/application.php",
+  "apps/cms/config/environments/development.php",
+  "apps/cms/config/environments/staging.php",
+  "apps/cms/phpunit.xml.dist",
+  "apps/cms/pint.json",
+  "apps/cms/scripts/.gitkeep",
+  "apps/cms/tests/Feature/ExampleTest.php",
+  "apps/cms/tests/Pest.php",
+  "apps/cms/web/app/mu-plugins/bedrock-autoloader.php",
+  "apps/cms/web/app/mu-plugins/content-api.php",
+  "apps/cms/web/app/plugins/.gitkeep",
+  "apps/cms/web/app/themes/.gitkeep",
+  "apps/cms/web/app/uploads/.gitkeep",
+  "apps/cms/web/index.php",
+  "apps/cms/web/wp-config.php",
+  "apps/cms/wp-cli.yml",
+  "apps/frontend/.env.example",
+  "apps/frontend/.gitignore",
+  "apps/frontend/README.md",
+  "apps/frontend/astro.config.mjs",
+  "apps/frontend/package.json",
+  "apps/frontend/public/favicon.svg",
+  "apps/frontend/public/robots.txt",
+  "apps/frontend/src/env.d.ts",
+  "apps/frontend/src/layouts/Layout.astro",
+  "apps/frontend/src/lib/wordpress.test.ts",
+  "apps/frontend/src/lib/wordpress.ts",
+  "apps/frontend/src/lib/wp-block-renderer.test.ts",
+  "apps/frontend/src/lib/wp-block-renderer.ts",
+  "apps/frontend/src/lib/wp-block-styles.test.ts",
+  "apps/frontend/src/lib/wp-block-styles.ts",
+  "apps/frontend/src/lib/wp-container-layout.test.ts",
+  "apps/frontend/src/lib/wp-container-layout.ts",
+  "apps/frontend/src/pages/[...slug].astro",
+  "apps/frontend/src/pages/index.astro",
+  "apps/frontend/src/styles/global.css",
+  "apps/frontend/tsconfig.json",
+  "apps/frontend/vite.config.ts",
+  "deploy/ploi/admin.d/10-theme.sh",
+  "deploy/ploi/admin.d/README.md",
+  "pnpm-workspace.yaml",
+];
 
 test("gq new writes a v1 manifest, the managed files and the lock, then runs git init", async () => {
   const parent = await temporaryDirectory();
@@ -85,6 +139,18 @@ test("gq new writes a v1 manifest, the managed files and the lock, then runs git
     schemaVersion: 1,
     project: "acme",
     variant: "content",
+    wordpress: {
+      plugins: [
+        "getquick-design",
+        "gq-support",
+        "wp-graphql",
+        "wpgraphql-blocks",
+        "s3-uploads",
+        "simple-history",
+        "cimo-image-optimizer",
+        "safe-svg",
+      ],
+    },
   });
   assert.equal(await readSite(root, ".mise.toml"), MISE);
   assert.equal(await readSite(root, ".nvmrc"), "24.21.0\n");
@@ -115,7 +181,7 @@ test("gq new writes a v1 manifest, the managed files and the lock, then runs git
   }
   assert.match(lock.files[SKILLS], /^sha256:[0-9a-f]{64}$/u);
   assert.equal(
-    result.stdout,
+    result.stdout.slice(0, result.stdout.indexOf("\nNext,")),
     [
       `Created acme (content) in ${root}:`,
       "  gq.ops.json",
@@ -453,7 +519,15 @@ test("gq new refuses a commerce site and a directory that isn't empty", async ()
     ],
     [["new", ".", "--project", "acme", "--variant", "content"], `gq: ${parent} is not empty.\n`],
     [
-      ["new", "acme", "--project", "acme"],
+      ["new", "notes.md", "--project", "acme", "--variant", "content"],
+      `gq: ${join(parent, "notes.md")} is not a directory.\n`,
+    ],
+    [
+      ["new", "acme", "--project", "acme", "--variant", "shop"],
+      "gq: --variant must be content or commerce: shop\n",
+    ],
+    [
+      ["new", "acme", "--project", "acme", "--variant", "content", "--yes"],
       "gq: Usage: gq new <dir> --project <name> --variant content\n",
     ],
   ]) {

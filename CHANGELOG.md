@@ -52,9 +52,30 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   manifest renders Lombardi's script without its own steps (its theme, the
   plugin retirements and the clean-up of its git-based deploys), which move
   to an extension.
+- `gq new` writes a complete content site: create-once CMS and Frontend
+  skeletons extracted from Lombardi without its plugins, child theme and
+  pages (the CMS installs the GETQUICK plugins and `getquick-theme` from the
+  registry, a `10-theme.sh` deploy extension activates the theme, and the
+  Frontend renders GETQUICK blocks over WPGraphQL with its own copy of
+  Lombardi's block renderer), env templates holding public configuration and
+  placeholders only, the workspace config (`pnpm-workspace.yaml`),
+  `VERSION`, and a root `package.json` started with the site's own scripts
+  and dependencies (`@getquick/site` pinned to the installed version). Its
+  `gq.ops.json` lists the skeleton's plugins in `wordpress.plugins`. A
+  generated site passes `pnpm verify`.
+- `gq new` asks for the directory, project or variant it is missing when
+  run in a terminal, and names them otherwise. It then prints the
+  provisioning sequence (`ploi provision`, `cloudflare …`, `github setup`,
+  `ci deploy`), running none of it.
+- An app skeleton's create-once files are written only with their app:
+  `gq sync` creates them while the app's directory (`apps/cms`,
+  `apps/frontend`) is missing, never into an app the site already has.
 
 ### Changed
 
+- `gq new` refuses a project name that isn't lowercase letters, digits and
+  hyphens starting with a letter, since it names packages, Workers and the
+  DDEV project, and an unknown `--variant`.
 - `wordpress.plugins` in `gq.ops.json` takes plugin slugs only (letters,
   digits, `-`, `_` and `.`, starting with a letter or digit), since the
   deploy script activates each one.

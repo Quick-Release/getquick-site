@@ -66,7 +66,9 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
   // And gq sync, which reads a manifest older than the other commands accept.
   if (isSyncCommand(argv)) return runSyncCommand(argv.slice(1), { cwd, io });
   // And gq new, which creates the manifest instead of reading one.
-  if (isNewCommand(argv)) return runNewCommand(argv.slice(1), { cwd, env, exec, io });
+  if (isNewCommand(argv)) {
+    return runNewCommand(argv.slice(1), { cwd, env, exec, stdin, io, interactive });
+  }
 
   let effectiveArguments = argv;
   if (effectiveArguments.length === 0 && interactive) {
