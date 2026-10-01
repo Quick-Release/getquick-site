@@ -53,6 +53,7 @@ Cloudflare Workers.
 
 **Staging domain**:
 `bnq.pt`, the domain GETQUICK owns for temporarily hosting sites'
-development and staging copies. A site's CMS staging host is always
-`<project>-cms.bnq.pt`, where `<project>` is the client's name (the site's
-`project` in `gq.ops.json`).
+development and staging copies. A site's staging hosts are always
+`<project>-cms.bnq.pt` for the CMS and `<project>-fe.bnq.pt` for the
+Frontend, where `<project>` is the client's name (the site's `project` in
+`gq.ops.json`).
