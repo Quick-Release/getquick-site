@@ -81,14 +81,18 @@ export function json(payload, status = 200) {
 }
 
 // Records every child process; `respond` may override { code, stdout, stderr }.
+// `options` keeps each call's full options (stdio, streams) beside `calls`.
 export function recordingExec(respond = () => ({})) {
   const calls = [];
+  const recordedOptions = [];
   async function exec(command, args, options = {}) {
     const call = { command, args, cwd: options.cwd, env: options.env, input: options.input };
     calls.push(call);
+    recordedOptions.push(options);
     return { code: 0, stdout: "", stderr: "", ...(await respond(call)) };
   }
   exec.calls = calls;
+  exec.options = recordedOptions;
   return exec;
 }
 

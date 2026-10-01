@@ -29,3 +29,15 @@ test("exec forwards output to the given streams as well as returning it", async 
   assert.deepEqual(seen, { out: "out", err: "err" });
   assert.deepEqual(result, { code: 0, stdout: "out", stderr: "err" });
 });
+
+test("exec with inherited stdio returns the exit code without capturing output", async () => {
+  const result = await exec(process.execPath, ["-e", "process.exit(4)"], { stdio: "inherit" });
+  assert.deepEqual(result, { code: 4, stdout: "", stderr: "" });
+});
+
+test("exec with inherited stdio reports a child killed by a signal as 128 + its number", async () => {
+  const result = await exec(process.execPath, ["-e", "process.kill(process.pid, 'SIGTERM')"], {
+    stdio: "inherit",
+  });
+  assert.equal(result.code, 143);
+});

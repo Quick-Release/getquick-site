@@ -30,8 +30,7 @@ export async function run(
   };
 
   try {
-    await runCli(argv, { cwd, env, fetch, exec, io, interactive });
-    return 0;
+    return (await runCli(argv, { cwd, env, fetch, exec, io, interactive })) ?? 0;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (interactive) log.error(message);

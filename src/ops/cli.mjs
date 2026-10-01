@@ -17,6 +17,7 @@ import {
   RELEASE_USAGE,
   runReleaseCommand,
 } from "../release/release.mjs";
+import { isSigilloCommand, runSigilloCommand, SIGILLO_USAGE } from "../sigillo/sigillo.mjs";
 import { VERSION } from "../version.mjs";
 
 const COMMAND_OPTIONS = new Map([
@@ -32,7 +33,13 @@ const COMMAND_OPTIONS = new Map([
   ["cloudflare dns list", ["account", "zone", "name", "type"]],
 ]);
 
+// Resolves to an exit code when the command has its own (a wrapped command's),
+// otherwise to undefined for success.
 export async function runCli(argv, { cwd, env, fetch, exec, io, interactive }) {
+  // The Sigillo wrapper parses its own arguments: everything after `--` belongs
+  // to the wrapped command, not to gq.
+  if (isSigilloCommand(argv)) return runSigilloCommand(argv.slice(1), { cwd, env, exec });
+
   let effectiveArguments = argv;
   if (effectiveArguments.length === 0 && interactive) {
     const selected = await chooseCommand(PLOI_ENDPOINTS);
@@ -352,6 +359,9 @@ Cloudflare:
   gq cloudflare zones list [--account <id>]
   gq cloudflare zone show [--zone <id>]
   gq cloudflare dns list [--zone <id>] [--name <hostname>] [--type <type>]
+
+Secrets (Sigillo):
+${SIGILLO_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Release:
 ${RELEASE_USAGE.map((usage) => `  ${usage}`).join("\n")}

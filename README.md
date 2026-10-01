@@ -10,8 +10,8 @@ site (phase 1 of the GETQUICK blueprint rollout); release and version sync,
 Ploi provisioning and releases, database sync and backups, Cloudflare CI and
 media, Sigillo secret injection, and the `setup`/`doctor`/`verify` runners
 move in over the coming releases. Today it carries `gq-ops`'s commands (Ploi,
-Cloudflare, and GitHub Actions sync) and `shop-devtools`'s release and version
-commands.
+Cloudflare, and GitHub Actions sync), `shop-devtools`'s release and version
+commands, and the Sigillo wrapper.
 
 ## Install
 
@@ -89,6 +89,11 @@ gq cloudflare dns list [--zone <id>] [--name <hostname>] [--type <type>]
 
 gq github actions sync [--dry-run] [--yes]
 
+gq sigillo run <environment> -- <command> [arguments...]
+gq sigillo login
+gq sigillo setup <environment>
+gq sigillo secrets <environment> [arguments...]
+
 gq version check [version]
 gq version sync [version]
 gq release prepare [version]
@@ -105,6 +110,47 @@ such as `sites.log-site`. Every non-GET operation needs `--yes` (or a prompt in
 a terminal); `--dry-run` prints the resolved request without sending it.
 Cloudflare commands are read-only. `github actions sync` pipes each value to
 `gh` on stdin and never prints it.
+
+## Sigillo secrets
+
+`gq sigillo` runs the [Sigillo](https://www.npmjs.com/package/sigillo) CLI
+against the project and environments in the site's `gq.ops.json`, so the
+project ID lives in one place:
+
+```json
+{
+  "sigillo": {
+    "apiUrl": "https://secrets.example.com",
+    "projectId": "01ABCDEFGHJKMNPQRSTVWXYZ00",
+    "environments": { "local": "dev", "staging": "staging" }
+  }
+}
+```
+
+`environments` maps the names scripts use to Sigillo environments.
+`gq sigillo run <environment> -- <command>` runs one command with that
+environment's secrets: `sigillo run` starts `gq` again, which drops Sigillo's
+own bootstrap variables (`SIGILLO_TOKEN`, `SIGILLO_API_URL`,
+`SIGILLO_PROJECT`, `SIGILLO_ENVIRONMENT`) before running the command in the
+site root. The inner step runs only when `SIGILLO=1` and the wrapper's guard
+variable, `GQ_SIGILLO_REENTRY=1`, are both set. Everything after `--` is
+passed on as-is, never through a shell.
+
+Secrets are only ever injected per command: the wrapper never passes
+`--mount`, and `setup`/`secrets` refuse `download` and `--mount`. `login` is
+per checkout (`--scope .`). The site's installed `sigillo` bin is used, or
+before the first install, the version the site pins in `devDependencies`, via
+`npx`. Each of these commands hands the terminal to the child and exits with
+its code.
+
+```json
+{
+  "scripts": {
+    "deploy": "gq sigillo run staging -- node ./scripts/deploy.mjs",
+    "sigillo:login": "gq sigillo login"
+  }
+}
+```
 
 ## Release and version commands
 
@@ -153,14 +199,15 @@ const code = await run(["ploi", "site", "show", "--json"], {
   cwd, // where discovery starts
   env, // replaces process.env
   fetch, // every provider request
-  exec, // every child process: (command, args, { cwd, env, input, stdout, stderr }) => { code, stdout, stderr }
+  exec, // every child process: (command, args, { cwd, env, input, stdio, stdout, stderr }) => { code, stdout, stderr }
   stdout, // anything with write()
   stderr,
 });
 ```
 
 No command reads `process.env` or `process.cwd()`; `bin/gq.mjs` is the only
-place that passes the real ones.
+place that passes the real ones. `exec` is asked for `stdio: "inherit"` when a
+child needs the terminal (`gq sigillo`); it then captures nothing.
 
 ## Development
 

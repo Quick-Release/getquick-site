@@ -3,6 +3,30 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## 0.3.0 — 2026-10-01
+
+### Added
+
+- The Sigillo wrapper (Lombardi's `scripts/sigillo/sigillo-run.mjs` and
+  `sigillo-cli.mjs`) as `gq sigillo`: `run <environment> -- <command>`,
+  `login`, `setup <environment>` and `secrets <environment> [arguments...]`.
+  The project, API URL and environments come from `gq.ops.json` `sigillo`; a
+  missing or placeholder value is a configuration error. The argv-safe form,
+  per-command injection, bootstrap scrubbing and re-entry guard carry over;
+  the guard variable is now the site-neutral `GQ_SIGILLO_REENTRY`. `setup`
+  and `secrets` refuse `download` and `--mount` (also as `--mount=<path>`).
+- `exec` accepts `stdio: "inherit"` for children that need the terminal; a
+  child killed by a signal then exits 128 + the signal number.
+
+### Changed
+
+- `run()` resolves to a wrapped command's own exit code.
+
+### Not carried over
+
+- The wrapper's Windows `sigillo.cmd`/`npx.cmd` lookup, which could not run:
+  `exec` spawns without a shell, and Node refuses `.cmd` files then.
+
 ## 0.2.0 — 2026-10-01
 
 ### Added
