@@ -48,3 +48,11 @@ Ploi.
 **Frontend**:
 A site's public website, rendered from the CMS's content and deployed to
 Cloudflare Workers.
+
+### Hosting
+
+**Staging domain**:
+`bnq.pt`, the domain GETQUICK owns for temporarily hosting sites'
+development and staging copies. A site's CMS staging host is always
+`<project>-cms.bnq.pt`, where `<project>` is the client's name (the site's
+`project` in `gq.ops.json`).
