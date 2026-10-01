@@ -6,7 +6,8 @@ CLI, configured by each site's own `gq.ops.json`.
 
 It replaces [`gq-ops`](https://github.com/Quick-Release/gq-ops) and the
 vendored `shop-devtools`. The package is being extracted from the Lombardi
-site (phase 1 of the GETQUICK blueprint rollout); release and version sync,
+site (phase 1 of the [GETQUICK blueprint rollout](docs/plans/getquick-blueprint-rollout.md),
+whose design is [ADR 0001](docs/adr/0001-the-getquick-site-blueprint.md)); release and version sync,
 Ploi provisioning and releases, database sync and backups, Cloudflare CI and
 media, Sigillo secret injection, and the `setup`/`doctor`/`verify` runners
 move in over the coming releases. Today it carries `gq-ops`'s commands (Ploi,
