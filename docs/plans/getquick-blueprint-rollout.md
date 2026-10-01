@@ -48,7 +48,7 @@ core remains deliberately pinned.
 
 Common runtime behavior belongs in shared packages so one fix can reach all
 sites; changing scaffolding alone cannot update copied frontend implementations.
-The Admin and Frontend must remain compatible through their deployment
+The CMS and Frontend must remain compatible through their deployment
 sequence, including an interrupted upgrade and supported code rollback.
 Breaking or destructive changes require an explicit migration/approval policy
 rather than routine auto-promotion. Separate tooling-only updates from runtime
@@ -74,7 +74,7 @@ release once; individual sites do not require repetitive manual release steps.
    Today's `v*` tag triggers production deploy; a successful `main` build or
    merged PR is not evidence of deployment.
 4. Deploy representative pilot sites for each affected variant, including
-   content and commerce when both are in scope. Verify the actual Admin and
+   content and commerce when both are in scope. Verify the actual CMS and
    Frontend versions, GraphQL/content behavior, and frontend smoke checks;
    an HTTP 200 or matching archive SHA alone is insufficient.
 5. Observe the pilots, then promote in bounded batches. Health regressions
@@ -99,10 +99,10 @@ write-back paths, and rerun checks after it changes a PR.
 
 ## Deployment and data recovery guarantees
 
-Before fleet rollout, replace the current in-place Admin update with atomic
+Before fleet rollout, replace the current in-place CMS update with atomic
 code activation and retained previous releases. Build each site's release
 artifact once where practical and promote the same verified artifact; do not
-resolve new dependency versions during promotion. A successful Admin deploy
+resolve new dependency versions during promotion. A successful CMS deploy
 followed by a failed Frontend deploy is an explicit partial-release state, not
 success.
 
@@ -116,7 +116,7 @@ test the code rollback and data recovery procedures separately.
 
 ## Fleet inventory, isolation, and capacity
 
-- Keep desired and observed versions separately for Admin and Frontend,
+- Keep desired and observed versions separately for CMS and Frontend,
   alongside health, rollout state, migration state, backup freshness, and
   update holds. Record auditable release actions. The fleet controller must
   not be needed to serve ordinary website traffic.
@@ -140,7 +140,7 @@ test the code rollback and data recovery procedures separately.
 | 4. Adopt       | Bring Ekis onto the blueprint and test representative content/commerce upgrades, including compatible platform versions and recovery.                                             | Both variants pass upgrade, runtime-health, and code/data-recovery checks; define rollout policy values, generation execution, and capacity placement.                                   |
 | 5. Fleet proof | Exercise one approved platform release through pilot sites and bounded batches in disposable staging.                                                                             | A deliberately failed health gate prevents promotion; interruption resumes without duplicate migrations; one site can be recovered without reverting healthy sites or losing newer data. |
 
-**Phase 1 passed** on 2026-10-01: Lombardi v0.9.0, on `@getquick/site` 0.8.0 with no vendored shared tooling, deployed the Admin and Frontend from Cloudflare CI ([#18](https://github.com/Quick-Release/lombardi/issues/18)).
+**Phase 1 passed** on 2026-10-01: Lombardi v0.9.0, on `@getquick/site` 0.8.0 with no vendored shared tooling, deployed the CMS and Frontend from Cloudflare CI ([#18](https://github.com/Quick-Release/lombardi/issues/18)).
 
 **Phase 2** is specified in [#1](https://github.com/Quick-Release/getquick-site/issues/1);
 its design decisions are [ADR 0002](../adr/0002-generate-sites-from-a-versioned-manifest.md).

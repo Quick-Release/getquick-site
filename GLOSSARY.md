@@ -9,7 +9,7 @@ it ([ADR 0001](docs/adr/0001-the-getquick-site-blueprint.md)).
 ### Blueprint and fleet
 
 **Site**:
-One GETQUICK client website: its own repository, Admin, Frontend, and data.
+One GETQUICK client website: its own repository, CMS, Frontend, and data.
 Lombardi and Ekis are sites.
 _Avoid_: project (in prose; `project` is the manifest key naming a site)
 
@@ -41,10 +41,10 @@ Every site kept up to date through platform releases.
 
 ### Parts of a site
 
-**Admin**:
-A site's Bedrock WordPress CMS and WPGraphQL API, deployed to Ploi.
-_Avoid_: CMS (except in paths such as `apps/cms`)
+**CMS**:
+A site's Bedrock WordPress editorial backend and WPGraphQL API, deployed to
+Ploi.
 
 **Frontend**:
-A site's public website, rendered from the Admin's content and deployed to
+A site's public website, rendered from the CMS's content and deployed to
 Cloudflare Workers.

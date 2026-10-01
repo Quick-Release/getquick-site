@@ -9,7 +9,7 @@ Phase 2 of the [rollout plan](../plans/getquick-blueprint-rollout.md) builds
 `gq new` and `gq sync` ([spec #1](https://github.com/Quick-Release/getquick-site/issues/1)).
 Before it, everything around `@getquick/site` was copied per site: the hooks,
 toolchain pins, docs skeleton, `AGENTS.md` base, CI Worker config, frontend
-deploy scripts and Admin deploy script existed only as Lombardi's files.
+deploy scripts and CMS deploy script existed only as Lombardi's files.
 `gq.ops.json` had no schema or version: `gq` only checked that it was an
 object with a `project`, every command read its own keys ad hoc, and
 Lombardi's and Ekis's files had different shapes (Ekis still carried the
@@ -49,7 +49,7 @@ file from a template update.
     lint/format config, the docs skeleton's READMEs and agent reference
     docs, the agent-skills symlink, the Cloudflare CI Worker config, the
     frontend deploy configuration and script, the CI release step, and the
-    Admin deploy script);
+    CMS deploy script);
   - **generated section**: begin/end markers in a text file, with site
     content outside them (the `AGENTS.md` base, the ignore file);
   - **managed keys**: key-level ownership in the root `package.json` (the
@@ -57,8 +57,8 @@ file from a template update.
     scripts that wrap `gq`);
   - **create-once**: written only when absent and never restored after the
     site deletes it, unless `gq sync --recreate <path>` asks for it
-    (`gq.ops.json`, the glossary and README, the Admin deploy extension
-    directory, the env templates, the workspace config, and the Admin and
+    (`gq.ops.json`, the glossary and README, the CMS deploy extension
+    directory, the env templates, the workspace config, and the CMS and
     Frontend app skeletons).
 
   Anything not listed is site-owned and never touched.
@@ -68,7 +68,7 @@ file from a template update.
   section, and which create-once files have been created. A managed file or
   section whose current hash differs from the lock is a local edit: `gq sync`
   stops, prints a diff against what it would write, and writes nothing.
-- **Declarative plugins, site-owned deploy extensions.** The Admin deploy
+- **Declarative plugins, site-owned deploy extensions.** The CMS deploy
   script is fully generated. Its activation step comes from
   `wordpress.plugins`, so adding a plugin can no longer miss a hand-written
   activation loop. After activation it runs the site's deploy extensions (a
