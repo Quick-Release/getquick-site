@@ -220,9 +220,9 @@ function link(override) {
   if (!existsSync(override.compose) || readFileSync(override.compose, "utf8") !== compose) {
     writeFileSync(override.compose, compose);
   }
-  // Lombardi's own copy of this module writes the same hooks until its DDEV
-  // startup moves into gq; both must agree, or each run rewrites the other's.
-  const hooks = `# Generated local-only hooks; not shipped to CI or staging.\nhooks:\n  pre-start:\n    - exec-host: node ../../scripts/cms-local-design.mjs\n  post-start:\n    - exec-host: node ../../scripts/cms-local-design.mjs refresh\n`;
+  // DDEV runs exec-host hooks in apps/cms; the site's own gq is the
+  // @getquick/site its root package.json pins.
+  const hooks = `# Generated local-only hooks; not shipped to CI or staging.\nhooks:\n  pre-start:\n    - exec-host: ../../node_modules/.bin/gq cms design\n  post-start:\n    - exec-host: ../../node_modules/.bin/gq cms design refresh\n`;
   if (!existsSync(override.hooks) || readFileSync(override.hooks, "utf8") !== hooks) {
     writeFileSync(override.hooks, hooks);
   }

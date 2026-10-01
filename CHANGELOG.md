@@ -3,6 +3,28 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## 0.7.0 — 2026-10-01
+
+### Added
+
+- Lombardi's local CMS commands as `gq cms start [--foreground]`, `status`,
+  `stop` and `describe` (`scripts/ddev.mjs`, with
+  `scripts/lib/ddev-background.mjs` and `cms-dev-links.mjs`): background DDEV
+  startup by a detached `gq` worker whose phase and log stay in
+  `apps/cms/.local-plugins/`, foreground waiting, and `apps/cms/.env` wiring.
+  The startup panel's title comes from `gq.ops.json` `project`.
+- `gq cms composer install|update|reinstall|test|lint|lint:fix`
+  (`scripts/cms-composer.mjs`), and `gq cms design [refresh]`
+  (`scripts/cms-local-design.mjs`), which the Design override's DDEV hooks run.
+- `exec` takes `timeout`, and `background: { log }` for a detached child that
+  it doesn't wait for (resolving with its `pid`).
+
+### Changed
+
+- The local Design override's generated DDEV hooks run
+  `../../node_modules/.bin/gq cms design [refresh]` instead of Lombardi's
+  `scripts/cms-local-design.mjs`; the next `gq cms start` rewrites them.
+
 ## 0.6.0 — 2026-10-01
 
 ### Added

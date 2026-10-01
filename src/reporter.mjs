@@ -12,6 +12,7 @@ export function createReporter(io, interactive) {
       intro: (title) => clack.intro(title, { output }),
       outro: (message) => clack.outro(message, { output }),
       note: (body, title) => clack.note(body, title, { output }),
+      step: (message) => clack.log.step(message, { output }),
       info: (message) => clack.log.info(message, { output }),
       success: (message) => clack.log.success(message, { output }),
       warn: (message) => clack.log.warn(message, { output }),
@@ -38,6 +39,7 @@ export function createReporter(io, interactive) {
       io.out(`${title}:`);
       for (const line of body.split("\n")) io.out(`  ${line}`);
     },
+    step: io.out,
     info: io.out,
     success: io.out,
     warn: (message) => io.err(`warning: ${message}`),

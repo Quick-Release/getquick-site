@@ -97,23 +97,33 @@ export function installProblem({ composerAuth, hasComposer }, os = platform()) {
   return null;
 }
 
-// Installs exactly what composer.lock pins with the host Composer: the
-// GETQUICK plugins come from the private registry, whose login (COMPOSER_AUTH)
-// is in run()'s env and doesn't reach DDEV's container. A local Design
-// override is unlinked for Composer and relinked (with its autoload rebuilt)
-// afterwards, also when Composer fails.
-export async function composerInstall(cmsRoot, { exec, env, stdout, stderr }) {
+// Installs exactly what composer.lock pins with the host Composer (db sync).
+export function composerInstall(cmsRoot, dependencies) {
+  return composerDependencyChange(cmsRoot, ["install", "--no-interaction"], dependencies);
+}
+
+// Runs a Composer command that changes dependencies (install, update,
+// reinstall) with the host Composer: the GETQUICK plugins come from the
+// private registry, whose login (COMPOSER_AUTH) is in run()'s env and doesn't
+// reach DDEV's container. A local Design override is unlinked for Composer
+// and relinked (with its autoload rebuilt) afterwards, also when Composer
+// fails. A failure throws with Composer's exit code as `exitCode`. `stdio`,
+// `stdout` and `stderr` go to exec as they are.
+export async function composerDependencyChange(
+  cmsRoot,
+  args,
+  { exec, env, stdio, stdout, stderr },
+) {
   const problem = installProblem({
     composerAuth: env.COMPOSER_AUTH,
     hasComposer: await commandExists(exec, "composer", env),
   });
   if (problem) throw new Error(problem);
-  const options = { cwd: cmsRoot, env, stdout, stderr };
+  const options = { cwd: cmsRoot, env, stdio, stdout, stderr };
   let autoload;
   const result = await withDesignRegistryInstall(
     cmsRoot,
-    (override) =>
-      runDesignCommand(exec, "composer", ["install", "--no-interaction"], override, options),
+    (override) => runDesignCommand(exec, "composer", args, override, options),
     {
       env,
       // Still under the filesystem lock, including when Composer failed.
@@ -130,6 +140,10 @@ export async function composerInstall(cmsRoot, { exec, env, stdout, stderr }) {
     },
   );
   for (const command of [result, autoload].filter(Boolean)) {
-    if (command.code !== 0) throw new Error(`Composer failed (exit ${command.code}).`);
+    if (command.code !== 0) {
+      const error = new Error(`Composer failed (exit ${command.code}).`);
+      error.exitCode = command.code;
+      throw error;
+    }
   }
 }

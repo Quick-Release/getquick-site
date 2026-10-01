@@ -62,7 +62,7 @@ test("startup links the checkout, preserves the release, and generates local DDE
   assert.match(compose, /read_only: true/u);
   assert.match(
     readFileSync(join(f.cms, ".ddev/config.getquick-design.local.yaml"), "utf8"),
-    /pre-start:[\s\S]*exec-host: node .*cms-local-design.mjs[\s\S]*post-start:[\s\S]*exec-host: node .*cms-local-design.mjs refresh/u,
+    /pre-start:[\s\S]*exec-host: \.\.\/\.\.\/node_modules\/\.bin\/gq cms design\n[\s\S]*post-start:[\s\S]*exec-host: \.\.\/\.\.\/node_modules\/\.bin\/gq cms design refresh\n/u,
   );
   assert.equal(syncLocalDesign(f.cms, local), true);
   assert.equal(readFileSync(join(f.source, "getquick-design.php"), "utf8"), "local edits");

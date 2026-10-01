@@ -18,6 +18,7 @@ import {
   runReleaseCommand,
 } from "../release/release.mjs";
 import { isSigilloCommand, runSigilloCommand, SIGILLO_USAGE } from "../sigillo/sigillo.mjs";
+import { CMS_USAGE, isCmsCommand, runCmsCommand } from "../cms/commands.mjs";
 import {
   isPloiWorkflow,
   ploiWorkflowOptions,
@@ -53,6 +54,8 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
   // The Sigillo wrapper parses its own arguments: everything after `--` belongs
   // to the wrapped command, not to gq.
   if (isSigilloCommand(argv)) return runSigilloCommand(argv.slice(1), { cwd, env, exec });
+  // So do the local CMS commands, whose extra arguments go to DDEV or Composer.
+  if (isCmsCommand(argv)) return runCmsCommand(argv.slice(1), { cwd, env, exec, io, interactive });
 
   let effectiveArguments = argv;
   if (effectiveArguments.length === 0 && interactive) {
@@ -436,6 +439,9 @@ ${CLOUDFLARE_WORKFLOW_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Cloudflare CI:
 ${CI_USAGE.map((usage) => `  ${usage}`).join("\n")}
+
+Local CMS (DDEV):
+${CMS_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Database (live → local only):
 ${DB_USAGE.map((usage) => `  ${usage}`).join("\n")}
