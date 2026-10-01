@@ -73,6 +73,10 @@ Provider IDs are safe to commit; tokens are not. `gq` reads `PLOI_API_TOKEN`,
 gq --version
 gq context show [--json]
 
+gq setup [--no-ddev]
+gq doctor
+gq verify [--ci]
+
 gq ploi servers list
 gq ploi server show [--server <id>]
 gq ploi sites list [--server <id>]
@@ -292,6 +296,33 @@ import`, `search-replace`, `wp user`, `mysql`, …).
   terminal and needs `--yes` elsewhere. It relaunches itself with mkcert's
   public CA (`NODE_EXTRA_CA_CERTS`) so its last check can reach the local
   site over HTTPS.
+
+## Workspace: setup, doctor and verify
+
+The runners are shared; what they check is the site's.
+
+- `setup` installs the workspace (`pnpm install --frozen-lockfile`), creates
+  `apps/frontend/.env` and `apps/cms/.env` from their `.env.example` when
+  missing, then starts DDEV and installs Composer through the site's
+  `cms:dev:raw --foreground` and `cms:composer` scripts. `--no-ddev` stops
+  after the `.env` files; without DDEV installed it stops there with a warning.
+- `verify` runs the release config's `checks` (the list `release push` runs)
+  in order, in the site root, on the terminal, stopping at the first failure
+  with its exit code. A check is a command or `{ cmd, args, cwd, env,
+requires }`; `requires` lists what it needs, `php` (Composer and
+  `apps/cms/vendor`) or `ddev` (the project running), and defaults to `php`
+  for a `composer` check. Locally a check whose requirement is missing is
+  skipped and reported; `--ci` runs every check.
+- `doctor` reports the running `@getquick/site` against the site's pin, Node
+  against `package.json` `engines.node` and the `.mise.toml` (or `.nvmrc`)
+  pin, pnpm against `packageManager`, git, the files each app must have
+  (release config `doctor.requiredFiles`, `{ "<app path>": ["<file>", …] }`),
+  installed dependencies, a leftover Artifacts push URL (with
+  `gq.ops.json` `artifacts`), the apps' `.env` files, Sigillo's project and
+  login (with `sigillo`) and the DDEV project named in
+  `apps/cms/.ddev/config.yaml`. A missing tool, required file or
+  `node_modules`, or a Node below the minimum fails it (exit 1); drift from a
+  pin only warns.
 
 ## Local CMS (DDEV)
 

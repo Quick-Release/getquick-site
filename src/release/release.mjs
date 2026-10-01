@@ -80,7 +80,9 @@ export async function runReleaseCommand({ parsed, context, env, exec, io }) {
   }
 }
 
-async function loadReleaseConfig(root) {
+// The site's release config with its defaults; `gq verify` and `gq doctor`
+// read their site input (`checks`, `doctor`) from it too.
+export async function loadReleaseConfig(root) {
   const path = join(root, RELEASE_CONFIG_FILENAME);
   try {
     await access(path);
@@ -107,6 +109,7 @@ async function loadReleaseConfig(root) {
     releasePaths: [],
     checks: [],
     deploys: [],
+    doctor: {},
     ...config,
   };
 }

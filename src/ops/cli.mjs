@@ -33,6 +33,11 @@ import {
   runCloudflareWorkflow,
 } from "../cloudflare/commands.mjs";
 import { CI_USAGE, ciCommandOptions, isCiCommand, runCiCommand } from "../ci/commands.mjs";
+import {
+  isWorkspaceCommand,
+  runWorkspaceCommand,
+  WORKSPACE_USAGE,
+} from "../workspace/commands.mjs";
 import { VERSION } from "../version.mjs";
 
 const COMMAND_OPTIONS = new Map([
@@ -56,6 +61,8 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
   if (isSigilloCommand(argv)) return runSigilloCommand(argv.slice(1), { cwd, env, exec });
   // So do the local CMS commands, whose extra arguments go to DDEV or Composer.
   if (isCmsCommand(argv)) return runCmsCommand(argv.slice(1), { cwd, env, exec, io, interactive });
+  // And the workspace runners (setup, doctor, verify), with their own flags.
+  if (isWorkspaceCommand(argv)) return runWorkspaceCommand(argv, { cwd, env, exec, io });
 
   let effectiveArguments = argv;
   if (effectiveArguments.length === 0 && interactive) {
@@ -417,6 +424,7 @@ Usage:
 
 Project:
   gq context show
+${WORKSPACE_USAGE.map((usage) => `  ${usage}`).join("\n")}
   gq github actions sync [--dry-run] [--yes]
 
 Ploi:

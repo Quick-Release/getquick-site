@@ -3,6 +3,29 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## 0.8.0 — 2026-10-01
+
+### Added
+
+- Lombardi's workspace runners as `gq setup [--no-ddev]`, `gq doctor` and
+  `gq verify [--ci]` (`scripts/setup.mjs`, `doctor.mjs` and `verify.mjs`).
+  The site still supplies what they check: `verify` runs the release config's
+  `checks`, and `doctor` reads the required app files from its new
+  `doctor.requiredFiles`, the Node minimum from `engines.node`, the toolchain
+  pins from `packageManager` and `.mise.toml`/`.nvmrc`, and the DDEV project
+  from `apps/cms/.ddev/config.yaml`.
+- A check can declare `requires: ["php" | "ddev"]`; locally `verify` skips
+  (and reports) a check whose requirement is missing. Without it, a
+  `composer` check needs PHP, as before.
+- `doctor` reports the running `@getquick/site` version, warning when it
+  differs from the site's pin, and the Node pin from `.mise.toml`/`.nvmrc`.
+
+### Changed
+
+- `setup`'s next steps name `pnpm deploy:frontend` (not the missing
+  `deploy:fe`).
+- `verify`'s summary counts the checks it skipped.
+
 ## 0.7.0 — 2026-10-01
 
 ### Added

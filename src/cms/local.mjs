@@ -23,6 +23,12 @@ export async function commandExists(exec, command, env) {
   return result.code === 0;
 }
 
+// Whether the site can run its PHP checks here: Composer installed and the
+// CMS's Composer dependencies in apps/cms/vendor.
+export async function phpToolchainAvailable(exec, root, env) {
+  return existsSync(join(root, CMS_PATH, "vendor")) && (await commandExists(exec, "composer", env));
+}
+
 // The DDEV project's status ("running", "paused", …), or null when DDEV can't
 // describe it — e.g. it has never been started on this machine.
 export async function ddevStatus(exec, cmsRoot, env) {
