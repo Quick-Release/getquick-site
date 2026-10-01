@@ -3,6 +3,35 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## 0.4.0 — 2026-10-01
+
+### Added
+
+- Lombardi's Ploi workflows as `gq ploi provision [--dry-run | --yes]`
+  (`scripts/ploi-provision.mjs`), `gq ploi release [--ref <ref>]
+[--git-dir <dir>]` (`scripts/ploi-release.mjs`) and `gq ploi media
+[--dry-run]` (`scripts/cloudflare-media.mjs --ploi-env`), with their
+  server-scoped Ploi client, R2 client and `.env` editing. Site values come
+  from `gq.ops.json` `ploi`, `domains`, `releases`, `media` and `cloudflare`;
+  a missing key is a configuration error naming it. `release` still syncs
+  Ploi's stored deploy script from the release commit before every deploy and
+  hands `COMPOSER_AUTH` over as the `composer_auth` deploy variable, failing
+  before any upload when it is missing.
+- `run()` takes `lookup` (node:dns/promises' signature) for the DNS check
+  behind `ploi provision`'s certificate step; `bin/gq.mjs` passes the real
+  one.
+- `ploiReleaseShippedPaths`, the paths a release archive ships, for a site's
+  test of its deploy script.
+
+### Changed
+
+- The deploy status line `ploi release` waits for is named after
+  `gq.ops.json` `project`: `<PROJECT>_DEPLOY_STATUS` (upper-cased, other
+  characters as `_`), so Lombardi's `LOMBARDI_DEPLOY_STATUS` is unchanged.
+- Outside a terminal the workflows print plain progress lines instead of
+  Clack's spinners; the plan and results are the same.
+- Hints name `gq` commands rather than Lombardi's `pnpm` scripts.
+
 ## 0.3.0 — 2026-10-01
 
 ### Added

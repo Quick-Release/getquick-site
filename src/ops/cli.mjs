@@ -18,6 +18,12 @@ import {
   runReleaseCommand,
 } from "../release/release.mjs";
 import { isSigilloCommand, runSigilloCommand, SIGILLO_USAGE } from "../sigillo/sigillo.mjs";
+import {
+  isPloiWorkflow,
+  ploiWorkflowOptions,
+  PLOI_WORKFLOW_USAGE,
+  runPloiWorkflow,
+} from "../ploi/commands.mjs";
 import { VERSION } from "../version.mjs";
 
 const COMMAND_OPTIONS = new Map([
@@ -35,7 +41,7 @@ const COMMAND_OPTIONS = new Map([
 
 // Resolves to an exit code when the command has its own (a wrapped command's),
 // otherwise to undefined for success.
-export async function runCli(argv, { cwd, env, fetch, exec, io, interactive }) {
+export async function runCli(argv, { cwd, env, fetch, exec, lookup, io, interactive }) {
   // The Sigillo wrapper parses its own arguments: everything after `--` belongs
   // to the wrapped command, not to gq.
   if (isSigilloCommand(argv)) return runSigilloCommand(argv.slice(1), { cwd, env, exec });
@@ -72,6 +78,19 @@ export async function runCli(argv, { cwd, env, fetch, exec, io, interactive }) {
   if (isReleaseCommand(parsed.command)) {
     await runReleaseCommand({ parsed, context, env, exec, io });
     return;
+  }
+
+  if (isPloiWorkflow(parsed.command)) {
+    return runPloiWorkflow(parsed.command, {
+      context,
+      parsed,
+      env,
+      fetch,
+      exec,
+      lookup,
+      io,
+      interactive,
+    });
   }
 
   if (provider === "context" && resource === "show") {
@@ -207,6 +226,8 @@ function parseArguments(argv) {
     "--page",
     "--per-page",
     "--max-pages",
+    "--ref",
+    "--git-dir",
   ]);
   const repeatedValueOptions = new Set(["--path", "--query"]);
   const booleanOptions = new Set(["--all", "--dry-run", "--yes", "--no-deploy"]);
@@ -250,7 +271,8 @@ function validateCommand(parsed) {
     ? releaseCommandOptions(parsed)
     : {
         command: parsed.command.join(" "),
-        allowedOptions: COMMAND_OPTIONS.get(parsed.command.join(" ")),
+        allowedOptions:
+          COMMAND_OPTIONS.get(parsed.command.join(" ")) ?? ploiWorkflowOptions(parsed.command),
       };
   if (!allowedOptions) throw new Error(`Unknown command: ${command}. Run gq --help.`);
 
@@ -353,6 +375,7 @@ Ploi:
   gq ploi api describe <operation-id>
   gq ploi api <operation-id> [--path <name=value>] [--query <name=value>]
       [--data <json> | --data-file <file>] [--all] [--dry-run | --yes]
+${PLOI_WORKFLOW_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Cloudflare:
   gq cloudflare accounts list

@@ -1,6 +1,6 @@
 {
   "name": "@getquick/site",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Shared tooling for GETQUICK sites: the gq CLI",
   "license": "MIT",
   "type": "module",
@@ -28,7 +28,8 @@
     "release:publish": "node scripts/publish.mjs"
   },
   "dependencies": {
-    "@clack/prompts": "^1.8.1"
+    "@clack/prompts": "^1.8.1",
+    "aws4fetch": "1.0.20"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

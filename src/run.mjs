@@ -2,7 +2,8 @@ import { log } from "@clack/prompts";
 import { runCli } from "./ops/cli.mjs";
 
 // The whole CLI behind one in-process call: every provider request goes
-// through `fetch`, every child process through `exec`, and every value a
+// through `fetch`, every child process through `exec`, every DNS lookup
+// through `lookup` (node:dns/promises' signature), and every value a
 // command needs from its surroundings comes from `cwd` and `env`; no command
 // reads the process's own environment or directory. bin/gq.mjs is the only
 // caller that wires in the real ones. Resolves to the process exit code.
@@ -13,6 +14,7 @@ export async function run(
     env = {},
     fetch = unavailable("fetch"),
     exec = unavailable("exec"),
+    lookup = unavailable("lookup"),
     stdout,
     stderr,
     interactive = false,
@@ -30,7 +32,7 @@ export async function run(
   };
 
   try {
-    return (await runCli(argv, { cwd, env, fetch, exec, io, interactive })) ?? 0;
+    return (await runCli(argv, { cwd, env, fetch, exec, lookup, io, interactive })) ?? 0;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (interactive) log.error(message);

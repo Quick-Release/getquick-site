@@ -11,7 +11,8 @@ Ploi provisioning and releases, database sync and backups, Cloudflare CI and
 media, Sigillo secret injection, and the `setup`/`doctor`/`verify` runners
 move in over the coming releases. Today it carries `gq-ops`'s commands (Ploi,
 Cloudflare, and GitHub Actions sync), `shop-devtools`'s release and version
-commands, and the Sigillo wrapper.
+commands, the Sigillo wrapper, and Ploi provisioning, releases and media
+settings.
 
 ## Install
 
@@ -81,6 +82,9 @@ gq ploi api describe <operation-id>
 gq ploi api <operation-id> [--path name=value] [--query name=value]
     [--page <n>] [--per-page <n>] [--data <json> | --data-file <file>]
     [--all] [--max-pages <n>] [--dry-run | --yes]
+gq ploi provision [--dry-run | --yes]
+gq ploi release [--ref <ref>] [--git-dir <dir>]
+gq ploi media [--dry-run]
 
 gq cloudflare accounts list
 gq cloudflare zones list [--account <id>]
@@ -188,6 +192,56 @@ export default {
   `checks`, commits `releasePaths`, tags, pushes the branch and the tag, and
   runs `deploys`. Command output streams through as it runs.
 
+## Ploi provisioning and releases
+
+These run through `gq sigillo run <environment> --`, which injects
+`PLOI_API_TOKEN` and the other secrets they read. Site values come from
+`gq.ops.json`:
+
+```json
+{
+  "project": "example-site",
+  "domains": { "admin": "admin.example.com", "frontend": "www.example.com" },
+  "ploi": {
+    "serverId": "12345",
+    "siteId": "67890",
+    "systemUser": "example",
+    "projectRoot": "/",
+    "webDirectory": "/apps/cms/web",
+    "database": "example_staging",
+    "envTemplate": "apps/cms/.env.production.example",
+    "deployScript": "deploy/ploi/admin.sh"
+  },
+  "releases": { "bucket": "example-releases", "prefix": "admin/" },
+  "media": { "bucket": "example-media", "domain": "media.example.com" },
+  "cloudflare": { "accountId": "0123456789abcdef0123456789abcdef" }
+}
+```
+
+- `ploi provision` inspects Ploi and plans, idempotently, the system user,
+  the site, custom deployments (no git; releases come from R2), the database
+  and the site `.env` (rendered from `ploi.envTemplate`), the deploy script
+  and the Let's Encrypt certificate. `--dry-run` only reports the plan and
+  the drift; applying asks first in a terminal and needs `--yes` elsewhere.
+  It records a newly found site ID in `gq.ops.json`.
+- `ploi release` packs the release commit (`--ref`, else the `v*` tag at
+  `HEAD`, else `HEAD`) with `git archive`: `apps/cms` and `deploy/ploi` plus a
+  `RELEASE` manifest. It uploads the archive to the `releases` bucket on R2
+  (`RELEASES_R2_*`, else `R2_*` credentials), syncs Ploi's stored deploy
+  script from `ploi.deployScript` as of that commit, and deploys with the
+  deploy variables `archive_url` (a 30-minute presigned URL) and
+  `composer_auth` (`COMPOSER_AUTH`, required). It fails unless the deploy log
+  reports `<PROJECT>_DEPLOY_STATUS=success SHA=<the release commit>`.
+  `--git-dir` reads the commit from another repository.
+- `ploi media` sets the `S3_UPLOADS_*` lines of the Ploi site's `.env` for
+  the `media` bucket from `S3_UPLOADS_KEY`/`S3_UPLOADS_SECRET`, leaving every
+  other line as it is.
+
+The site's deploy script is the other half of the contract: it reads
+`$ARCHIVE_URL` and `$COMPOSER_AUTH`, deploys the paths in
+`ploiReleaseShippedPaths` (exported for a site test), and prints the status
+line.
+
 ## Programmatic use
 
 The CLI is a thin shell over `run()`, which resolves to an exit code:
@@ -200,6 +254,7 @@ const code = await run(["ploi", "site", "show", "--json"], {
   env, // replaces process.env
   fetch, // every provider request
   exec, // every child process: (command, args, { cwd, env, input, stdio, stdout, stderr }) => { code, stdout, stderr }
+  lookup, // every DNS lookup, as node:dns/promises' lookup
   stdout, // anything with write()
   stderr,
 });
