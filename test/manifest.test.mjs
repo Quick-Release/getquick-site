@@ -87,7 +87,10 @@ test("migrating a v1 manifest is a no-op", async () => {
     await fixture.run(["sync", "--manifest", "--variant", variant]);
     const migrated = await readManifest(fixture);
 
-    for (const argv of [["sync", "--manifest"], ["sync", "--manifest", "--check"], ["sync"]]) {
+    for (const argv of [
+      ["sync", "--manifest"],
+      ["sync", "--manifest", "--check"],
+    ]) {
       const result = await fixture.run(argv);
       assert.equal(result.code, 0, result.stderr);
       assert.equal(result.stdout, "gq.ops.json: up to date (schema v1).\n");
@@ -404,7 +407,7 @@ test("a v1 manifest beside a release config is folded, and commands refuse it un
   );
   assert.match(doctor.stdout, /✗ apps\/cms\/composer\.json is missing$/mu);
 
-  const check = await site.run(["sync", "--check"]);
+  const check = await site.run(["sync", "--manifest", "--check"]);
   assert.equal(check.code, 1);
   assert.equal(
     check.stdout,

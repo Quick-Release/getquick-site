@@ -92,11 +92,39 @@ Provider IDs are safe to commit; tokens are not. `gq` reads `PLOI_API_TOKEN`,
    injects them per command
 4. flags (`--server`, `--site`, `--account`, `--zone`)
 
+## Generate and sync a site
+
+`gq new` creates a site from the blueprint; `gq sync` keeps it in step with
+the installed `gq` ([ADR 0002](docs/adr/0002-generate-sites-from-a-versioned-manifest.md)):
+
+```sh
+gq new acme --project acme --variant content   # gq.ops.json, managed files, gq.lock.json, git init
+gq sync           # migrate gq.ops.json, regenerate managed files, update gq.lock.json
+gq sync --check   # report every pending change, exit 1, write nothing
+```
+
+[`blueprint/ownership.json`](blueprint/ownership.json), published with the
+package, lists every path the blueprint touches by category: fully
+generated, generated section, managed keys, and create-once. Anything it
+doesn't list is site-owned, and `gq sync` never reads or writes it. Today
+the one managed file is the toolchain pins (`.mise.toml`); `gq.ops.json` is
+create-once. Only `--variant content` is generated until phase 4.
+
+`gq.lock.json`, committed at the site root, records the `gq` version, the
+schema version and a hash of each managed file as `gq` last wrote it. A
+managed file whose hash differs from the lock (or that differs from the
+template when the site has no lock yet) is a local edit: `gq sync` prints a
+diff against what it would write and writes nothing, not even a pending
+migration. Revert the edit, or delete the file and `gq sync` regenerates it.
+A lock written by a newer `gq` is refused rather than downgraded. Neither
+command needs network access or secrets.
+
 ## Commands
 
 ```sh
 gq --version
 gq context show [--json]
+gq new <dir> --project <name> --variant content
 gq sync [--manifest] [--check] [--variant <content|commerce>]
 
 gq setup [--no-ddev]

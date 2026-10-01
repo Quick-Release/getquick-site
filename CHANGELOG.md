@@ -3,6 +3,27 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## Unreleased
+
+### Added
+
+- `gq new <dir> --project <name> --variant content`, which writes a v1
+  `gq.ops.json`, the blueprint's managed files and `gq.lock.json`, then runs
+  `git init`. It uses no network and no secrets; `--variant commerce` is
+  refused until phase 4.
+- The blueprint's ownership manifest, `blueprint/ownership.json`, published
+  with the package: fully generated files, generated sections, managed keys
+  and create-once files. Its one managed file so far is the toolchain pins
+  (`.mise.toml`).
+
+### Changed
+
+- `gq sync` regenerates the managed files after migrating `gq.ops.json` and
+  records their hashes in `gq.lock.json`. A managed file that differs from
+  the lock is a local edit: sync prints a diff and writes nothing.
+  `gq sync --check` reports every pending change, and `--manifest` still
+  limits sync to the manifest.
+
 ## 0.10.0 — 2026-10-01
 
 ### Added

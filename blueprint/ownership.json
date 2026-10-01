@@ -1,0 +1,6 @@
+{
+  "fullyGenerated": [{ "path": ".mise.toml", "template": "templates/mise.toml" }],
+  "generatedSections": [],
+  "managedKeys": [],
+  "createOnce": [{ "path": "gq.ops.json" }]
+}

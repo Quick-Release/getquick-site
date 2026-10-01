@@ -99,7 +99,7 @@ function schemaVersionOf(manifest) {
   return version;
 }
 
-function validateManifest(manifest) {
+export function validateManifest(manifest) {
   const result = manifestSchema.safeParse(manifest, { reportInput: true });
   if (result.success) return result.data;
   const problems = result.error.issues.flatMap(describeIssue);

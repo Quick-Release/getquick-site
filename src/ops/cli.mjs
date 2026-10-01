@@ -38,6 +38,7 @@ import {
   WORKSPACE_USAGE,
 } from "../workspace/commands.mjs";
 import { isSyncCommand, runSyncCommand, SYNC_USAGE } from "../sync/commands.mjs";
+import { isNewCommand, NEW_USAGE, runNewCommand } from "../sync/new.mjs";
 import { VERSION } from "../version.mjs";
 
 const COMMAND_OPTIONS = new Map([
@@ -64,6 +65,8 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
   if (isWorkspaceCommand(argv)) return runWorkspaceCommand(argv, { cwd, env, exec, io });
   // And gq sync, which reads a manifest older than the other commands accept.
   if (isSyncCommand(argv)) return runSyncCommand(argv.slice(1), { cwd, io });
+  // And gq new, which creates the manifest instead of reading one.
+  if (isNewCommand(argv)) return runNewCommand(argv.slice(1), { cwd, env, exec, io });
 
   let effectiveArguments = argv;
   if (effectiveArguments.length === 0 && interactive) {
@@ -410,6 +413,7 @@ Usage:
 Project:
   gq context show
 ${WORKSPACE_USAGE.map((usage) => `  ${usage}`).join("\n")}
+${NEW_USAGE.map((usage) => `  ${usage}`).join("\n")}
 ${SYNC_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Ploi:

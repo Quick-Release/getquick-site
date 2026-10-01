@@ -13,6 +13,7 @@
   },
   "files": [
     "bin",
+    "blueprint",
     "src",
     "schema",
     "docs/research/ploi-api.md",
