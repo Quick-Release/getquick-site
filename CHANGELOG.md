@@ -3,6 +3,41 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## 0.10.0 — 2026-10-01
+
+### Added
+
+- `gq.ops.json` v1 `release` (`jsonFiles`, `textFiles`, `paths`), `verify`
+  (`checks`) and `doctor` (`requiredFiles`): additions appended to the
+  blueprint's defaults for the site's variant, validated like every other
+  key. The `content` defaults are Lombardi's release config; `commerce` has
+  none yet. A text-file pattern is `{ regexp, flags?, replacement }`, with
+  `{version}` in the replacement.
+- `gq sync --manifest` folds a site's `shop-devtools.config.mjs` into
+  `gq.ops.json` (with the v0 → v1 migration, or into a manifest gq 0.9.0
+  already migrated) and removes it, keeping only what differs from the
+  variant's defaults. It warns about `releaseBranch` (dropped), each default
+  the module left out (now added) and each check it moves after the
+  defaults, and refuses `composer`, `deploys`,
+  `docsChangelogPath`, another `versionFile` or `changelogPath`, and
+  replacements that aren't fixed text around the version. `--check` reports
+  the fold as pending.
+
+### Changed
+
+- `gq release`, `gq version`, `gq verify` and `gq doctor` read their settings
+  from `gq.ops.json` and the variant's defaults. While
+  `shop-devtools.config.mjs` is still beside it, the release commands and
+  `gq verify` refuse to run and `gq doctor` fails.
+- `version sync` and `release prepare` end with the same "All project
+  packages are synced" line as `version check`.
+
+### Removed
+
+- `gq release push --no-deploy` and the release config's `deploys`:
+  Cloudflare CI deploys the pushed `v*` tag.
+- The release config's `composer` packages pinned to the release version.
+
 ## 0.9.0 — 2026-10-01
 
 ### Added

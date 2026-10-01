@@ -1,10 +1,7 @@
-import { access, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
-// The site's release config, read from the site root. Its name carries over
-// from the vendored shop-devtools these commands replace.
-export const RELEASE_CONFIG_FILENAME = "shop-devtools.config.mjs";
+import { loadSiteSettings } from "../manifest/site-settings.mjs";
 
 const SEMVER =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
@@ -16,7 +13,7 @@ const RELEASE_COMMANDS = new Map([
   ["version sync", ["gq version sync [version]", []]],
   ["release prepare", ["gq release prepare [version]", []]],
   ["release tag", ["gq release tag [version]", []]],
-  ["release push", ["gq release push <major|minor|fix> [--no-deploy]", ["noDeploy"]]],
+  ["release push", ["gq release push <major|minor|fix>", []]],
 ]);
 
 export const RELEASE_USAGE = [...RELEASE_COMMANDS.values()].map(([usage]) => usage);
@@ -46,7 +43,7 @@ export function releaseCommandOptions(parsed) {
 export async function runReleaseCommand({ parsed, context, env, exec, io }) {
   const argument = parsed.command[2];
   const release = createRelease({
-    config: await loadReleaseConfig(context.projectRoot),
+    config: await loadSiteSettings(context),
     root: context.projectRoot,
     env,
     exec,
@@ -55,7 +52,7 @@ export async function runReleaseCommand({ parsed, context, env, exec, io }) {
   const command = parsed.command.slice(0, 2).join(" ");
 
   if (command === "release push") {
-    await release.push(argument, { deploy: !parsed.noDeploy });
+    await release.push(argument);
     return;
   }
   if (command === "release tag") {
@@ -71,47 +68,12 @@ export async function runReleaseCommand({ parsed, context, env, exec, io }) {
   if (command !== "version check") {
     await release.sync(version);
   }
-  // A prepared release isn't committed yet, so only editable files must match.
-  await release.check(version, { includeLock: command === "version check" });
+  await release.check(version);
   if (command === "release prepare") {
     io.out(
       `Prepared release ${version}. Commit the synced files, then run: gq release tag ${version}`,
     );
   }
-}
-
-// The site's release config with its defaults; `gq verify` and `gq doctor`
-// read their site input (`checks`, `doctor`) from it too.
-export async function loadReleaseConfig(root) {
-  const path = join(root, RELEASE_CONFIG_FILENAME);
-  try {
-    await access(path);
-  } catch {
-    throw new Error(
-      `No ${RELEASE_CONFIG_FILENAME} in ${root}. Release and version commands read the site's ` +
-        "version file, version-carrying files and release paths from it.",
-    );
-  }
-  const module = await import(pathToFileURL(path).href);
-  const config = module.default ?? module;
-  if (config.docsChangelogPath) {
-    throw new Error(
-      `${RELEASE_CONFIG_FILENAME} sets docsChangelogPath, which gq doesn't support: ` +
-        "the docs changelog page was dropped with shop-devtools. Remove it.",
-    );
-  }
-  return {
-    versionFile: "VERSION",
-    changelogPath: "CHANGELOG.md",
-    jsonFiles: [],
-    textFiles: [],
-    composer: null,
-    releasePaths: [],
-    checks: [],
-    deploys: [],
-    doctor: {},
-    ...config,
-  };
 }
 
 function assertVersion(version) {
@@ -124,7 +86,6 @@ function createRelease({ config, root, env, exec, io }) {
   const at = (path) => join(root, path);
   const readJson = async (path) => JSON.parse(await readFile(at(path), "utf8"));
   const writeJson = (path, data) => writeFile(at(path), `${JSON.stringify(data, null, 2)}\n`);
-  const composerPackages = config.composer?.packages ?? [];
 
   // A command whose output the user watches (checks, commits, pushes).
   async function runCommand(command, args, { cwd, env: commandEnv = env } = {}) {
@@ -163,19 +124,13 @@ function createRelease({ config, root, env, exec, io }) {
       await writeJson(path, data);
     }
 
-    if (config.composer?.manifest && composerPackages.length) {
-      const composer = await readJson(config.composer.manifest);
-      for (const packageName of composerPackages) composer.require[packageName] = version;
-      await writeJson(config.composer.manifest, composer);
-    }
-
     for (const file of config.textFiles) {
       let content = await readFile(at(file.path), "utf8");
       for (const { regexp, replacement } of file.patterns) {
         if (!regexp.test(content)) {
           throw new Error(`${file.path} is missing expected version pattern ${regexp}.`);
         }
-        content = content.replace(regexp, replacement(version));
+        content = content.replace(regexp, () => replacement(version));
       }
       await writeFile(at(file.path), content);
     }
@@ -183,23 +138,12 @@ function createRelease({ config, root, env, exec, io }) {
     io.out(`Synced project version ${version}.`);
   }
 
-  async function check(version, { includeLock = true } = {}) {
+  async function check(version) {
     const mismatches = [];
 
     for (const path of config.jsonFiles) {
       const data = await readJson(path);
       if (data.version !== version) mismatches.push(`${path}: ${data.version || "[missing]"}`);
-    }
-
-    if (config.composer?.manifest && composerPackages.length) {
-      const composer = await readJson(config.composer.manifest);
-      for (const packageName of composerPackages) {
-        if (composer.require?.[packageName] !== version) {
-          mismatches.push(
-            `${config.composer.manifest} require.${packageName}: ${composer.require?.[packageName] || "[missing]"}`,
-          );
-        }
-      }
     }
 
     for (const file of config.textFiles) {
@@ -210,26 +154,13 @@ function createRelease({ config, root, env, exec, io }) {
       }
     }
 
-    if (includeLock && config.composer?.lock && composerPackages.length) {
-      const lock = await readJson(config.composer.lock);
-      for (const packageName of composerPackages) {
-        const locked = lock.packages?.find((item) => item.name === packageName);
-        if (locked?.version !== version) {
-          mismatches.push(
-            `${config.composer.lock} ${packageName}: ${locked?.version || "[missing]"}`,
-          );
-        }
-      }
-    }
-
     if (mismatches.length > 0) {
       throw new Error(
         `Version drift detected for ${version}:\n${mismatches.map((line) => `  - ${line}`).join("\n")}`,
       );
     }
 
-    const scope = includeLock ? "project packages" : "editable project files";
-    io.out(`All ${scope} are synced at ${version}.`);
+    io.out(`All project packages are synced at ${version}.`);
   }
 
   async function tag(version) {
@@ -247,7 +178,7 @@ function createRelease({ config, root, env, exec, io }) {
     io.out(`Created ${name}. Push it with: git push origin ${name}`);
   }
 
-  async function push(kind, { deploy }) {
+  async function push(kind) {
     const currentVersion = await readVersion();
     assertVersion(currentVersion);
 
@@ -257,39 +188,12 @@ function createRelease({ config, root, env, exec, io }) {
     }
     await writeVersion(nextVersion);
     await sync(nextVersion);
-    await refreshComposerLock();
     await updateChangelog(nextVersion);
     await check(nextVersion);
-    await runConfiguredCommands(config.checks);
+    await runChecks();
     await commit(nextVersion);
     await pushRelease(nextVersion);
-
-    if (deploy) await runConfiguredCommands(config.deploys);
-    else io.out("Skipped deployments because --no-deploy was provided.");
-
     io.out(`Pushed ${kind === "patch" ? "fix" : kind} release ${nextVersion}.`);
-  }
-
-  async function refreshComposerLock() {
-    if (!config.composer?.workingDir || !composerPackages.length) return;
-    await runCommand(
-      "composer",
-      [
-        `--working-dir=${config.composer.workingDir}`,
-        "update",
-        ...composerPackages,
-        "--with-all-dependencies",
-        "--no-interaction",
-      ],
-      {
-        env: {
-          ...env,
-          COMPOSER_DISABLE_NETWORK: config.composer.disableNetwork
-            ? "1"
-            : env.COMPOSER_DISABLE_NETWORK,
-        },
-      },
-    );
   }
 
   async function updateChangelog(version) {
@@ -332,15 +236,11 @@ function createRelease({ config, root, env, exec, io }) {
     io.out(`Updated ${config.changelogPath} from ${previousRelease} to v${version}.`);
   }
 
-  async function runConfiguredCommands(commands) {
-    for (const entry of commands) {
-      if (typeof entry === "string") {
-        await runCommand(entry, []);
-        continue;
-      }
-      await runCommand(entry.cmd, entry.args ?? [], {
-        cwd: entry.cwd,
-        env: entry.env ? { ...env, ...entry.env } : env,
+  async function runChecks() {
+    for (const check of config.checks) {
+      await runCommand(check.cmd, check.args, {
+        cwd: check.cwd,
+        env: check.env ? { ...env, ...check.env } : env,
       });
     }
   }

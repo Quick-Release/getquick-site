@@ -113,17 +113,21 @@ function describeIssue(issue) {
   const path = keyPath(issue.path);
   if (issue.code === "invalid_type" && issue.input === undefined) return `${path} is required`;
   if (issue.code === "too_small" && issue.origin === "string") return `${path} must not be empty`;
+  if (issue.code === "custom") return `${path} ${issue.message}`;
   if (issue.code === "invalid_value") {
     return `${path} must be ${issue.values.map((value) => JSON.stringify(value)).join(" or ")}`;
   }
   return `${path}: ${issue.message}`;
 }
 
-// ["wordpress", "plugins", 0] → wordpress.plugins[0]
+// ["wordpress", "plugins", 0] → wordpress.plugins[0];
+// ["doctor", "requiredFiles", "apps/cms"] → doctor.requiredFiles["apps/cms"]
 function keyPath(path) {
   return path
-    .map((key, index) =>
-      typeof key === "number" ? `[${key}]` : `${index === 0 ? "" : "."}${String(key)}`,
-    )
+    .map((key, index) => {
+      if (typeof key === "number") return `[${key}]`;
+      if (!/^[A-Za-z_$][\w$]*$/u.test(String(key))) return `[${JSON.stringify(String(key))}]`;
+      return `${index === 0 ? "" : "."}${String(key)}`;
+    })
     .join("");
 }

@@ -1,6 +1,7 @@
-// gq verify (Lombardi's scripts/verify.mjs): runs the site's `checks` from its
-// release config (the list `gq release push` runs before a release) in order,
-// stopping at the first failure. One list for the pre-push hook, releases and
+// gq verify (Lombardi's scripts/verify.mjs): runs the site's checks (its
+// variant's defaults, then gq.ops.json `verify.checks`: the list
+// `gq release push` runs before a release) in order, stopping at the first
+// failure. One list for the pre-push hook, releases and
 // CI, which runs it in a single container. The site decides what it verifies;
 // this only decides what can run here.
 //
@@ -10,7 +11,7 @@
 import { join } from "node:path";
 
 import { CMS_PATH, commandExists, ddevStatus, phpToolchainAvailable } from "../cms/local.mjs";
-import { loadReleaseConfig, RELEASE_CONFIG_FILENAME } from "../release/release.mjs";
+import { loadSiteSettings } from "../manifest/site-settings.mjs";
 
 // What a check can need, with how to get it when it's missing. A check
 // declares `requires`; without it, a `composer` check needs PHP.
@@ -38,7 +39,7 @@ export function selectChecks(checks, { ci, phpAvailable, ddevAvailable = false }
 
 export async function runVerify({ ci = false }, { context, env, exec, io }) {
   const root = context.projectRoot;
-  const checks = (await loadReleaseConfig(root)).checks.map(normalizeCheck);
+  const { checks } = await loadSiteSettings(context);
   const needed = new Set(checks.flatMap(checkRequirements));
   // Only look for what some check needs, and nothing in CI.
   const available = {
@@ -60,7 +61,7 @@ export async function runVerify({ ci = false }, { context, env, exec, io }) {
   const checkEnv = { ...env, pnpm_config_verify_deps_before_run: "false" };
   const started = Date.now();
   for (const check of run) {
-    const label = describe(check);
+    const label = describeCheck(check);
     const checkStarted = Date.now();
     const { code } = await exec(check.cmd, check.args, {
       cwd: check.cwd ? join(root, check.cwd) : root,
@@ -76,7 +77,7 @@ export async function runVerify({ ci = false }, { context, env, exec, io }) {
   for (const check of skipped) {
     const missing = checkRequirements(check).filter((name) => !available[name]);
     io.err(
-      `⚠ skipped ${describe(check)} — ${missing.map((name) => REQUIREMENTS[name]).join("; ")}`,
+      `⚠ skipped ${describeCheck(check)} — ${missing.map((name) => REQUIREMENTS[name]).join("; ")}`,
     );
   }
   const skips = skipped.length > 0 ? ` (${skipped.length} skipped)` : "";
@@ -84,25 +85,6 @@ export async function runVerify({ ci = false }, { context, env, exec, io }) {
   return 0;
 }
 
-// A check as the release config may write it: a bare command, or
-// { cmd, args?, cwd?, env?, requires? }.
-function normalizeCheck(entry, index) {
-  const check = typeof entry === "string" ? { cmd: entry } : { ...entry };
-  check.args ??= [];
-  const requires = check.requires;
-  if (requires !== undefined && !Array.isArray(requires)) {
-    throw new Error(`${RELEASE_CONFIG_FILENAME} checks[${index}].requires must be an array.`);
-  }
-  for (const name of requires ?? []) {
-    if (!(name in REQUIREMENTS)) {
-      throw new Error(
-        `${RELEASE_CONFIG_FILENAME} checks[${index}] requires "${name}"; ` +
-          `a check can require ${Object.keys(REQUIREMENTS).join(", ")}.`,
-      );
-    }
-  }
-  return check;
-}
-
-const describe = (check) => [check.cmd, ...check.args].join(" ");
+// A check as its command line, such as `pnpm run lint`.
+export const describeCheck = (check) => [check.cmd, ...(check.args ?? [])].join(" ");
 const seconds = (since) => ((Date.now() - since) / 1000).toFixed(1);

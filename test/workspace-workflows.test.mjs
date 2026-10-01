@@ -1,6 +1,6 @@
 // gq setup, gq doctor and gq verify: the shared workspace runners, driven
-// through run() against a fixture site whose release config supplies the
-// check list and doctor inputs, with a recording exec standing in for sh,
+// through run() against a content fixture site (the content variant's checks
+// and required files), with a recording exec standing in for sh,
 // node, pnpm, git, ddev, composer and sigillo.
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -10,6 +10,9 @@ import test from "node:test";
 
 import { VERSION } from "../src/version.mjs";
 import { createFixtureSite, recordingExec } from "./support/fixture-site.mjs";
+import { CONTENT_CHECKS } from "./support/release-site.mjs";
+
+const LOCAL_CHECKS = CONTENT_CHECKS.filter((line) => !line.startsWith("composer "));
 
 const OPS = {
   schemaVersion: 1,
@@ -27,21 +30,6 @@ const OPS = {
 const ARTIFACTS_REMOTE = "https://account-1.artifacts.cloudflare.net/git/fixture-ns/fixture.git";
 const GITHUB_REMOTE = "git@github.com:example/fixture.git";
 
-const RELEASE_CONFIG = `export default {
-  checks: [
-    { cmd: "pnpm", args: ["run", "check"] },
-    { cmd: "pnpm", args: ["run", "lint"] },
-    { cmd: "composer", args: ["--working-dir=apps/cms", "validate"] },
-  ],
-  doctor: {
-    requiredFiles: {
-      "apps/cms": ["composer.json", ".ddev/config.yaml"],
-      "apps/frontend": ["package.json", "astro.config.mjs"],
-    },
-  },
-};
-`;
-
 const MANIFEST = {
   name: "fixture",
   private: true,
@@ -53,7 +41,6 @@ const MANIFEST = {
 // `overrides` replaces files; null leaves one out.
 function siteFiles(overrides = {}) {
   const files = {
-    "shop-devtools.config.mjs": RELEASE_CONFIG,
     "package.json": JSON.stringify(MANIFEST),
     ".mise.toml": '[tools]\nnode = "24.21.0"\n',
     "apps/cms/composer.json": "{}",
@@ -123,11 +110,7 @@ test("gq verify runs the site's checks in order, in the site root, on the termin
     exec,
   });
   assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(actions(exec), [
-    "pnpm run check",
-    "pnpm run lint",
-    "composer --working-dir=apps/cms validate",
-  ]);
+  assert.deepEqual(actions(exec), CONTENT_CHECKS);
   const checks = exec.calls.filter((call) => !isLookup(call));
   const options = exec.options.filter((_, index) => !isLookup(exec.calls[index]));
   for (const [index, call] of checks.entries()) {
@@ -138,7 +121,7 @@ test("gq verify runs the site's checks in order, in the site root, on the termin
     assert.equal(options[index].stdio, "inherit");
   }
   assert.match(result.stdout, /✓ pnpm run check \(\d+\.\ds\)/u);
-  assert.match(result.stdout, /All 3 checks passed in \d+\.\ds\./u);
+  assert.match(result.stdout, /All 9 checks passed in \d+\.\ds\./u);
   assert.equal(result.stderr, "");
 });
 
@@ -161,13 +144,13 @@ test("gq verify skips (and reports) the Composer checks locally without PHP", as
     const exec = machine({ installed });
     const result = await fixture.run(["verify"], { exec });
     assert.equal(result.code, 0, `${label}: ${result.stderr}`);
-    assert.deepEqual(actions(exec), ["pnpm run check", "pnpm run lint"], label);
+    assert.deepEqual(actions(exec), LOCAL_CHECKS, label);
     assert.match(
       result.stderr,
       /⚠ skipped composer --working-dir=apps\/cms validate — install Composer and run: pnpm cms:composer/u,
       label,
     );
-    assert.match(result.stdout, /All 2 checks passed in \d+\.\ds \(1 skipped\)\./u, label);
+    assert.match(result.stdout, /All 6 checks passed in \d+\.\ds \(3 skipped\)\./u, label);
   }
 });
 
@@ -177,27 +160,26 @@ test("gq verify --ci runs every check, PHP or not, without looking for Composer"
   const result = await fixture.run(["verify", "--ci"], { exec });
   assert.equal(result.code, 0, result.stderr);
   assert.equal(exec.calls.filter(isLookup).length, 0);
-  assert.deepEqual(actions(exec), [
-    "pnpm run check",
-    "pnpm run lint",
-    "composer --working-dir=apps/cms validate",
-  ]);
-  assert.match(result.stdout, /All 3 checks passed/u);
+  assert.deepEqual(actions(exec), CONTENT_CHECKS);
+  assert.match(result.stdout, /All 9 checks passed/u);
 });
 
 test("gq verify honours the requirements a site declares on its checks", async () => {
-  const config = `export default {
-  checks: [
-    { cmd: "pnpm", args: ["run", "test"] },
-    { cmd: "pnpm", args: ["run", "cms:test"], requires: ["php"] },
-    { cmd: "pnpm", args: ["run", "e2e"], requires: ["ddev"] },
-    { cmd: "composer", args: ["audit"], requires: [] },
-  ],
-};
-`;
-  const files = { "shop-devtools.config.mjs": config };
+  // A commerce site has no default checks: these are all it runs.
+  const ops = {
+    ...OPS,
+    variant: "commerce",
+    verify: {
+      checks: [
+        { cmd: "pnpm", args: ["run", "test"] },
+        { cmd: "pnpm", args: ["run", "cms:test"], requires: ["php"] },
+        { cmd: "pnpm", args: ["run", "e2e"], requires: ["ddev"] },
+        { cmd: "composer", args: ["audit"], requires: [] },
+      ],
+    },
+  };
 
-  const stopped = await site({ files });
+  const stopped = await site({ ops });
   const withoutDdev = machine({ installed: ["pnpm", "ddev"], ddev: "stopped" });
   const skipped = await stopped.run(["verify"], { exec: withoutDdev });
   assert.equal(skipped.code, 0, skipped.stderr);
@@ -208,7 +190,7 @@ test("gq verify honours the requirements a site declares on its checks", async (
   assert.match(skipped.stderr, /⚠ skipped pnpm run cms:test — install Composer/u);
   assert.match(skipped.stderr, /⚠ skipped pnpm run e2e — start DDEV: pnpm cms:dev/u);
 
-  const running = await site({ files: { ...files, "apps/cms/vendor/autoload.php": "" } });
+  const running = await site({ ops, files: { "apps/cms/vendor/autoload.php": "" } });
   const everything = machine();
   const all = await running.run(["verify"], { exec: everything });
   assert.equal(all.code, 0, all.stderr);
@@ -220,23 +202,16 @@ test("gq verify honours the requirements a site declares on its checks", async (
 
 test("gq verify refuses a check requirement it doesn't know", async () => {
   const fixture = await site({
-    files: {
-      "shop-devtools.config.mjs": `export default { checks: [{ cmd: "pnpm", args: ["x"], requires: ["docker"] }] };\n`,
-    },
+    ops: { ...OPS, verify: { checks: [{ cmd: "pnpm", args: ["x"], requires: ["docker"] }] } },
   });
   const exec = machine();
   const result = await fixture.run(["verify"], { exec });
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /requires "docker".*php, ddev/u);
+  assert.match(result.stderr, /verify\.checks\[0\]\.requires\[0\] must be "php" or "ddev"/u);
   assert.deepEqual(actions(exec), []);
 });
 
-test("gq verify needs the site's release config and its own options only", async () => {
-  const bare = await createFixtureSite({ ops: OPS });
-  const missing = await bare.run(["verify"], { exec: machine() });
-  assert.equal(missing.code, 1);
-  assert.match(missing.stderr, /No shop-devtools\.config\.mjs/u);
-
+test("gq verify takes its own options only", async () => {
   const fixture = await site();
   const unknown = await fixture.run(["verify", "--fast"], { exec: machine() });
   assert.equal(unknown.code, 1);
@@ -290,12 +265,10 @@ test("gq doctor fails when Node is below the site's engines minimum", async () =
 });
 
 test("gq doctor fails when a file the site requires is missing", async () => {
-  const fixture = await healthySite({
-    "shop-devtools.config.mjs": RELEASE_CONFIG.replace("astro.config.mjs", "missing.config.mjs"),
-  });
+  const fixture = await healthySite({ "apps/frontend/astro.config.mjs": null });
   const result = await fixture.run(["doctor"], { exec: machine() });
   assert.equal(result.code, 1);
-  assert.match(result.stdout, /✗ apps\/frontend\/missing\.config\.mjs is missing/u);
+  assert.match(result.stdout, /✗ apps\/frontend\/astro\.config\.mjs is missing/u);
 });
 
 test("gq doctor fails without node_modules", async () => {

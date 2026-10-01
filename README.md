@@ -149,7 +149,7 @@ gq version check [version]
 gq version sync [version]
 gq release prepare [version]
 gq release tag [version]
-gq release push <major|minor|fix> [--no-deploy]
+gq release push <major|minor|fix>
 ```
 
 `--json` prints machine-readable output; `ploi api` always prints the
@@ -204,39 +204,75 @@ its code.
 
 ## Release and version commands
 
-The release commands read the site's own release config,
-`shop-devtools.config.mjs` in the site root (the name carries over from the
-tool they replace). Every path in it is relative to the site root:
+The release commands, `verify` and `doctor` read their settings from
+`gq.ops.json`: the blueprint's defaults for the site's `variant`, plus the
+additions the site declares. Additions are appended to the defaults; a site
+can't remove one. Every path is relative to the site root.
 
-```js
-export default {
-  versionFile: "VERSION", // the site's version; the default
-  changelogPath: "CHANGELOG.md", // the default
-  jsonFiles: ["package.json"], // files whose `version` field follows VERSION
-  textFiles: [
-    {
-      path: "web/app/themes/example-theme/style.css",
-      patterns: [{ regexp: /^Version: .+$/m, replacement: (version) => `Version: ${version}` }],
-    },
-  ],
-  // Optional: Composer packages pinned to the release version.
-  composer: { manifest, lock, workingDir, packages: [], disableNetwork },
-  releasePaths: ["VERSION", "CHANGELOG.md", "package.json"], // what a release commits
-  checks: [{ cmd: "pnpm", args: ["run", "check"] }], // run before a release commits
-  deploys: [], // run after it pushes, unless --no-deploy
-};
+The `content` defaults (Lombardi's settings):
+
+- version file `VERSION` and changelog `CHANGELOG.md`, for every site;
+- JSON files whose `version` follows `VERSION`: `package.json` and
+  `apps/frontend/package.json`;
+- release paths: `VERSION`, `CHANGELOG.md`, `README.md`, `package.json`,
+  `pnpm-workspace.yaml`, `gq.ops.json`, `infra`, `deploy/ploi/admin.sh`,
+  `AGENTS.md`, `apps/cms/.gitignore`, `apps/cms/composer.json`,
+  `apps/cms/composer.lock` and `apps/frontend/package.json`;
+- checks: `pnpm run check`, `lint`, `test`, `test:scripts`, `infra:check` and
+  `ci:check`, then `composer --working-dir=apps/cms validate`, `run lint` and
+  `run test` (each requiring `php`);
+- required files: `apps/cms` `composer.json` and `.ddev/config.yaml`,
+  `apps/frontend` `package.json` and `astro.config.mjs`.
+
+`commerce` has no defaults until a commerce site adopts the blueprint, so a
+commerce site declares everything as additions.
+
+```json
+{
+  "release": {
+    "jsonFiles": ["apps/docs/package.json"],
+    "textFiles": [
+      {
+        "path": "apps/cms/web/app/themes/example-theme/style.css",
+        "patterns": [
+          { "regexp": "^Version: .+$", "flags": "m", "replacement": "Version: {version}" }
+        ]
+      }
+    ],
+    "paths": ["apps/cms/web/app/themes/example-theme/style.css"]
+  },
+  "verify": {
+    "checks": [
+      { "cmd": "pnpm", "args": ["run", "e2e"], "cwd": "apps/frontend", "requires": ["ddev"] }
+    ]
+  },
+  "doctor": { "requiredFiles": { "apps/frontend": ["tsconfig.json"] } }
+}
 ```
 
-- `version check` fails, listing each file, when any of them (and the
-  Composer lock) doesn't carry `VERSION` or the given version.
+A text file's pattern is a regular expression (`regexp`, optional `flags`)
+whose match is replaced by `replacement`, where `{version}` stands for the
+version.
+
+- `version check` fails, listing each file, when any of them doesn't carry
+  `VERSION` or the given version.
 - `version sync` writes `VERSION` (or the given version) into every file.
 - `release prepare` also writes the version to the version file first.
 - `release tag` checks the version and a clean tree, then creates an
   annotated `v<version>` tag.
 - `release push` bumps the version (`fix` and `patch` bump the third number),
   syncs it, adds the commits since the last `v*` tag to the changelog, runs
-  `checks`, commits `releasePaths`, tags, pushes the branch and the tag, and
-  runs `deploys`. Command output streams through as it runs.
+  the checks, commits the release paths, tags, and pushes the branch and the
+  tag. Command output streams through as it runs. Nothing deploys from here:
+  Cloudflare CI deploys the pushed `v*` tag.
+
+Sites used to keep these settings in `shop-devtools.config.mjs`.
+`gq sync --manifest` folds that module into `gq.ops.json`, keeping only what
+differs from the variant's defaults, and removes it. It names each default the
+module left out (gq now adds it) and each check it moves after the defaults,
+and refuses settings `gq.ops.json` can't express: another version file or
+changelog, `composer`, `deploys` and `docsChangelogPath`. Until the module is
+folded, the release commands and `verify` refuse to run, and `doctor` fails.
 
 ## Ploi provisioning and releases
 
@@ -329,17 +365,18 @@ The runners are shared; what they check is the site's.
   missing, then starts DDEV and installs Composer through the site's
   `cms:dev:raw --foreground` and `cms:composer` scripts. `--no-ddev` stops
   after the `.env` files; without DDEV installed it stops there with a warning.
-- `verify` runs the release config's `checks` (the list `release push` runs)
-  in order, in the site root, on the terminal, stopping at the first failure
-  with its exit code. A check is a command or `{ cmd, args, cwd, env,
-requires }`; `requires` lists what it needs, `php` (Composer and
+- `verify` runs the site's checks (the variant's defaults, then
+  `verify.checks`; the list `release push` runs) in order, in the site root, on the terminal, stopping at the first failure
+  with its exit code. A check is `{ cmd, args, cwd, env, requires }`;
+  `requires` lists what it needs, `php` (Composer and
   `apps/cms/vendor`) or `ddev` (the project running), and defaults to `php`
   for a `composer` check. Locally a check whose requirement is missing is
   skipped and reported; `--ci` runs every check.
 - `doctor` reports the running `@getquick/site` against the site's pin, Node
   against `package.json` `engines.node` and the `.mise.toml` (or `.nvmrc`)
   pin, pnpm against `packageManager`, git, the files each app must have
-  (release config `doctor.requiredFiles`, `{ "<app path>": ["<file>", …] }`),
+  (the variant's defaults plus `doctor.requiredFiles`,
+  `{ "<app path>": ["<file>", …] }`),
   installed dependencies, a leftover Artifacts push URL (with
   `gq.ops.json` `artifacts`), the apps' `.env` files, Sigillo's project and
   login (with `sigillo`) and the DDEV project named in

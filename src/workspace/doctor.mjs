@@ -2,8 +2,8 @@
 // health check. The checks are shared; the site supplies their inputs: the
 // Node minimum (package.json `engines.node`), the toolchain pins
 // (`packageManager`, .mise.toml or .nvmrc), the files each app must have
-// (release config `doctor.requiredFiles`), the DDEV project
-// (apps/cms/.ddev/config.yaml `name`) and gq.ops.json's `sigillo` and
+// (the variant's defaults plus gq.ops.json `doctor.requiredFiles`), the DDEV
+// project (apps/cms/.ddev/config.yaml `name`) and gq.ops.json's `sigillo` and
 // `artifacts`. Missing required pieces fail it; drift only warns.
 
 import { existsSync, readFileSync } from "node:fs";
@@ -11,7 +11,12 @@ import { join } from "node:path";
 
 import { CMS_PATH, commandExists, ddevStatus, phpToolchainAvailable } from "../cms/local.mjs";
 import { artifactsRemoteUrl } from "../cloudflare/client.mjs";
-import { loadReleaseConfig, RELEASE_CONFIG_FILENAME } from "../release/release.mjs";
+import { MANIFEST_FILENAME } from "../manifest/schema.mjs";
+import {
+  hasReleaseConfig,
+  RELEASE_CONFIG_FILENAME,
+  siteSettings,
+} from "../manifest/site-settings.mjs";
 import { VERSION } from "../version.mjs";
 import { FRONTEND_PATH } from "./layout.mjs";
 
@@ -22,7 +27,7 @@ export async function runDoctor(_options, { context, env, exec, io }) {
   const name = context.config.project ?? "GETQUICK";
   const project = `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
   const manifest = readJson(join(root, "package.json")) ?? {};
-  const { doctor } = await loadReleaseConfig(root);
+  const { requiredFiles } = siteSettings(context.config);
   const capture = async (command, commandArgs, options = {}) => {
     const result = await exec(command, commandArgs, { cwd: root, env, ...options });
     return { code: result.code, stdout: (result.stdout ?? "").trim() };
@@ -45,11 +50,17 @@ export async function runDoctor(_options, { context, env, exec, io }) {
   if (!(await commandExists(exec, "git", env))) fail("git is not installed");
   else ok(`git ${(await capture("git", ["--version"])).stdout}`);
 
-  const requiredFiles = Object.entries(doctor?.requiredFiles ?? {});
-  if (requiredFiles.length > 0) {
+  // Release and verify refuse to run until it's folded in; doctor names it.
+  if (await hasReleaseConfig(root)) {
+    fail(
+      `${RELEASE_CONFIG_FILENAME} hasn't been folded into ${MANIFEST_FILENAME} — run: gq sync --manifest`,
+    );
+  }
+
+  if (Object.keys(requiredFiles).length > 0) {
     io.out("\nApps:");
     let present = true;
-    for (const [app, files] of requiredFiles) {
+    for (const [app, files] of Object.entries(requiredFiles)) {
       for (const file of files) {
         if (!existsSync(join(root, app, file))) {
           fail(`${app}/${file} is missing`);
@@ -57,7 +68,7 @@ export async function runDoctor(_options, { context, env, exec, io }) {
         }
       }
     }
-    if (present) ok(`every file ${RELEASE_CONFIG_FILENAME} doctor.requiredFiles lists is present`);
+    if (present) ok("every file the site's apps require is present");
   }
 
   io.out("\nDependencies:");

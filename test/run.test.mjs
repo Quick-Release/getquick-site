@@ -60,7 +60,7 @@ test("--help lists the command groups without a project", async () => {
     "gq ploi api <operation-id>",
     "gq cloudflare dns list",
     "gq version check [version]",
-    "gq release push <major|minor|fix> [--no-deploy]",
+    "gq release push <major|minor|fix>",
   ]) {
     assert.ok(result.stdout.includes(form), form);
   }

@@ -1,45 +1,41 @@
 // Release and version commands (formerly shop-devtools) at the run() seam: a
-// fixture site with a shop-devtools.config.mjs shaped like Lombardi's — JSON
-// files, a theme stylesheet header and a PHP define as text-file patterns —
+// content site shaped like Lombardi — the default JSON files, plus a theme
+// stylesheet header and a PHP define as text-file patterns in gq.ops.json —
 // driven in-process with a recording exec.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createFixtureSite, recordingExec } from "./support/fixture-site.mjs";
+import { CONTENT_CHECKS, CONTENT_RELEASE_PATHS } from "./support/release-site.mjs";
 
-const RELEASE_CONFIG = `export default {
-  versionFile: "VERSION",
-  changelogPath: "CHANGELOG.md",
-  jsonFiles: ["package.json", "apps/frontend/package.json"],
-  textFiles: [
-    {
-      path: "theme/style.css",
-      patterns: [
-        { regexp: /^Version: .+$/m, replacement: (version) => \`Version: \${version}\` },
-      ],
-    },
-    {
-      path: "theme/functions.php",
-      patterns: [
-        {
-          regexp: /define\\( 'THEME_VERSION', '[^']+' \\);/,
-          replacement: (version) => \`define( 'THEME_VERSION', '\${version}' );\`,
-        },
-      ],
-    },
-  ],
-  releasePaths: ["VERSION", "CHANGELOG.md", "package.json", "apps/frontend/package.json", "theme"],
-  checks: [
-    { cmd: "pnpm", args: ["run", "check"] },
-    { cmd: "composer", args: ["--working-dir=apps/cms", "validate"], env: { CHECK: "1" } },
-  ],
-  deploys: [],
+// A content site whose gq.ops.json adds its theme's stylesheet header and PHP
+// define as text-file patterns, and the theme to the release paths.
+const OPS = {
+  schemaVersion: 1,
+  project: "fixture",
+  variant: "content",
+  release: {
+    textFiles: [
+      {
+        path: "theme/style.css",
+        patterns: [{ regexp: "^Version: .+$", flags: "m", replacement: "Version: {version}" }],
+      },
+      {
+        path: "theme/functions.php",
+        patterns: [
+          {
+            regexp: "define\\( 'THEME_VERSION', '[^']+' \\);",
+            replacement: "define( 'THEME_VERSION', '{version}' );",
+          },
+        ],
+      },
+    ],
+    paths: ["theme"],
+  },
 };
-`;
 
 function siteFiles(version, overrides = {}) {
   return {
-    "shop-devtools.config.mjs": RELEASE_CONFIG,
     VERSION: `${version}\n`,
     "CHANGELOG.md": "# Changelog\n\n## v1.2.3 - 2026-09-01\n\n- Earlier release.\n",
     "package.json": `${JSON.stringify({ name: "site", version, private: true }, null, 2)}\n`,
@@ -51,9 +47,11 @@ function siteFiles(version, overrides = {}) {
 }
 
 const read = (site, path) => readFile(site.path(path), "utf8");
+const releaseSite = (version, overrides) =>
+  createFixtureSite({ ops: OPS, files: siteFiles(version, overrides) });
 
 test("version check passes when every configured file carries VERSION", async () => {
-  const site = await createFixtureSite({ files: siteFiles("1.2.3") });
+  const site = await releaseSite("1.2.3");
   const result = await site.run(["version", "check"]);
   assert.equal(result.stderr, "");
   assert.equal(result.code, 0);
@@ -62,11 +60,9 @@ test("version check passes when every configured file carries VERSION", async ()
 });
 
 test("version check lists every file that drifted from VERSION", async () => {
-  const site = await createFixtureSite({
-    files: siteFiles("1.2.3", {
-      "apps/frontend/package.json": `${JSON.stringify({ name: "frontend" })}\n`,
-      "theme/style.css": "/*\nVersion: 1.2.2\n*/\n",
-    }),
+  const site = await releaseSite("1.2.3", {
+    "apps/frontend/package.json": `${JSON.stringify({ name: "frontend" })}\n`,
+    "theme/style.css": "/*\nVersion: 1.2.2\n*/\n",
   });
   const result = await site.run(["version", "check"]);
   assert.equal(result.code, 1);
@@ -80,7 +76,7 @@ test("version check lists every file that drifted from VERSION", async () => {
 });
 
 test("version check accepts an explicit version", async () => {
-  const site = await createFixtureSite({ files: siteFiles("1.2.3") });
+  const site = await releaseSite("1.2.3");
   const result = await site.run(["version", "check", "1.3.0"]);
   assert.equal(result.code, 1);
   assert.equal(
@@ -94,15 +90,13 @@ test("version check accepts an explicit version", async () => {
 });
 
 test("version sync writes VERSION into the JSON files and text-file patterns", async () => {
-  const site = await createFixtureSite({
-    files: siteFiles("1.2.3", { VERSION: "2.0.0\n" }),
-  });
+  const site = await releaseSite("1.2.3", { VERSION: "2.0.0\n" });
   const result = await site.run(["version", "sync"]);
   assert.equal(result.stderr, "");
   assert.equal(result.code, 0);
   assert.equal(
     result.stdout,
-    "Synced project version 2.0.0.\nAll editable project files are synced at 2.0.0.\n",
+    "Synced project version 2.0.0.\nAll project packages are synced at 2.0.0.\n",
   );
   assert.equal(
     await read(site, "package.json"),
@@ -122,9 +116,7 @@ test("version sync writes VERSION into the JSON files and text-file patterns", a
 });
 
 test("version sync fails on a text file without its version pattern", async () => {
-  const site = await createFixtureSite({
-    files: siteFiles("1.2.3", { "theme/functions.php": "<?php\n" }),
-  });
+  const site = await releaseSite("1.2.3", { "theme/functions.php": "<?php\n" });
   const result = await site.run(["version", "sync"]);
   assert.equal(result.code, 1);
   assert.equal(
@@ -134,14 +126,14 @@ test("version sync fails on a text file without its version pattern", async () =
 });
 
 test("release prepare writes the new VERSION, syncs it, and names the next step", async () => {
-  const site = await createFixtureSite({ files: siteFiles("1.2.3") });
+  const site = await releaseSite("1.2.3");
   const result = await site.run(["release", "prepare", "1.3.0-rc.1"]);
   assert.equal(result.stderr, "");
   assert.equal(result.code, 0);
   assert.equal(
     result.stdout,
     "Synced project version 1.3.0-rc.1.\n" +
-      "All editable project files are synced at 1.3.0-rc.1.\n" +
+      "All project packages are synced at 1.3.0-rc.1.\n" +
       "Prepared release 1.3.0-rc.1. Commit the synced files, then run: gq release tag 1.3.0-rc.1\n",
   );
   assert.equal(await read(site, "VERSION"), "1.3.0-rc.1\n");
@@ -153,7 +145,7 @@ test("release prepare writes the new VERSION, syncs it, and names the next step"
 });
 
 test("release prepare rejects a version that isn't semver and writes nothing", async () => {
-  const site = await createFixtureSite({ files: siteFiles("1.2.3") });
+  const site = await releaseSite("1.2.3");
   const result = await site.run(["release", "prepare", "v1.3"]);
   assert.equal(result.code, 1);
   assert.equal(result.stderr, 'gq: Expected a semver version, received "v1.3".\n');
@@ -161,7 +153,7 @@ test("release prepare rejects a version that isn't semver and writes nothing", a
 });
 
 test("release tag tags a clean, synced tree", async () => {
-  const site = await createFixtureSite({ files: siteFiles("1.2.3") });
+  const site = await releaseSite("1.2.3");
   const exec = recordingExec();
   const result = await site.run(["release", "tag"], { exec });
   assert.equal(result.stderr, "");
@@ -180,7 +172,7 @@ test("release tag tags a clean, synced tree", async () => {
 });
 
 test("release tag refuses a dirty working tree", async () => {
-  const site = await createFixtureSite({ files: siteFiles("1.2.3") });
+  const site = await releaseSite("1.2.3");
   const exec = recordingExec(({ args }) =>
     args[0] === "status" ? { stdout: " M VERSION\n" } : {},
   );
@@ -207,7 +199,7 @@ function gitAnswers(overrides = {}) {
 const releaseGit = (overrides) => recordingExec(gitAnswers(overrides));
 
 test("release push bumps, syncs, logs, checks, commits, tags and pushes", async () => {
-  const site = await createFixtureSite({ files: siteFiles("1.2.3") });
+  const site = await releaseSite("1.2.3");
   const exec = releaseGit();
   const result = await site.run(["release", "push", "minor"], { exec, env: { PATH: "/bin" } });
   assert.equal(result.stderr, "");
@@ -229,9 +221,8 @@ test("release push bumps, syncs, logs, checks, commits, tags and pushes", async 
       "git tag --list v1.3.0",
       "git tag --merged HEAD --list v[0-9]* --sort=-v:refname",
       "git log v1.2.3..HEAD --pretty=format:%h %s",
-      "pnpm run check",
-      "composer --working-dir=apps/cms validate",
-      "git add VERSION CHANGELOG.md package.json apps/frontend/package.json theme",
+      ...CONTENT_CHECKS,
+      `git add ${[...CONTENT_RELEASE_PATHS, "theme"].join(" ")}`,
       "git diff --cached --name-only",
       "git commit -m Release v1.3.0",
       "git tag -a v1.3.0 -m Release v1.3.0",
@@ -241,7 +232,7 @@ test("release push bumps, syncs, logs, checks, commits, tags and pushes", async 
     ],
   );
   const composer = exec.calls.find(({ command }) => command === "composer");
-  assert.deepEqual(composer.env, { PATH: "/bin", CHECK: "1" });
+  assert.deepEqual(composer.env, { PATH: "/bin" });
   assert.equal(composer.cwd, site.root);
 
   assert.equal(await read(site, "VERSION"), "1.3.0\n");
@@ -256,18 +247,15 @@ test("release push bumps, syncs, logs, checks, commits, tags and pushes", async 
 });
 
 test("release push fix bumps the patch number and names it a fix", async () => {
-  const site = await createFixtureSite({ files: siteFiles("1.2.3") });
+  const site = await releaseSite("1.2.3");
   const exec = releaseGit({ "tag --list v1.2.4": "" });
-  const result = await site.run(["release", "push", "patch", "--no-deploy"], { exec });
+  const result = await site.run(["release", "push", "patch"], { exec });
   assert.equal(result.code, 0, result.stderr);
-  assert.match(
-    result.stdout,
-    /Skipped deployments because --no-deploy was provided\.\nPushed fix release 1\.2\.4\.\n$/,
-  );
+  assert.match(result.stdout, /\nPushed fix release 1\.2\.4\.\n$/);
 });
 
 test("release push stops before writing anything when the tag exists", async () => {
-  const site = await createFixtureSite({ files: siteFiles("1.2.3") });
+  const site = await releaseSite("1.2.3");
   const exec = releaseGit({ "tag --list v2.0.0": "v2.0.0\n" });
   const result = await site.run(["release", "push", "major"], { exec });
   assert.equal(result.code, 1);
@@ -276,7 +264,7 @@ test("release push stops before writing anything when the tag exists", async () 
 });
 
 test("release push stops when a check fails, before committing", async () => {
-  const site = await createFixtureSite({ files: siteFiles("1.2.3") });
+  const site = await releaseSite("1.2.3");
   const answer = gitAnswers();
   const exec = recordingExec((call) => (call.command === "pnpm" ? { code: 2 } : answer(call)));
   const result = await site.run(["release", "push", "minor"], { exec });
@@ -286,26 +274,15 @@ test("release push stops when a check fails, before committing", async () => {
 });
 
 test("release push rejects anything but a bump kind", async () => {
-  const site = await createFixtureSite({ files: siteFiles("1.2.3") });
+  const site = await releaseSite("1.2.3");
   const result = await site.run(["release", "push", "1.3.0"]);
   assert.equal(result.code, 1);
-  assert.equal(result.stderr, "gq: Usage: gq release push <major|minor|fix> [--no-deploy]\n");
+  assert.equal(result.stderr, "gq: Usage: gq release push <major|minor|fix>\n");
   assert.deepEqual(result.exec.calls, []);
 });
 
-test("release commands explain a missing release config", async () => {
-  const site = await createFixtureSite();
-  const result = await site.run(["version", "check"]);
-  assert.equal(result.code, 1);
-  assert.equal(
-    result.stderr,
-    `gq: No shop-devtools.config.mjs in ${site.root}. Release and version commands read the ` +
-      "site's version file, version-carrying files and release paths from it.\n",
-  );
-});
-
 test("release commands find the site from a subdirectory", async () => {
-  const site = await createFixtureSite({ files: siteFiles("1.2.3") });
+  const site = await releaseSite("1.2.3");
   const result = await site.run(["version", "check"], { cwd: site.path("theme") });
   assert.equal(result.code, 0, result.stderr);
 });
@@ -313,7 +290,7 @@ test("release commands find the site from a subdirectory", async () => {
 test("release commands reject options they don't take before loading a project", async () => {
   const site = await createFixtureSite({ ops: null });
   for (const [argv, message] of [
-    [["version", "check", "--no-deploy"], "--no-deploy is not valid for version check."],
+    [["version", "check", "--dry-run"], "--dry-run is not valid for version check."],
     [["release", "tag", "--yes"], "--yes is not valid for release tag."],
     [
       ["release", "tag", "1.2.3", "extra"],
@@ -324,50 +301,4 @@ test("release commands reject options they don't take before loading a project",
     assert.equal(result.code, 1, argv.join(" "));
     assert.equal(result.stderr, `gq: ${message}\n`);
   }
-});
-
-test("version check compares the Composer manifest and lock; sync leaves the lock", async () => {
-  const composerConfig = RELEASE_CONFIG.replace(
-    "releasePaths:",
-    'composer: { manifest: "apps/cms/composer.json", lock: "apps/cms/composer.lock", workingDir: "apps/cms", packages: ["site/plugin"] },\n  releasePaths:',
-  );
-  const site = await createFixtureSite({
-    files: siteFiles("1.2.3", {
-      "shop-devtools.config.mjs": composerConfig,
-      "apps/cms/composer.json": `${JSON.stringify({ require: { "site/plugin": "1.2.2" } })}\n`,
-      "apps/cms/composer.lock": `${JSON.stringify({ packages: [{ name: "site/plugin", version: "1.2.2" }] })}\n`,
-    }),
-  });
-
-  const check = await site.run(["version", "check"]);
-  assert.equal(check.code, 1);
-  assert.equal(
-    check.stderr,
-    "gq: Version drift detected for 1.2.3:\n" +
-      "  - apps/cms/composer.json require.site/plugin: 1.2.2\n" +
-      "  - apps/cms/composer.lock site/plugin: 1.2.2\n",
-  );
-
-  // The lock only moves with `composer update`, which sync doesn't run.
-  const sync = await site.run(["version", "sync"]);
-  assert.equal(sync.code, 0, sync.stderr);
-  assert.deepEqual(JSON.parse(await read(site, "apps/cms/composer.json")).require, {
-    "site/plugin": "1.2.3",
-  });
-  assert.deepEqual(sync.exec.calls, []);
-});
-
-test("a release config that still sets docsChangelogPath is an actionable error", async () => {
-  const site = await createFixtureSite({
-    files: siteFiles("1.2.3", {
-      "shop-devtools.config.mjs": 'export default { docsChangelogPath: "docs/changelog.md" };\n',
-    }),
-  });
-  const result = await site.run(["version", "check"]);
-  assert.equal(result.code, 1);
-  assert.equal(
-    result.stderr,
-    "gq: shop-devtools.config.mjs sets docsChangelogPath, which gq doesn't support: " +
-      "the docs changelog page was dropped with shop-devtools. Remove it.\n",
-  );
 });

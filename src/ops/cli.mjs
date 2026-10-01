@@ -271,7 +271,7 @@ function parseArguments(argv) {
     "--git-dir",
   ]);
   const repeatedValueOptions = new Set(["--path", "--query"]);
-  const booleanOptions = new Set(["--all", "--dry-run", "--yes", "--no-deploy"]);
+  const booleanOptions = new Set(["--all", "--dry-run", "--yes"]);
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];

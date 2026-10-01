@@ -222,6 +222,140 @@
         }
       },
       "additionalProperties": false
+    },
+    "release": {
+      "description": "Added to the variant's version files, text patterns and release paths.",
+      "type": "object",
+      "properties": {
+        "jsonFiles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "textFiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "patterns": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "regexp": {
+                      "type": "string"
+                    },
+                    "flags": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "regexp",
+                    "replacement"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "path",
+              "patterns"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "verify": {
+      "description": "Added to the variant's checks, which run after them.",
+      "type": "object",
+      "properties": {
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "cmd": {
+                "type": "string",
+                "minLength": 1
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "cwd": {
+                "type": "string",
+                "minLength": 1
+              },
+              "env": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "requires": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "php",
+                    "ddev"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "cmd"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "doctor": {
+      "description": "Added to the files the variant requires in each app.",
+      "type": "object",
+      "properties": {
+        "requiredFiles": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "required": [
