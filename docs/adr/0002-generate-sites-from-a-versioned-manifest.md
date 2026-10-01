@@ -44,14 +44,22 @@ file from a template update.
   environment axis is later fleet work.
 - **Ownership categories.** A file-ownership manifest published with the
   package classifies every path the blueprint touches:
-  - **fully generated**: the whole file is rewritten from the templates;
+  - **fully generated**: the whole file is rewritten from the templates
+    (in phase 2: the Git hook layout, the toolchain pins, the staged
+    lint/format config, the docs skeleton's READMEs and agent reference
+    docs, the agent-skills symlink, the Cloudflare CI Worker config, the
+    frontend deploy configuration and script, the CI release step, and the
+    Admin deploy script);
   - **generated section**: begin/end markers in a text file, with site
     content outside them (the `AGENTS.md` base, the ignore file);
   - **managed keys**: key-level ownership in the root `package.json` (the
     package manager and engine pins, the hook-install script, and the root
     scripts that wrap `gq`);
   - **create-once**: written only when absent and never restored after the
-    site deletes it, unless `gq sync --recreate <path>` asks for it.
+    site deletes it, unless `gq sync --recreate <path>` asks for it
+    (`gq.ops.json`, the glossary and README, the Admin deploy extension
+    directory, the env templates, the workspace config, and the Admin and
+    Frontend app skeletons).
 
   Anything not listed is site-owned and never touched.
 
@@ -67,7 +75,8 @@ file from a template update.
   create-once directory of site-owned scripts) in lexical order, and a
   non-zero exit from any of them fails the deploy. Site-specific steps, such
   as retiring an old plugin or a one-off data migration, live there and
-  survive regeneration.
+  survive regeneration. The deploy status line keeps its per-project form;
+  renaming it is a phase 4 decision.
 - **Generation holds no authority.** `gq new` and `gq sync` need no network
   access and no secrets. Generated env templates contain public
   configuration and placeholders only; secrets stay per-command Sigillo

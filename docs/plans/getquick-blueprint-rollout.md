@@ -8,7 +8,8 @@ tooling or rollout machinery is built. The
 records the evidence behind them. This plan moved here from Lombardi on
 2026-10-01, with the blueprint's decision record, once `getquick-site`
 existed ([#2](https://github.com/Quick-Release/getquick-site/issues/2));
-Lombardi keeps only its own adoption record.
+Lombardi's side, superseding its ADR 0001 with a record of its own adoption, is
+[Quick-Release/lombardi#20](https://github.com/Quick-Release/lombardi/issues/20).
 
 Start with fleet inventory and durable rollout automation, not a large
 management UI. Release, health-check, and recovery guarantees come before

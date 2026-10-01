@@ -46,4 +46,5 @@ A site's Bedrock WordPress CMS and WPGraphQL API, deployed to Ploi.
 _Avoid_: CMS (except in paths such as `apps/cms`)
 
 **Frontend**:
-A site's public Astro site, deployed to Cloudflare Workers.
+A site's public website, rendered from the Admin's content and deployed to
+Cloudflare Workers.

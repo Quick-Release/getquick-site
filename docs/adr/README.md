@@ -17,7 +17,15 @@ What problem or constraint forced this decision.
 
 ## Decision
 
-What was decided, and why the alternatives were rejected.
+What was decided.
+
+## Considered options
+
+Optional: the alternatives worth remembering, and why each was rejected.
+
+## Consequences
+
+Optional: downstream effects that aren't obvious from the decision.
 ```
 
 Record a decision here when it would be expensive to reverse or when a
