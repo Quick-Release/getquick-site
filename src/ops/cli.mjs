@@ -13,9 +13,9 @@ import { PLOI_ENDPOINTS } from "./providers/ploi-endpoints.mjs";
 import { chooseCommand } from "./ui.mjs";
 import {
   isReleaseCommand,
+  releaseCommandOptions,
   RELEASE_USAGE,
   runReleaseCommand,
-  validateReleaseCommand,
 } from "../release/release.mjs";
 import { VERSION } from "../version.mjs";
 
@@ -49,8 +49,7 @@ export async function runCli(argv, { cwd, env, fetch, exec, io, interactive }) {
     printHelp(io);
     return;
   }
-  if (isReleaseCommand(parsed.command)) validateReleaseCommand(parsed);
-  else validateCommand(parsed);
+  validateCommand(parsed);
   if (isPloiApiCommand(parsed.command) && runPloiApiCatalogCommand(parsed, io)) {
     return;
   }
@@ -240,8 +239,12 @@ function validateCommand(parsed) {
     return;
   }
 
-  const command = parsed.command.join(" ");
-  const allowedOptions = COMMAND_OPTIONS.get(command);
+  const { command, allowedOptions } = isReleaseCommand(parsed.command)
+    ? releaseCommandOptions(parsed)
+    : {
+        command: parsed.command.join(" "),
+        allowedOptions: COMMAND_OPTIONS.get(parsed.command.join(" ")),
+      };
   if (!allowedOptions) throw new Error(`Unknown command: ${command}. Run gq --help.`);
 
   const globals = new Set(["command", "help", "json", "project", "config"]);

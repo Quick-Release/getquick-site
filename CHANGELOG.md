@@ -33,7 +33,8 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 ### Not carried over
 
 - `docsChangelogPath` (the Starlight docs changelog page) and the legacy
-  `wrangler` deploys, which Lombardi no longer used.
+  `wrangler` deploys, which Lombardi no longer used. A release config that
+  still sets `docsChangelogPath` is an error rather than silently ignored.
 
 ## 0.1.1 — 2026-10-01
 

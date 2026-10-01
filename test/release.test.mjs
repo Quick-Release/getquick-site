@@ -309,3 +309,65 @@ test("release commands find the site from a subdirectory", async () => {
   const result = await site.run(["version", "check"], { cwd: site.path("theme") });
   assert.equal(result.code, 0, result.stderr);
 });
+
+test("release commands reject options they don't take before loading a project", async () => {
+  const site = await createFixtureSite({ ops: null });
+  for (const [argv, message] of [
+    [["version", "check", "--no-deploy"], "--no-deploy is not valid for version check."],
+    [["release", "tag", "--yes"], "--yes is not valid for release tag."],
+    [
+      ["release", "tag", "1.2.3", "extra"],
+      "Unknown command: release tag 1.2.3 extra. Run gq --help.",
+    ],
+  ]) {
+    const result = await site.run(argv);
+    assert.equal(result.code, 1, argv.join(" "));
+    assert.equal(result.stderr, `gq: ${message}\n`);
+  }
+});
+
+test("version check compares the Composer manifest and lock; sync leaves the lock", async () => {
+  const composerConfig = RELEASE_CONFIG.replace(
+    "releasePaths:",
+    'composer: { manifest: "apps/cms/composer.json", lock: "apps/cms/composer.lock", workingDir: "apps/cms", packages: ["site/plugin"] },\n  releasePaths:',
+  );
+  const site = await createFixtureSite({
+    files: siteFiles("1.2.3", {
+      "shop-devtools.config.mjs": composerConfig,
+      "apps/cms/composer.json": `${JSON.stringify({ require: { "site/plugin": "1.2.2" } })}\n`,
+      "apps/cms/composer.lock": `${JSON.stringify({ packages: [{ name: "site/plugin", version: "1.2.2" }] })}\n`,
+    }),
+  });
+
+  const check = await site.run(["version", "check"]);
+  assert.equal(check.code, 1);
+  assert.equal(
+    check.stderr,
+    "gq: Version drift detected for 1.2.3:\n" +
+      "  - apps/cms/composer.json require.site/plugin: 1.2.2\n" +
+      "  - apps/cms/composer.lock site/plugin: 1.2.2\n",
+  );
+
+  // The lock only moves with `composer update`, which sync doesn't run.
+  const sync = await site.run(["version", "sync"]);
+  assert.equal(sync.code, 0, sync.stderr);
+  assert.deepEqual(JSON.parse(await read(site, "apps/cms/composer.json")).require, {
+    "site/plugin": "1.2.3",
+  });
+  assert.deepEqual(sync.exec.calls, []);
+});
+
+test("a release config that still sets docsChangelogPath is an actionable error", async () => {
+  const site = await createFixtureSite({
+    files: siteFiles("1.2.3", {
+      "shop-devtools.config.mjs": 'export default { docsChangelogPath: "docs/changelog.md" };\n',
+    }),
+  });
+  const result = await site.run(["version", "check"]);
+  assert.equal(result.code, 1);
+  assert.equal(
+    result.stderr,
+    "gq: shop-devtools.config.mjs sets docsChangelogPath, which gq doesn't support: " +
+      "the docs changelog page was dropped with shop-devtools. Remove it.\n",
+  );
+});

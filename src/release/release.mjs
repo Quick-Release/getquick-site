@@ -25,9 +25,10 @@ export function isReleaseCommand(command) {
   return command[0] === "version" || command[0] === "release";
 }
 
-// Checks the command and its options before any project is loaded, like the
-// other gq commands. Returns the single positional argument, if any.
-export function validateReleaseCommand(parsed) {
+// Resolves a release command's name and the options it accepts, checking its
+// shape (and push's bump kind) before any project is loaded, so the CLI can
+// validate its options like any other command's.
+export function releaseCommandOptions(parsed) {
   const [group, action, argument, ...extra] = parsed.command;
   const name = `${group} ${action ?? ""}`.trim();
   const entry = RELEASE_COMMANDS.get(name);
@@ -35,20 +36,15 @@ export function validateReleaseCommand(parsed) {
     throw new Error(`Unknown command: ${parsed.command.join(" ")}. Run gq --help.`);
   }
   const [usage, allowedOptions] = entry;
-  const globals = new Set(["command", "help", "json", "project", "config"]);
-  for (const key of Object.keys(parsed)) {
-    if (!globals.has(key) && !allowedOptions.includes(key)) {
-      throw new Error(`Unknown option for ${name}. Usage: ${usage}`);
-    }
-  }
   if (name === "release push" && !BUMP_KINDS.has(argument ?? "")) {
     throw new Error(`Usage: ${usage}`);
   }
-  return argument;
+  return { command: name, allowedOptions };
 }
 
+// Runs a command that releaseCommandOptions() has already accepted.
 export async function runReleaseCommand({ parsed, context, env, exec, io }) {
-  const argument = validateReleaseCommand(parsed);
+  const argument = parsed.command[2];
   const release = createRelease({
     config: await loadReleaseConfig(context.projectRoot),
     root: context.projectRoot,
@@ -95,6 +91,13 @@ async function loadReleaseConfig(root) {
     );
   }
   const module = await import(pathToFileURL(path).href);
+  const config = module.default ?? module;
+  if (config.docsChangelogPath) {
+    throw new Error(
+      `${RELEASE_CONFIG_FILENAME} sets docsChangelogPath, which gq doesn't support: ` +
+        "the docs changelog page was dropped with shop-devtools. Remove it.",
+    );
+  }
   return {
     versionFile: "VERSION",
     changelogPath: "CHANGELOG.md",
@@ -104,7 +107,7 @@ async function loadReleaseConfig(root) {
     releasePaths: [],
     checks: [],
     deploys: [],
-    ...(module.default ?? module),
+    ...config,
   };
 }
 
