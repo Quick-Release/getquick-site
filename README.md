@@ -107,16 +107,34 @@ gq sync --recreate README.md   # write a create-once file again
 [`blueprint/ownership.json`](blueprint/ownership.json), published with the
 package, lists every path the blueprint touches by category: fully
 generated, generated section, managed keys, and create-once. Anything it
-doesn't list is site-owned, and `gq sync` never reads or writes it. The
-fully generated files so far are the ones that need no site values,
-extracted from Lombardi: the toolchain pins (`.mise.toml`, `.nvmrc`), the
-Git hooks (`.vite-hooks/pre-commit` formats and lints staged files,
-`pre-push` runs `pnpm verify`), the staged lint/format config
-(`vite.config.ts`), the READMEs of `docs/adr`, `docs/plans`, `docs/research`
-and `docs/agents`, the agent reference docs in `docs/agents`, and the
-`.claude/skills` symlink to `../.agents/skills`. A site's own ADRs, plans
-and research beside those READMEs are site-owned. Only `--variant content`
-is generated until phase 4.
+doesn't list is site-owned, and `gq sync` never reads or writes it. Only
+`--variant content` is generated until phase 4.
+
+The fully generated files are extracted from Lombardi. They are the
+toolchain pins (`.mise.toml`, `.nvmrc`), the Git hooks
+(`.vite-hooks/pre-commit` formats and lints staged files, `pre-push` runs
+`pnpm verify`), the staged lint/format config (`vite.config.ts`), the
+READMEs of `docs/adr`, `docs/plans`, `docs/research` and `docs/agents`, the
+agent reference docs in `docs/agents`, and the `.claude/skills` symlink to
+`../.agents/skills`. A site's own ADRs, plans and research beside those
+READMEs are site-owned. The site's deploy wiring is fully generated too:
+the Cloudflare CI Worker (`infra/ci`: its Wrangler config, CI and mirror
+Workflows, webhook, release check and sandbox image), the Frontend deploy
+configuration and script (`infra/frontend.run.ts`,
+`infra/scripts/deploy-frontend.mjs`, `infra/package.json`), the CI release
+step (`scripts/ci-release.mjs`) and the tests of the CI Worker and release
+step (`scripts/ci.test.mjs`).
+
+The deploy wiring is rendered from `gq.ops.json`: the Worker, its Workflows
+and its vars from `ci.worker`, `ci.backupBucket`, `artifacts`,
+`cloudflare.accountId` and `github.repository`; package, Frontend Worker
+and Alchemy names from `project`; the sandbox image's pnpm from the
+blueprint's `packageManager` pin, and the infra package's Node engine
+from its `engines.node` pin. A value `gq.ops.json` doesn't have yet is
+written as a placeholder naming its key (`"<ci.worker>"`), so a new site can
+be generated before it is provisioned; fill the value in and `gq sync`
+rewrites the files. The Frontend deploy reads `domains` and
+`cloudflare.accountId` from `gq.ops.json` when it runs.
 
 A site shares three more kinds of file with the blueprint:
 
@@ -128,10 +146,12 @@ A site shares three more kinds of file with the blueprint:
   sections) stop sync with an error.
 - **Managed keys.** In the root `package.json`, `gq` sets the
   `packageManager` and `engines.node` pins, the hook install (`prepare`),
-  and the root scripts that wrap `gq` (`verify`, `cms:*`, `ploi:*`,
-  `release*` and the rest). Every other key, including the site's own
-  scripts and its dependencies, is the site's: `gq` edits the file as text,
-  so those keys stay byte for byte. A managed key the site removed is added
+  the root scripts that wrap `gq` (`verify`, `cms:*`, `ploi:*`,
+  `release*` and the rest), and the ones that run the deploy wiring
+  (`deploy:frontend`, `deploy:frontend:raw`, `plan:frontend`,
+  `infra:check`, `ci:check`, `test:scripts`). Every other key, including
+  the site's own scripts and its dependencies, is the site's: `gq` edits
+  the file as text, so those keys stay byte for byte. A managed key the site removed is added
   back after its siblings, in the file's indentation. One the blueprint
   retires is removed, unless the site changed it, in which case it is the
   site's.
@@ -512,8 +532,9 @@ read:
   bucket and "CI Backups R2" → `CI_BACKUP_R2_*`, "CI Deploy" →
   `CI_DEPLOY_API_TOKEN`, and the `artifacts` namespace and repository.
 
-The site owns its CI Worker (in `ci.directory`, default `infra/ci`, with its
-own Wrangler); these commands deploy and connect it:
+`gq sync` generates the site's CI Worker in `infra/ci`, with its own
+Wrangler (a site that keeps one elsewhere points `ci.directory` at it);
+these commands deploy and connect it:
 
 - `ci deploy` deploys the Worker `ci.worker` with `CI_DEPLOY_API_TOKEN`, then
   sends its secrets to `wrangler secret bulk` as JSON over stdin: `CF_TOKEN`,

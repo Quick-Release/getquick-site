@@ -1,0 +1,20 @@
+{
+  "name": "@lombardi/ci",
+  "private": true,
+  "description": "Cloudflare CI (Artifacts + CI Workflows) for the Lombardi monorepo.",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "wrangler deploy --dry-run --containers-rollout=none --outdir .wrangler/dry-run"
+  },
+  "dependencies": {
+    "@cloudflare/ci": "0.2.0",
+    "@cloudflare/sandbox": "0.12.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260921.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.118.0"
+  }
+}

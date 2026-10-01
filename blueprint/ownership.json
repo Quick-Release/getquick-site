@@ -26,6 +26,25 @@
       "path": "docs/agents/triage-labels.md",
       "template": "templates/docs/agents/triage-labels.md"
     },
+    { "path": "infra/ci/Dockerfile", "template": "templates/infra/ci/Dockerfile" },
+    { "path": "infra/ci/cloudflare.ci.ts", "template": "templates/infra/ci/cloudflare.ci.ts" },
+    { "path": "infra/ci/env.ts", "template": "templates/infra/ci/env.ts" },
+    { "path": "infra/ci/github.ts", "template": "templates/infra/ci/github.ts" },
+    { "path": "infra/ci/mirror.ts", "template": "templates/infra/ci/mirror.ts" },
+    { "path": "infra/ci/package.json", "template": "templates/infra/ci/package.json" },
+    { "path": "infra/ci/release.ts", "template": "templates/infra/ci/release.ts" },
+    { "path": "infra/ci/src/index.ts", "template": "templates/infra/ci/src/index.ts" },
+    { "path": "infra/ci/tsconfig.json", "template": "templates/infra/ci/tsconfig.json" },
+    { "path": "infra/ci/wrangler.jsonc", "template": "templates/infra/ci/wrangler.jsonc" },
+    { "path": "infra/frontend.run.ts", "template": "templates/infra/frontend.run.ts" },
+    { "path": "infra/package.json", "template": "templates/infra/package.json" },
+    {
+      "path": "infra/scripts/deploy-frontend.mjs",
+      "template": "templates/infra/scripts/deploy-frontend.mjs"
+    },
+    { "path": "infra/tsconfig.json", "template": "templates/infra/tsconfig.json" },
+    { "path": "scripts/ci-release.mjs", "template": "templates/scripts/ci-release.mjs" },
+    { "path": "scripts/ci.test.mjs", "template": "templates/scripts/ci.test.mjs" },
     { "path": ".claude/skills", "symlink": "../.agents/skills" }
   ],
   "generatedSections": [

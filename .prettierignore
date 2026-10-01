@@ -4,3 +4,5 @@
 schema/
 # Extracted byte-for-byte from Lombardi, which formats with vp fmt
 blueprint/templates/
+# Copied byte-for-byte from Lombardi, which the rendered templates must reproduce
+test/fixtures/lombardi/

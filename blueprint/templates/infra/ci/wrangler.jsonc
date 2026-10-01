@@ -1,0 +1,53 @@
+{
+  // {{Project}} CI on Cloudflare: pushes to the Artifacts repository (gq.ops.json
+  // artifacts) start the CI Workflow (cloudflare.ci.ts), whose steps run in
+  // sandbox containers built from ./Dockerfile. GitHub pushes reach Artifacts
+  // through the GitHub webhook (workers.dev URL, HMAC-verified) and the Mirror
+  // Workflow (mirror.ts). Deployed with `pnpm ci:deploy`.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "{{ci.worker}}",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-16",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "artifacts": [{ "binding": "ARTIFACTS", "namespace": "{{artifacts.namespace}}" }],
+  "containers": [
+    {
+      "class_name": "CiSandbox",
+      "image": "./Dockerfile",
+      // 1 vCPU / 4 GiB / 8 GB: a third of standard-4's memory (billed per
+      // second). Measured in this image: pnpm install peaks at ~2.8 GiB, and
+      // node_modules + the pnpm store + the workspace need > 6 GB of disk.
+      // A ceiling, not a cost: instances are billed only while running. 2 was
+      // too low — a main push and its tag run concurrently, and containers from
+      // a failed step can linger, so new steps got "WebSocket upgrade failed: 503".
+      "max_instances": 6,
+      "instance_type": { "vcpu": 1, "memory_mib": 4096, "disk_mb": 8192 },
+    },
+  ],
+  "durable_objects": { "bindings": [{ "name": "SANDBOX", "class_name": "CiSandbox" }] },
+  "exports": { "CiSandbox": { "type": "durable-object", "storage": "sqlite" } },
+  "workflows": [
+    { "name": "{{ci.worker}}", "binding": "CI_WORKFLOW", "class_name": "CI" },
+    { "name": "{{project}}-mirror", "binding": "MIRROR_WORKFLOW", "class_name": "Mirror" },
+  ],
+  "triggers": {
+    "events": [
+      {
+        "type": "cf.artifacts.repo.pushed",
+        "filter": { "namespace": "{{artifacts.namespace}}", "repo_name": "{{artifacts.repo}}" },
+        "targets": [{ "type": "workflow", "workflow_name": "{{ci.worker}}" }],
+      },
+    ],
+  },
+  "r2_buckets": [{ "binding": "BACKUP_BUCKET", "bucket_name": "{{ci.backupBucket}}" }],
+  "vars": {
+    "BACKUP_BUCKET_NAME": "{{ci.backupBucket}}",
+    "CLOUDFLARE_ACCOUNT_ID": "{{cloudflare.accountId}}",
+    "CLOUDFLARE_DEPLOY_ACCOUNT_ID": "{{cloudflare.accountId}}",
+    "ARTIFACTS_NAMESPACE": "{{artifacts.namespace}}",
+    "ARTIFACTS_REPO": "{{artifacts.repo}}",
+    "GITHUB_REPOSITORY": "{{github.repository}}",
+  },
+  "observability": { "enabled": true, "logs": { "enabled": true } },
+}

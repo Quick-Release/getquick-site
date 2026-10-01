@@ -16,15 +16,56 @@ import { chmod, lstat, mkdir, readFile, readlink, rm, symlink, writeFile } from 
 import { dirname, join } from "node:path";
 
 import ownership from "../../blueprint/ownership.json" with { type: "json" };
+import packageTemplate from "../../blueprint/templates/package.json" with { type: "json" };
 import { VERSION } from "../version.mjs";
 
 export const LOCK_FILENAME = "gq.lock.json";
 
 const BLUEPRINT = new URL("../../blueprint/", import.meta.url);
 
-// A blueprint template's text, or its bytes when `encoding` is null.
-function readTemplate(template, encoding = "utf8") {
-  return readFile(new URL(template, BLUEPRINT), encoding);
+// A blueprint template's text, as it ships.
+function readTemplate(template) {
+  return readFile(new URL(template, BLUEPRINT), "utf8");
+}
+
+// A template's text with each `{{name}}` replaced by the site's value for
+// it (templateValues), or by `<name>` while gq.ops.json lacks that value,
+// so a site can be generated before it is provisioned. A name gq doesn't
+// know is refused, so a typo can't ship as literal text.
+async function renderTemplate(template, manifest) {
+  const values = templateValues(manifest);
+  return (await readTemplate(template)).replaceAll(/\{\{([\w.]+)\}\}/gu, (token, name) => {
+    if (!Object.hasOwn(values, name)) {
+      throw new Error(`The blueprint's ${template} uses ${token}, which gq doesn't render.`);
+    }
+    return values[name] ?? `<${name}>`;
+  });
+}
+
+// What a template's `{{name}}` stands for: the manifest's site values under
+// their key paths, `Project` (project in PascalCase, for names and prose),
+// and the blueprint's own pins in the root package.json, `packageManager`
+// and `nodeEngine` (engines.node), so a copy of one can't drift. Only fully
+// generated and create-once templates are rendered; a section's or managed
+// keys' template is used as it ships.
+function templateValues(manifest) {
+  const { project } = manifest;
+  return {
+    project,
+    Project: project
+      .split(/[^A-Za-z0-9]+/u)
+      .filter(Boolean)
+      .map((word) => `${word[0].toUpperCase()}${word.slice(1)}`)
+      .join(""),
+    packageManager: packageTemplate.packageManager,
+    nodeEngine: packageTemplate.engines.node,
+    "ci.worker": manifest.ci?.worker,
+    "ci.backupBucket": manifest.ci?.backupBucket,
+    "artifacts.namespace": manifest.artifacts?.namespace,
+    "artifacts.repo": manifest.artifacts?.repo,
+    "cloudflare.accountId": manifest.cloudflare?.accountId,
+    "github.repository": manifest.github?.repository,
+  };
 }
 
 // What gq sync would do in `root` for the validated `manifest`: for each
@@ -48,7 +89,7 @@ export async function planManagedFiles(root, manifest, { recreate = [] } = {}) {
   }
   const lock = await readLock(root);
   const planned = await Promise.all([
-    ...ownership.fullyGenerated.map((entry) => planGeneratedFile(root, lock, entry)),
+    ...ownership.fullyGenerated.map((entry) => planGeneratedFile(root, lock, manifest, entry)),
     ...ownership.generatedSections.map((entry) => planSection(root, lock, entry)),
     ...ownership.managedKeys.map((entry) => planKeys(root, lock, manifest, entry)),
     ...ownership.createOnce.map((entry) => planCreateOnce(root, lock, manifest, entry, recreate)),
@@ -97,9 +138,16 @@ export async function applyManagedFiles(root, plan) {
 }
 
 // A fully generated file or symlink, rendered whole from its template.
-async function planGeneratedFile(root, lock, { path, template, symlink, executable = false }) {
+async function planGeneratedFile(
+  root,
+  lock,
+  manifest,
+  { path, template, symlink, executable = false },
+) {
   const rendered =
-    symlink === undefined ? { bytes: await readTemplate(template, null), executable } : { symlink };
+    symlink === undefined
+      ? { bytes: Buffer.from(await renderTemplate(template, manifest)), executable }
+      : { symlink };
   const current = await readEntry(join(root, path));
   const [currentHash, renderedHash] = [hashEntry(current), hashEntry(rendered)];
   let status;
@@ -391,16 +439,15 @@ function hashValue(value) {
   return hash(JSON.stringify(value));
 }
 
-// A create-once file: written from its template, with `{{project}}` standing
-// for the manifest's project, when it is missing and the lock doesn't record
-// it as created (or when `recreate` names it), and never otherwise.
+// A create-once file: written from its rendered template when it is missing
+// and the lock doesn't record it as created (or when `recreate` names it),
+// and never otherwise.
 async function planCreateOnce(root, lock, manifest, { path, template }, recreate) {
   const current = await readEntry(join(root, path));
   const recorded = current !== undefined || lock?.created.includes(path) === true;
   if (template === undefined) return { path, record: { created: recorded ? [path] : [] } };
 
-  const text = await readTemplate(template);
-  const content = Buffer.from(text.replaceAll("{{project}}", manifest.project));
+  const content = Buffer.from(await renderTemplate(template, manifest));
   let status = "unchanged";
   if (current === undefined) {
     if (!recorded || recreate.includes(path)) status = "create";

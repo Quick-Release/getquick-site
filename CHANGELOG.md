@@ -27,6 +27,21 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   `gq new` (or `gq sync`) when absent and recorded in the lock as created
   once present, so they are never rewritten or restored after.
   `gq sync --recreate <path>` writes one again.
+- The site's deploy wiring, fully generated from `gq.ops.json` and
+  extracted from Lombardi: the Cloudflare CI Worker (`infra/ci`: Wrangler
+  config, CI and mirror Workflows, webhook, release check, sandbox image),
+  the Frontend deploy configuration and script (`infra/frontend.run.ts`,
+  `infra/scripts/deploy-frontend.mjs`, `infra/package.json`), the CI release
+  step (`scripts/ci-release.mjs`) and their tests (`scripts/ci.test.mjs`).
+  Worker, Workflow, namespace, bucket, account and repository names come
+  from `ci`, `artifacts`, `cloudflare` and `github`, the rest from
+  `project`; a value the manifest doesn't have yet is written as a
+  placeholder naming its key (`<ci.worker>`). Lombardi's manifest renders
+  Lombardi's files byte for byte.
+- Managed root scripts for the deploy wiring: `deploy:frontend`,
+  `deploy:frontend:raw` (the release step's Frontend deploy),
+  `plan:frontend`, `infra:check`, `ci:check` and `test:scripts` (checks the
+  content variant's `gq verify` runs).
 
 ### Changed
 

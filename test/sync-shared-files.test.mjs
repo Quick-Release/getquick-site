@@ -202,11 +202,13 @@ test("gq sync refuses a generated section whose markers it can't pair", async ()
   assert.deepEqual(await snapshot(site.root), before);
 });
 
-// The root scripts that wrap gq, as Lombardi has them.
+// The root scripts that wrap gq or run the generated deploy files (the
+// release step and the checks gq verify runs), as Lombardi has them.
 const GQ_SCRIPTS = {
   setup: "gq setup",
   doctor: "gq doctor",
   verify: "gq verify",
+  "test:scripts": "node --test scripts/*.test.mjs",
   "cms:dev": "gq sigillo run local -- gq cms start",
   "cms:dev:raw": "gq cms start",
   "cms:dev:foreground": "gq sigillo run local -- gq cms start --foreground",
@@ -220,6 +222,10 @@ const GQ_SCRIPTS = {
   "cms:lint": "gq cms composer lint",
   "db:sync": "gq sigillo run staging -- gq db sync",
   "db:backup": "gq sigillo run staging -- gq db backup",
+  "deploy:frontend": "gq sigillo run staging -- pnpm --dir infra run deploy:frontend",
+  "deploy:frontend:raw": "pnpm --dir infra run deploy:frontend",
+  "plan:frontend": "pnpm --dir infra run plan:frontend",
+  "infra:check": "pnpm --dir infra run check",
   push: "gq release push",
   release: "gq release prepare",
   "release:prepare": "gq release prepare",
@@ -237,6 +243,7 @@ const GQ_SCRIPTS = {
   "git:artifacts": "gq git artifacts",
   "ci:deploy": "gq sigillo run staging -- gq ci deploy",
   "ci:runs": "gq sigillo run staging -- gq ci runs",
+  "ci:check": "pnpm --dir infra/ci run check",
   "cf:ci": "gq sigillo run operations -- gq cloudflare ci",
   "cf:deploy-token": "gq sigillo run operations -- gq cloudflare deploy-token",
   "github:setup": "gq sigillo run staging -- gq github setup",
@@ -301,9 +308,9 @@ test("an edit to a managed package key stops gq sync with a diff, and nothing is
         '     "doctor": "gq doctor",',
         '-    "verify": "gq verify --skip php",',
         '+    "verify": "gq verify",',
+        '     "test:scripts": "node --test scripts/*.test.mjs",',
         '     "cms:dev": "gq sigillo run local -- gq cms start",',
         '     "cms:dev:raw": "gq cms start",',
-        '     "cms:dev:foreground": "gq sigillo run local -- gq cms start --foreground",',
         "",
       ].join("\n"),
     );

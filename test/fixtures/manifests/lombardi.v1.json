@@ -1,0 +1,101 @@
+{
+  "$schema": "./node_modules/@getquick/site/schema/gq.ops.schema.json",
+  "schemaVersion": 1,
+  "project": "lombardi",
+  "variant": "content",
+  "sigillo": {
+    "apiUrl": "https://secrets.getquick.io",
+    "projectId": "01M32W12VJR8EDZKGZ4DJP5GK5",
+    "environments": {
+      "local": "dev",
+      "operations": "ops",
+      "staging": "staging"
+    }
+  },
+  "domains": {
+    "admin": "lombardi-admin.bnq.pt",
+    "frontend": "lombardi-fe.bnq.pt"
+  },
+  "ploi": {
+    "serverId": "102329",
+    "siteId": "410834",
+    "systemUser": "lombardi",
+    "projectRoot": "/",
+    "webDirectory": "/apps/cms/web",
+    "database": "lombardi_staging",
+    "envTemplate": "apps/cms/.env.production.example",
+    "deployScript": "deploy/ploi/admin.sh"
+  },
+  "wordpress": {
+    "plugins": [
+      "getquick-design",
+      "lombardi-post-types",
+      "lombardi-blocks",
+      "gq-support",
+      "wp-graphql",
+      "wpgraphql-blocks",
+      "s3-uploads",
+      "simple-history",
+      "cimo-image-optimizer",
+      "safe-svg"
+    ]
+  },
+  "releases": {
+    "bucket": "lombardi-releases",
+    "prefix": "admin/"
+  },
+  "media": {
+    "bucket": "lombardi-media",
+    "domain": "lombardi-media.bnq.pt"
+  },
+  "backups": {
+    "bucket": "lombardi-releases",
+    "prefix": "db/"
+  },
+  "local": {
+    "adminEmail": "dev@tipme.to"
+  },
+  "artifacts": {
+    "namespace": "lombardi",
+    "repo": "lombardi"
+  },
+  "ci": {
+    "worker": "lombardi-ci",
+    "backupBucket": "lombardi-ci-backups"
+  },
+  "cloudflare": {
+    "accountId": "8f38791a8c37b182239af2a385ab3c31",
+    "zoneId": "60c031fb6f81fae300c625224c39c758",
+    "zoneName": "bnq.pt"
+  },
+  "github": {
+    "repository": "Quick-Release/lombardi"
+  },
+  "release": {
+    "textFiles": [
+      {
+        "path": "apps/cms/web/app/themes/lombardi-theme/style.css",
+        "patterns": [
+          {
+            "regexp": "^Version: .+$",
+            "flags": "m",
+            "replacement": "Version: {version}"
+          }
+        ]
+      },
+      {
+        "path": "apps/cms/web/app/themes/lombardi-theme/functions.php",
+        "patterns": [
+          {
+            "regexp": "define\\( 'LOMBARDI_THEME_VERSION', '[^']+' \\);",
+            "replacement": "define( 'LOMBARDI_THEME_VERSION', '{version}' );"
+          }
+        ]
+      }
+    ],
+    "paths": [
+      "apps/cms/web/app/themes/lombardi-theme/style.css",
+      "apps/cms/web/app/themes/lombardi-theme/functions.php"
+    ]
+  }
+}
