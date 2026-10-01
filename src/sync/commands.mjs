@@ -1,10 +1,11 @@
 // gq sync: brings a site up to the installed blueprint: pending gq.ops.json
 // schema migrations are applied, a leftover release config module
 // (shop-devtools.config.mjs) is folded in and removed, and the file is written
-// back; then the managed files are regenerated and gq.lock.json updated. With
-// --check every pending change is reported (exit 1) and nothing written. A
-// managed file edited since gq last wrote it stops sync with a diff, and
-// nothing is written.
+// back; then the managed files, sections and keys are regenerated, missing
+// create-once files created, and gq.lock.json updated. With --check every
+// pending change is reported (exit 1) and nothing written. A managed file,
+// section or key edited since gq last wrote it stops sync with a diff, and
+// nothing is written. `--recreate <path>` writes a create-once file again.
 // `--manifest` limits sync to the manifest. Needs no network and no secrets.
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -27,7 +28,9 @@ import { locateProjectConfig } from "../ops/project-context.mjs";
 import { unifiedDiff } from "./diff.mjs";
 import { applyManagedFiles, LOCK_FILENAME, planManagedFiles } from "./managed-files.mjs";
 
-export const SYNC_USAGE = [`gq sync [--manifest] [--check] [--variant <${VARIANTS.join("|")}>]`];
+export const SYNC_USAGE = [
+  `gq sync [--manifest] [--check] [--variant <${VARIANTS.join("|")}>] [--recreate <path>]...`,
+];
 
 const FLAGS = { "--manifest": "manifest", "--check": "check" };
 const VALUE_OPTIONS = { "--variant": "variant", "--project": "project", "--config": "config" };
@@ -39,6 +42,11 @@ export function isSyncCommand(argv) {
 // Resolves to the exit code.
 export async function runSyncCommand(args, { cwd, io }) {
   const options = parseSyncArguments(args);
+  if (options.manifest && options.recreate.length > 0) {
+    throw new Error(
+      `gq sync --manifest syncs only ${MANIFEST_FILENAME}; drop --recreate or --manifest.`,
+    );
+  }
   const path = await locateProjectConfig({ cwd, project: options.project, config: options.config });
   const root = dirname(path);
   const current = await readManifestFile(path);
@@ -71,7 +79,9 @@ export async function runSyncCommand(args, { cwd, io }) {
     );
   }
   const manifestPending = migrating || Boolean(releaseConfig);
-  const plan = options.manifest ? undefined : await planManagedFiles(root, manifest);
+  const plan = options.manifest
+    ? undefined
+    : await planManagedFiles(root, manifest, { recreate: options.recreate });
   const files = plan ? [...plan.files, plan.lock] : [];
   const pendingFiles = files.filter(({ status }) => status === "create" || status === "update");
   const editedFiles = files.filter(({ status }) => status === "edited");
@@ -118,17 +128,25 @@ function reportUpToDate(io) {
   io.out(`${MANIFEST_FILENAME}: up to date (schema v${SCHEMA_VERSION}).`);
 }
 
-// `quiet` leaves out the "up to date" line, when an edit is all there is.
+// `quiet` leaves out the "up to date" line, when an edit is all there is. A
+// `scope` names the part of an existing file gq manages.
 function reportManagedFiles(io, pending, { check, quiet = false }) {
   if (pending.length === 0 && !quiet) io.out("Managed files: up to date.");
-  for (const { path, status } of pending) {
-    if (check) io.out(`${path}: pending, gq sync would ${status} it.`);
-    else io.out(`${path}: ${status === "create" ? "created" : "updated"}.`);
+  for (const { path, status, scope } of pending) {
+    if (check)
+      io.out(`${path}: pending, gq sync would ${status} ${scope ? `its ${scope}` : "it"}.`);
+    else
+      io.out(
+        `${path}: ${status === "create" ? "created" : "updated"}${scope ? ` (${scope})` : ""}.`,
+      );
   }
 }
 
-function reportEdit(io, { path, current, content }) {
-  io.out(`${path}: edited since gq last wrote it (${LOCK_FILENAME}); gq sync would write:`);
+function reportEdit(io, { path, scope, current, content }) {
+  io.out(
+    `${path}${scope ? ` (${scope})` : ""}: edited since gq last wrote it (${LOCK_FILENAME}); ` +
+      "gq sync would write:",
+  );
   for (const line of unifiedDiff(path, current.toString("utf8"), content.toString("utf8"))) {
     io.out(line);
   }
@@ -146,14 +164,18 @@ function reportFoldPending(io, command) {
   );
 }
 
+// `--recreate` may repeat.
 function parseSyncArguments(args) {
-  const options = {};
+  const options = { recreate: [] };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     const flag = FLAGS[argument];
     const option = VALUE_OPTIONS[argument];
     if (flag && !options[flag]) options[flag] = true;
-    else if (option && options[option] === undefined && args[index + 1] !== undefined) {
+    else if (argument === "--recreate" && args[index + 1] !== undefined) {
+      options.recreate.push(args[index + 1]);
+      index += 1;
+    } else if (option && options[option] === undefined && args[index + 1] !== undefined) {
       options[option] = args[index + 1];
       index += 1;
     } else throw new Error(`Usage: ${SYNC_USAGE[0]}`);

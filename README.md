@@ -101,6 +101,7 @@ the installed `gq` ([ADR 0002](docs/adr/0002-generate-sites-from-a-versioned-man
 gq new acme --project acme --variant content   # gq.ops.json, managed files, gq.lock.json, git init
 gq sync           # migrate gq.ops.json, regenerate managed files, update gq.lock.json
 gq sync --check   # report every pending change, exit 1, write nothing
+gq sync --recreate README.md   # write a create-once file again
 ```
 
 [`blueprint/ownership.json`](blueprint/ownership.json), published with the
@@ -114,18 +115,43 @@ Git hooks (`.vite-hooks/pre-commit` formats and lints staged files,
 (`vite.config.ts`), the READMEs of `docs/adr`, `docs/plans`, `docs/research`
 and `docs/agents`, the agent reference docs in `docs/agents`, and the
 `.claude/skills` symlink to `../.agents/skills`. A site's own ADRs, plans
-and research beside those READMEs are site-owned. `gq.ops.json` is
-create-once. Only `--variant content` is generated until phase 4.
+and research beside those READMEs are site-owned. Only `--variant content`
+is generated until phase 4.
+
+A site shares three more kinds of file with the blueprint:
+
+- **Generated sections.** `AGENTS.md` holds the blueprint's base guidance
+  and `.gitignore` its ignore rules, each between a `BEGIN gq` line and an
+  `END gq` line. `gq sync` rewrites only what is between them; the site's
+  guidance and rules go outside, before or after. A file without the
+  section gets it appended; markers it can't pair (one missing, or two
+  sections) stop sync with an error.
+- **Managed keys.** In the root `package.json`, `gq` sets the
+  `packageManager` and `engines.node` pins, the hook install (`prepare`),
+  and the root scripts that wrap `gq` (`verify`, `cms:*`, `ploi:*`,
+  `release*` and the rest). Every other key, including the site's own
+  scripts and its dependencies, is the site's: `gq` edits the file as text,
+  so those keys stay byte for byte. A managed key the site removed is added
+  back after its siblings, in the file's indentation. One the blueprint
+  retires is removed, unless the site changed it, in which case it is the
+  site's.
+- **Create-once files.** `gq.ops.json`, the glossary (`CONTEXT.md`) and
+  `README.md` are written when absent, and recorded in the lock as created
+  once they exist, whoever wrote them.
+  From then on they are the site's: `gq sync` never rewrites them, nor
+  restores one the site deleted, unless `gq sync --recreate <path>` asks
+  for it (repeat it for several files; `gq.ops.json` can't be recreated).
 
 `gq.lock.json`, committed at the site root, records the `gq` version, the
-schema version and a hash of each managed file (a symlink's target) as `gq`
-last wrote it. A managed file whose hash differs from the lock (or that
+schema version, a hash of each managed file (a symlink's target), section
+and key as `gq` last wrote it, and the create-once files it has created. A
+managed file, section or key whose hash differs from the lock (or that
 differs from the template when the site has no lock yet), a retargeted
 symlink, or a directory where either belongs is a local edit: `gq sync`
 prints a diff against what it would write and writes nothing, not even a
 pending migration. A managed file that lost its executable bit (a hook) is
 not an edit: `gq sync` makes it executable again. Revert the edit, or delete
-the file and `gq sync` regenerates it.
+the file (the section, or the key) and `gq sync` regenerates it.
 A lock written by a newer `gq` is refused rather than downgraded. Neither
 command needs network access or secrets.
 
@@ -135,7 +161,7 @@ command needs network access or secrets.
 gq --version
 gq context show [--json]
 gq new <dir> --project <name> --variant content
-gq sync [--manifest] [--check] [--variant <content|commerce>]
+gq sync [--manifest] [--check] [--variant <content|commerce>] [--recreate <path>]...
 
 gq setup [--no-ddev]
 gq doctor

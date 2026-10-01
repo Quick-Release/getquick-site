@@ -56,7 +56,7 @@ test("--help lists the command groups without a project", async () => {
   assert.match(result.stdout, /^gq operations CLI\n/);
   for (const form of [
     "gq context show",
-    "gq sync [--manifest] [--check] [--variant <content|commerce>]",
+    "gq sync [--manifest] [--check] [--variant <content|commerce>] [--recreate <path>]...",
     "gq ploi api <operation-id>",
     "gq cloudflare dns list",
     "gq version check [version]",

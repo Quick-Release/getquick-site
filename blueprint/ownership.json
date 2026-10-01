@@ -28,7 +28,14 @@
     },
     { "path": ".claude/skills", "symlink": "../.agents/skills" }
   ],
-  "generatedSections": [],
-  "managedKeys": [],
-  "createOnce": [{ "path": "gq.ops.json" }]
+  "generatedSections": [
+    { "path": ".gitignore", "template": "templates/gitignore" },
+    { "path": "AGENTS.md", "template": "templates/AGENTS.md" }
+  ],
+  "managedKeys": [{ "path": "package.json", "template": "templates/package.json" }],
+  "createOnce": [
+    { "path": "gq.ops.json" },
+    { "path": "CONTEXT.md", "template": "templates/CONTEXT.md" },
+    { "path": "README.md", "template": "templates/README.md" }
+  ]
 }

@@ -15,9 +15,26 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   triage labels, domain) and the agent-skills symlink
   (`.claude/skills` → `../.agents/skills`). A site's own ADRs, plans and
   research next to them stay site-owned.
+- Generated sections: `AGENTS.md` gets the blueprint's base guidance and
+  `.gitignore` its ignore rules (Lombardi's), each between `BEGIN gq` and
+  `END gq` lines. Content outside the markers is the site's.
+- Managed keys in the root `package.json`: the `packageManager` and
+  `engines.node` pins, the hook install (`prepare`) and the root scripts
+  that wrap `gq`, taken from Lombardi. `package.json` is edited as text, so
+  every other key is left byte for byte. A managed key the blueprint
+  retires is removed unless the site has changed it.
+- Create-once files: the glossary (`CONTEXT.md`) and `README.md`, written by
+  `gq new` (or `gq sync`) when absent and recorded in the lock as created
+  once present, so they are never rewritten or restored after.
+  `gq sync --recreate <path>` writes one again.
 
 ### Changed
 
+- `gq.lock.json` also records a hash for each generated section
+  (`sections`) and managed key (`keys`), and the create-once files it has
+  created (`created`). A lock from 0.11.0 is upgraded on the next sync. An
+  edit inside a section, or to a managed key, stops `gq sync` with a diff of
+  the whole file, like an edited managed file.
 - `gq sync` manages symlinks and executable files. A retargeted symlink, or
   anything else standing in its place, is a local edit, shown as a diff of
   the targets. A managed file that lost its executable bit is made

@@ -3,7 +3,6 @@
 // installed blueprint, without touching what the site owns, a hand edit, the
 // network or a provider.
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import {
   chmod,
   lstat,
@@ -20,6 +19,7 @@ import test from "node:test";
 
 import { VERSION } from "../src/version.mjs";
 import { createFixtureSite, runGq, temporaryDirectory } from "./support/fixture-site.mjs";
+import { hash, newSite, readSite, snapshot } from "./support/new-site.mjs";
 
 const MISE = '[tools]\nnode = "24.21.0"\n';
 const PRE_COMMIT = "#!/bin/sh\nset -e\n\nvp staged\npnpm check\n";
@@ -49,14 +49,10 @@ const MANAGED_PATHS = [
   "docs/research/README.md",
   "vite.config.ts",
 ];
-
-function hash(content) {
-  return `sha256:${createHash("sha256").update(content).digest("hex")}`;
-}
-
-async function readSite(root, path) {
-  return readFile(join(root, path), "utf8");
-}
+// The files gq manages a part of (a section, or keys), and the ones it
+// creates once besides gq.ops.json.
+const SHARED_PATHS = [".gitignore", "AGENTS.md", "package.json"];
+const CREATED_PATHS = ["CONTEXT.md", "README.md"];
 
 test("gq new writes a v1 manifest, the managed files and the lock, then runs git init", async () => {
   const parent = await temporaryDirectory();
@@ -86,7 +82,14 @@ test("gq new writes a v1 manifest, the managed files and the lock, then runs git
   assert.equal(await readlink(join(root, SKILLS)), "../.agents/skills");
 
   const lock = JSON.parse(await readSite(root, "gq.lock.json"));
-  assert.deepEqual(Object.keys(lock), ["gq", "schemaVersion", "files"]);
+  assert.deepEqual(Object.keys(lock), [
+    "gq",
+    "schemaVersion",
+    "files",
+    "sections",
+    "keys",
+    "created",
+  ]);
   assert.equal(lock.gq, VERSION);
   assert.equal(lock.schemaVersion, 1);
   assert.deepEqual(Object.keys(lock.files), MANAGED_PATHS);
@@ -99,7 +102,9 @@ test("gq new writes a v1 manifest, the managed files and the lock, then runs git
     [
       `Created acme (content) in ${root}:`,
       "  gq.ops.json",
-      ...MANAGED_PATHS.map((path) => `  ${path}`),
+      ...[...MANAGED_PATHS, ...SHARED_PATHS, ...CREATED_PATHS]
+        .sort((a, b) => (a < b ? -1 : 1))
+        .map((path) => `  ${path}`),
       "  gq.lock.json",
       "",
     ].join("\n"),
@@ -110,34 +115,6 @@ test("gq new writes a v1 manifest, the managed files and the lock, then runs git
   );
   assert.deepEqual(result.fetch.requests, []);
 });
-
-// A site gq new generated, as its files are right after.
-async function newSite() {
-  const parent = await temporaryDirectory();
-  const created = await runGq(["new", "acme", "--project", "acme", "--variant", "content"], {
-    cwd: parent,
-  });
-  assert.equal(created.code, 0, created.stderr);
-  const root = join(parent, "acme");
-  return { root, run: (argv) => runGq(argv, { cwd: root }) };
-}
-
-// Every working-tree file's content, mode and modification time, and every
-// symlink's target. Symlinks aren't followed.
-async function snapshot(root, directory = "") {
-  const files = {};
-  for (const entry of await readdir(join(root, directory), { withFileTypes: true })) {
-    const path = join(directory, entry.name);
-    if (path === ".git") continue;
-    if (entry.isDirectory()) Object.assign(files, await snapshot(root, path));
-    else if (entry.isSymbolicLink()) files[path] = { symlink: await readlink(join(root, path)) };
-    else {
-      const stats = await lstat(join(root, path));
-      files[path] = { content: await readSite(root, path), mode: stats.mode, mtime: stats.mtimeMs };
-    }
-  }
-  return files;
-}
 
 test("a site gq new generated is in sync: --check exits 0 and gq sync writes nothing", async () => {
   const site = await newSite();
@@ -249,8 +226,8 @@ test("gq sync leaves site-owned files byte-identical", async () => {
     ".agents/skills/acme/SKILL.md": "# Acme skill\n",
     ".vite-hooks/commit-msg": "#!/bin/sh\n",
     "apps/cms/web/app/plugins/acme-blocks/acme-blocks.php": "<?php\n",
-    "package.json": '{ "name": "acme" }\n',
-    ".gitignore": "node_modules\n",
+    "apps/frontend/package.json": '{ "name": "@acme/frontend" }\n',
+    "apps/cms/.gitignore": "vendor/\n",
   };
   const site = await siteFromOlderGq(owned);
   const before = await snapshot(site.root);
@@ -262,7 +239,16 @@ test("gq sync leaves site-owned files byte-identical", async () => {
   for (const path of Object.keys(owned)) assert.deepEqual(after[path], before[path], path);
   assert.deepEqual(
     Object.keys(after).sort(),
-    [...Object.keys(owned), ...MANAGED_PATHS, "gq.lock.json", "gq.ops.json"].sort(),
+    [
+      ...new Set([
+        ...Object.keys(owned),
+        ...MANAGED_PATHS,
+        ...SHARED_PATHS,
+        ...CREATED_PATHS,
+        "gq.lock.json",
+        "gq.ops.json",
+      ]),
+    ].sort(),
   );
 });
 
