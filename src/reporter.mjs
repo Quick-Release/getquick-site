@@ -22,6 +22,11 @@ export function createReporter(io, interactive) {
         const answer = await clack.confirm({ message, initialValue: true, output });
         return !clack.isCancel(answer) && answer === true;
       },
+      // Resolves to what was typed, or undefined when cancelled.
+      async password(message) {
+        const answer = await clack.password({ message, output });
+        return clack.isCancel(answer) ? undefined : answer;
+      },
     };
   }
 
@@ -41,6 +46,9 @@ export function createReporter(io, interactive) {
     spinner: () => ({ start: io.out, message: io.out, stop: io.out, error: io.err }),
     async confirm() {
       throw new Error("Cannot ask for confirmation without a terminal.");
+    },
+    async password() {
+      throw new Error("Cannot ask for a secret without a terminal.");
     },
   };
 }

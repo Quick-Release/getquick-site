@@ -98,11 +98,11 @@ export function recordingExec(respond = () => ({})) {
 
 export async function runGq(
   argv,
-  { cwd, env = {}, fetch = recordingFetch(), exec = recordingExec(), lookup } = {},
+  { cwd, env = {}, fetch = recordingFetch(), exec = recordingExec(), lookup, stdin } = {},
 ) {
   const stdout = captureStream();
   const stderr = captureStream();
-  const code = await run(argv, { cwd, env, fetch, exec, lookup, stdout, stderr });
+  const code = await run(argv, { cwd, env, fetch, exec, lookup, stdin, stdout, stderr });
   return { code, stdout: stdout.text(), stderr: stderr.text(), fetch, exec };
 }
 

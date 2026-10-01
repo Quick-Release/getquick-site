@@ -25,6 +25,13 @@ import {
   runPloiWorkflow,
 } from "../ploi/commands.mjs";
 import { DB_USAGE, dbCommandOptions, isDbCommand, runDbCommand } from "../db/commands.mjs";
+import {
+  cloudflareWorkflowOptions,
+  CLOUDFLARE_WORKFLOW_USAGE,
+  isCloudflareWorkflow,
+  runCloudflareWorkflow,
+} from "../cloudflare/commands.mjs";
+import { CI_USAGE, ciCommandOptions, isCiCommand, runCiCommand } from "../ci/commands.mjs";
 import { VERSION } from "../version.mjs";
 
 const COMMAND_OPTIONS = new Map([
@@ -42,7 +49,7 @@ const COMMAND_OPTIONS = new Map([
 
 // Resolves to an exit code when the command has its own (a wrapped command's),
 // otherwise to undefined for success.
-export async function runCli(argv, { cwd, env, fetch, exec, lookup, io, interactive }) {
+export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, interactive }) {
   // The Sigillo wrapper parses its own arguments: everything after `--` belongs
   // to the wrapped command, not to gq.
   if (isSigilloCommand(argv)) return runSigilloCommand(argv.slice(1), { cwd, env, exec });
@@ -102,6 +109,31 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, io, interact
       env,
       fetch,
       exec,
+      io,
+      interactive,
+    });
+  }
+
+  if (isCloudflareWorkflow(parsed.command)) {
+    return runCloudflareWorkflow(parsed.command, {
+      context,
+      parsed,
+      env,
+      fetch,
+      exec,
+      io,
+      interactive,
+    });
+  }
+
+  if (isCiCommand(parsed.command)) {
+    return runCiCommand(parsed.command, {
+      context,
+      parsed,
+      env,
+      fetch,
+      exec,
+      stdin,
       io,
       interactive,
     });
@@ -288,7 +320,9 @@ function validateCommand(parsed) {
         allowedOptions:
           COMMAND_OPTIONS.get(parsed.command.join(" ")) ??
           ploiWorkflowOptions(parsed.command) ??
-          dbCommandOptions(parsed.command),
+          dbCommandOptions(parsed.command) ??
+          cloudflareWorkflowOptions(parsed.command) ??
+          ciCommandOptions(parsed.command),
       };
   if (!allowedOptions) throw new Error(`Unknown command: ${command}. Run gq --help.`);
 
@@ -398,6 +432,10 @@ Cloudflare:
   gq cloudflare zones list [--account <id>]
   gq cloudflare zone show [--zone <id>]
   gq cloudflare dns list [--zone <id>] [--name <hostname>] [--type <type>]
+${CLOUDFLARE_WORKFLOW_USAGE.map((usage) => `  ${usage}`).join("\n")}
+
+Cloudflare CI:
+${CI_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Database (live → local only):
 ${DB_USAGE.map((usage) => `  ${usage}`).join("\n")}

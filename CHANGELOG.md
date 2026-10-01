@@ -3,6 +3,31 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## 0.6.0 — 2026-10-01
+
+### Added
+
+- Lombardi's Cloudflare provisioning as `gq cloudflare deploy-token`,
+  `releases`, `media` and `ci` (each `[--dry-run]`;
+  `scripts/cloudflare-deploy-token.mjs`, `cloudflare-releases.mjs`,
+  `cloudflare-media.mjs` and `cloudflare-ci.mjs`), with their account-scoped
+  Cloudflare and Artifacts clients. Token names derive from `gq.ops.json`
+  `project`; account, zone, buckets, domain and Artifacts repository come
+  from `cloudflare`, `releases`, `media`, `artifacts` and `ci`. What they mint
+  goes to the `staging` Sigillo environment over stdin.
+- Lombardi's CI Worker commands as `gq ci deploy` and `gq ci runs`
+  (`scripts/ci-deploy.mjs`), `gq github setup [--dry-run]`
+  (`scripts/github-setup.mjs`) and `gq git artifacts setup|get|store|erase`
+  (`scripts/git-artifacts.mjs`). The Worker lives in the new
+  `gq.ops.json` `ci.directory` (default `infra/ci`); the GitHub repository is
+  `github.repository`. The credential helper `setup` registers is the site's
+  own `gq` under `gq sigillo run staging`, so existing clones re-run
+  `git artifacts setup`.
+- `run()` takes `stdin`, the readable stream `git artifacts get` reads git's
+  credential request from; `bin/gq.mjs` passes `process.stdin`.
+- `artifactsRemoteUrl({ accountId, namespace, repo })`, the Artifacts git
+  remote, for a site's health check.
+
 ## 0.5.0 — 2026-10-01
 
 ### Added

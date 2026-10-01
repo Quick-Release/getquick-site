@@ -11,6 +11,7 @@ process.exitCode = await run(process.argv.slice(2), {
   fetch: globalThis.fetch,
   exec,
   lookup,
+  stdin: process.stdin,
   stdout: process.stdout,
   stderr: process.stderr,
   interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),

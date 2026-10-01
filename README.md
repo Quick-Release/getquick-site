@@ -93,6 +93,16 @@ gq cloudflare accounts list
 gq cloudflare zones list [--account <id>]
 gq cloudflare zone show [--zone <id>]
 gq cloudflare dns list [--zone <id>] [--name <hostname>] [--type <type>]
+gq cloudflare deploy-token [--dry-run]
+gq cloudflare releases [--dry-run]
+gq cloudflare media [--dry-run]
+gq cloudflare ci [--dry-run]
+
+gq ci deploy
+gq ci runs
+gq github setup [--dry-run]
+gq git artifacts setup
+gq git artifacts get | store | erase
 
 gq github actions sync [--dry-run] [--yes]
 
@@ -115,7 +125,7 @@ provider's JSON. In a terminal, `gq` with no arguments opens a command picker.
 ([inventory](docs/research/ploi-api.md)); operation IDs follow the docs' routes,
 such as `sites.log-site`. Every non-GET operation needs `--yes` (or a prompt in
 a terminal); `--dry-run` prints the resolved request without sending it.
-Cloudflare commands are read-only. `github actions sync` pipes each value to
+The `cloudflare accounts|zones|zone|dns` commands are read-only. `github actions sync` pipes each value to
 `gh` on stdin and never prints it.
 
 ## Sigillo secrets
@@ -277,6 +287,58 @@ import`, `search-replace`, `wp user`, `mysql`, …).
   public CA (`NODE_EXTRA_CA_CERTS`) so its last check can reach the local
   site over HTTPS.
 
+## Cloudflare provisioning and CI
+
+The `gq cloudflare` provisioning commands run through `gq sigillo run
+<environment> --` with the environment that holds the account's
+`CLOUDFLARE_TOKEN_MANAGER_API_TOKEN`, and store what they mint in the
+`staging` Sigillo environment (over stdin, never printed). Each finds its
+token by name (`GETQUICK <PROJECT> …`), creates it when missing or inactive,
+rolls it when Sigillo lost its value, and does nothing otherwise; `--dry-run`
+only prints the plan. Buckets are created with a 1-hour token that is deleted
+afterwards. Beside the `cloudflare`, `releases` and `media` values above, they
+read:
+
+```json
+{
+  "cloudflare": { "accountId": "…", "zoneId": "…", "zoneName": "example.com" },
+  "artifacts": { "namespace": "example", "repo": "example" },
+  "ci": { "worker": "example-ci", "backupBucket": "example-ci-backups", "directory": "infra/ci" },
+  "github": { "repository": "example-org/example" }
+}
+```
+
+- `cloudflare deploy-token`: "Staging Alchemy", the frontend's deploy token
+  (account Workers permissions, plus Zone Read / DNS Write / Workers Routes
+  Write on `cloudflare.zoneId` only) → `CLOUDFLARE_API_TOKEN`.
+- `cloudflare releases`: the `releases` bucket and "Releases R2", object
+  read/write on it only → `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` (the S3
+  keys R2 derives from the token), for `ploi release`.
+- `cloudflare media`: the `media` bucket with its public custom domain, and
+  "Media R2" → `S3_UPLOADS_KEY` / `S3_UPLOADS_SECRET`, for `ploi media`.
+- `cloudflare ci`: "Artifacts" → `ARTIFACTS_API_TOKEN`, the `ci.backupBucket`
+  bucket and "CI Backups R2" → `CI_BACKUP_R2_*`, "CI Deploy" →
+  `CI_DEPLOY_API_TOKEN`, and the `artifacts` namespace and repository.
+
+The site owns its CI Worker (in `ci.directory`, default `infra/ci`, with its
+own Wrangler); these commands deploy and connect it:
+
+- `ci deploy` deploys the Worker `ci.worker` with `CI_DEPLOY_API_TOKEN`, then
+  sends its secrets to `wrangler secret bulk` as JSON over stdin: `CF_TOKEN`,
+  `PLOI_API_TOKEN`, `COMPOSER_AUTH`, `GITHUB_CI_TOKEN`,
+  `GITHUB_WEBHOOK_SECRET`, the backup bucket's key as `R2_*` and the releases
+  bucket's as `RELEASES_R2_*`. It refuses, before Wrangler runs, when one is
+  missing. `ci runs` lists the Worker's CI Workflow runs.
+- `github setup` stores a generated `GITHUB_WEBHOOK_SECRET` and a pasted,
+  validated fine-grained `GITHUB_CI_TOKEN` (prompting in a terminal only),
+  then creates or updates `github.repository`'s push webhook to the Worker's
+  `/github/webhook` through your `gh` login.
+- `git artifacts setup` registers `gq git artifacts`, under
+  `gq sigillo run staging`, as git's only credential helper for the Artifacts
+  host, and drops the Artifacts push URL older setups added to `origin`. As
+  the helper, `get` answers that host only with a read-only git token that
+  expires in an hour; nothing is stored.
+
 ## Programmatic use
 
 The CLI is a thin shell over `run()`, which resolves to an exit code:
@@ -290,6 +352,7 @@ const code = await run(["ploi", "site", "show", "--json"], {
   fetch, // every provider request
   exec, // every child process: (command, args, { cwd, env, input, stdio, stdout, stderr }) => { code, stdout, stderr }
   lookup, // every DNS lookup, as node:dns/promises' lookup
+  stdin, // a readable stream, for git's credential request
   stdout, // anything with write()
   stderr,
 });

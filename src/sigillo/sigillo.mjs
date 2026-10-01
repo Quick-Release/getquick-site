@@ -97,6 +97,34 @@ async function runSigillo({ cwd, env, exec }, buildArguments) {
   return result.code;
 }
 
+// One Sigillo environment the provisioning commands (`gq cloudflare …`,
+// `gq github setup`) store the secrets they mint in, through the site's
+// Sigillo CLI. Values go to it over stdin, never in argv, and are never
+// printed; `get` reads one into memory for the command's own use.
+export async function sigilloSecrets({ context, env, exec }, environment) {
+  const flags = environmentFlags(validateSigilloConfig(context.config.sigillo), environment);
+  const sigillo = await sigilloCommand(context.projectRoot);
+  async function call(args, input) {
+    const result = await exec(sigillo.command, [...sigillo.prefix, ...args], {
+      cwd: context.projectRoot,
+      env,
+      input,
+    });
+    if (result.code !== 0) throw new Error(`sigillo ${args[0]} failed: ${result.stderr.trim()}`);
+    return result.stdout;
+  }
+
+  return {
+    // The Sigillo name of the environment, for messages.
+    name: flags.at(-1),
+    // The environment's secret listing (names, not values).
+    list: () => call(["secrets", ...flags]),
+    set: (name, value) => call(["secrets", "set", name, ...flags], value),
+    get: async (name) =>
+      (await call(["secrets", "get", name, ...flags, "--raw", "--force"])).trim(),
+  };
+}
+
 async function runInside(command, { cwd, env, exec }) {
   if (env[REENTRY_VARIABLE] !== "1" || env.SIGILLO !== "1") {
     throw new Error("Refusing to run an untrusted Sigillo inner command.");
