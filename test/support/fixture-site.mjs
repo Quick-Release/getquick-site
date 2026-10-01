@@ -9,7 +9,9 @@ import { after } from "node:test";
 import { run } from "../../src/index.mjs";
 
 export const FIXTURE_OPS = Object.freeze({
+  schemaVersion: 1,
   project: "fixture",
+  variant: "content",
   ploi: { serverId: "12", siteId: "34" },
   cloudflare: {
     accountId: "account-1",

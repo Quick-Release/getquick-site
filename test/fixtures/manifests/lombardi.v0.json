@@ -1,0 +1,57 @@
+{
+  "project": "lombardi",
+  "sigillo": {
+    "apiUrl": "https://secrets.getquick.io",
+    "projectId": "01M32W12VJR8EDZKGZ4DJP5GK5",
+    "environments": {
+      "local": "dev",
+      "operations": "ops",
+      "staging": "staging"
+    }
+  },
+  "domains": {
+    "admin": "lombardi-admin.bnq.pt",
+    "frontend": "lombardi-fe.bnq.pt"
+  },
+  "ploi": {
+    "serverId": "102329",
+    "siteId": "410834",
+    "systemUser": "lombardi",
+    "projectRoot": "/",
+    "webDirectory": "/apps/cms/web",
+    "database": "lombardi_staging",
+    "envTemplate": "apps/cms/.env.production.example",
+    "deployScript": "deploy/ploi/admin.sh"
+  },
+  "releases": {
+    "bucket": "lombardi-releases",
+    "prefix": "admin/"
+  },
+  "media": {
+    "bucket": "lombardi-media",
+    "domain": "lombardi-media.bnq.pt"
+  },
+  "backups": {
+    "bucket": "lombardi-releases",
+    "prefix": "db/"
+  },
+  "local": {
+    "adminEmail": "dev@tipme.to"
+  },
+  "artifacts": {
+    "namespace": "lombardi",
+    "repo": "lombardi"
+  },
+  "ci": {
+    "worker": "lombardi-ci",
+    "backupBucket": "lombardi-ci-backups"
+  },
+  "cloudflare": {
+    "accountId": "8f38791a8c37b182239af2a385ab3c31",
+    "zoneId": "60c031fb6f81fae300c625224c39c758",
+    "zoneName": "bnq.pt"
+  },
+  "github": {
+    "repository": "Quick-Release/lombardi"
+  }
+}

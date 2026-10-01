@@ -26,7 +26,9 @@ const SIGILLO = Object.freeze({
 });
 
 const OPS = Object.freeze({
+  schemaVersion: 1,
   project: "fixture",
+  variant: "content",
   sigillo: SIGILLO,
   cloudflare: { accountId: "account-1", zoneId: "zone-1", zoneName: "example.test" },
   releases: { bucket: "fixture-releases", prefix: "admin/" },

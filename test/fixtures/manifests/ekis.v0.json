@@ -1,0 +1,208 @@
+{
+  "project": "ekis",
+  "sigillo": {
+    "apiUrl": "https://secrets.getquick.io",
+    "projectId": "01M2V5ATFP1TARV06SBDE3EHE4",
+    "environments": {
+      "local": "dev",
+      "operations": "ops",
+      "staging": "staging"
+    }
+  },
+  "domains": {
+    "admin": "ekis-admin.bnq.pt",
+    "docs": "ekis-docs.bnq.pt",
+    "frontend": "ekis.bnq.pt"
+  },
+  "credentials": {
+    "envFile": ".env",
+    "fields": [
+      {
+        "name": "ADMIN_DOMAIN",
+        "label": "Admin domain",
+        "default": "ekis-admin.bnq.pt"
+      },
+      {
+        "name": "DOCS_DOMAIN",
+        "label": "Docs domain",
+        "default": "ekis-docs.bnq.pt"
+      },
+      {
+        "name": "STOREFRONT_DOMAIN",
+        "label": "Storefront domain",
+        "default": "ekis.bnq.pt"
+      },
+      {
+        "name": "PLOI_API_TOKEN",
+        "label": "Ploi API token",
+        "secret": true
+      },
+      {
+        "name": "PLOI_SERVER_ID",
+        "label": "Ploi server ID"
+      },
+      {
+        "name": "PLOI_SITE_ID",
+        "label": "Ploi site ID"
+      },
+      {
+        "name": "CLOUDFLARE_API_TOKEN",
+        "label": "Cloudflare API token",
+        "secret": true
+      },
+      {
+        "name": "CLOUDFLARE_ACCOUNT_ID",
+        "label": "Cloudflare account ID"
+      },
+      {
+        "name": "CLOUDFLARE_ZONE_ID",
+        "label": "Cloudflare zone ID"
+      },
+      {
+        "name": "CLOUDFLARE_ZONE_NAME",
+        "label": "Cloudflare zone name",
+        "default": "bnq.pt"
+      },
+      {
+        "name": "GETQUICK_AUTH_COOKIE_SECRET",
+        "label": "Storefront auth cookie secret",
+        "secret": true
+      },
+      {
+        "name": "GETQUICK_STOREFRONT_PROXY_SECRET",
+        "label": "Storefront proxy secret",
+        "secret": true
+      },
+      {
+        "name": "TURNSTILE_SECRET",
+        "label": "Turnstile secret",
+        "secret": true,
+        "required": false
+      },
+      {
+        "name": "VITE_TURNSTILE_SITE_KEY",
+        "label": "Turnstile site key",
+        "required": false
+      },
+      {
+        "name": "ALCHEMY_PRODUCTION_ADOPTED",
+        "label": "Alchemy production adopted",
+        "default": "false"
+      },
+      {
+        "name": "GETQUICK_AUTH_UPSTREAM_URL",
+        "label": "Auth upstream URL",
+        "default": "https://ekis-admin.bnq.pt/wp-json/getquick-config/v1/woocommerce/auth"
+      },
+      {
+        "name": "GETQUICK_ENVIRONMENT",
+        "label": "GetQuick environment",
+        "default": "production"
+      },
+      {
+        "name": "POST_DEPLOY_AUTH_AVAILABILITY",
+        "label": "Post-deploy auth availability",
+        "default": "unavailable"
+      },
+      {
+        "name": "PUBLIC_ADMIN_URL",
+        "label": "Public admin URL",
+        "default": "https://ekis-admin.bnq.pt"
+      },
+      {
+        "name": "PUBLIC_DOCS_URL",
+        "label": "Public docs URL",
+        "default": "https://ekis-docs.bnq.pt"
+      },
+      {
+        "name": "PUBLIC_STOREFRONT_URL",
+        "label": "Public storefront URL",
+        "default": "https://ekis.bnq.pt"
+      },
+      {
+        "name": "TURNSTILE_EXPECTED_HOSTNAMES",
+        "label": "Turnstile expected hostnames",
+        "default": "ekis.bnq.pt"
+      },
+      {
+        "name": "VITE_DEFAULT_LOCALE",
+        "label": "Default locale",
+        "default": "en-US"
+      },
+      {
+        "name": "VITE_DEPLOY_ENVIRONMENT",
+        "label": "Vite deploy environment",
+        "default": "production"
+      },
+      {
+        "name": "VITE_GETQUICK_CONFIG_API_URL",
+        "label": "GetQuick config API URL",
+        "default": "https://ekis-admin.bnq.pt/wp-json/getquick-config/v1"
+      },
+      {
+        "name": "VITE_GETQUICK_DESIGN_API_URL",
+        "label": "GetQuick design API URL",
+        "default": "https://ekis-admin.bnq.pt/wp-json/getquick-design/v1"
+      },
+      {
+        "name": "VITE_STOREFRONT_URL",
+        "label": "Vite storefront URL",
+        "default": "https://ekis.bnq.pt"
+      },
+      {
+        "name": "VITE_WOOCOMMERCE_API_URL",
+        "label": "WooCommerce API URL",
+        "default": "https://ekis-admin.bnq.pt/wp-json/wc/store/v1"
+      },
+      {
+        "name": "VITE_WORDPRESS_API_URL",
+        "label": "WordPress API URL",
+        "default": "https://ekis-admin.bnq.pt/wp-json/wp/v2"
+      }
+    ]
+  },
+  "ploi": {
+    "serverId": "",
+    "siteId": ""
+  },
+  "cloudflare": {
+    "accountId": "8f38791a8c37b182239af2a385ab3c31",
+    "zoneId": "",
+    "zoneName": "bnq.pt"
+  },
+  "github": {
+    "repository": "Quick-Release/ekis",
+    "environment": "production",
+    "secrets": [
+      "CLOUDFLARE_API_TOKEN",
+      "PLOI_API_TOKEN",
+      "GETQUICK_AUTH_COOKIE_SECRET",
+      "GETQUICK_STOREFRONT_PROXY_SECRET",
+      "TURNSTILE_SECRET"
+    ],
+    "variables": [
+      "CLOUDFLARE_ACCOUNT_ID",
+      "PLOI_SERVER_ID",
+      "PLOI_SITE_ID",
+      "ADMIN_DOMAIN",
+      "DOCS_DOMAIN",
+      "STOREFRONT_DOMAIN",
+      "GETQUICK_AUTH_UPSTREAM_URL",
+      "GETQUICK_ENVIRONMENT",
+      "POST_DEPLOY_AUTH_AVAILABILITY",
+      "PUBLIC_ADMIN_URL",
+      "PUBLIC_DOCS_URL",
+      "PUBLIC_STOREFRONT_URL",
+      "TURNSTILE_EXPECTED_HOSTNAMES",
+      "VITE_DEFAULT_LOCALE",
+      "VITE_DEPLOY_ENVIRONMENT",
+      "VITE_GETQUICK_CONFIG_API_URL",
+      "VITE_GETQUICK_DESIGN_API_URL",
+      "VITE_STOREFRONT_URL",
+      "VITE_TURNSTILE_SITE_KEY",
+      "VITE_WORDPRESS_API_URL",
+      "VITE_WOOCOMMERCE_API_URL",
+      "ALCHEMY_PRODUCTION_ADOPTED"
+    ]
+  }
+}

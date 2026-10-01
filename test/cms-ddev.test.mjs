@@ -22,7 +22,10 @@ function fixture(t) {
   const jobs = [];
   mkdirSync(cms, { recursive: true });
   mkdirSync(bin);
-  writeFileSync(join(root, "gq.ops.json"), JSON.stringify({ project: "fixture" }));
+  writeFileSync(
+    join(root, "gq.ops.json"),
+    JSON.stringify({ schemaVersion: 1, project: "fixture", variant: "content" }),
+  );
   writeFileSync(
     join(cms, ".env.example"),
     "WP_ENV='local'\nWP_HOME='https://fallback-admin.ddev.site'\nWP_SITEURL=\"${WP_HOME}/wp\"\n",

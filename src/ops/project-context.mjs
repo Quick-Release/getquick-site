@@ -1,14 +1,13 @@
-import { access, readFile, realpath } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { loadManifest, MANIFEST_FILENAME } from "../manifest/manifest.mjs";
 import { readEnvFile } from "./env.mjs";
-
-export const CONFIG_FILENAME = "gq.ops.json";
 
 export async function findProjectConfig(startDirectory) {
   let directory = await realpath(resolve(startDirectory));
 
   while (true) {
-    const candidate = join(directory, CONFIG_FILENAME);
+    const candidate = join(directory, MANIFEST_FILENAME);
     if (await exists(candidate)) return candidate;
     if (await exists(join(directory, ".git"))) return null;
 
@@ -18,19 +17,25 @@ export async function findProjectConfig(startDirectory) {
   }
 }
 
-// `cwd` and `env` are the run() seam's; nothing here reads the process's own.
-export async function loadProjectContext(options) {
+// The canonical path of the gq.ops.json `options` select: `config`, else the
+// one in `project`, else the nearest one above `cwd`.
+export async function locateProjectConfig(options) {
   const configPath = await resolveConfigPath(options);
   if (!configPath) {
     throw new Error(
-      `No ${CONFIG_FILENAME} found from ${resolve(options.cwd)}. ` +
+      `No ${MANIFEST_FILENAME} found from ${resolve(options.cwd)}. ` +
         "Run inside a configured project or pass --project/--config.",
     );
   }
+  return realpath(configPath);
+}
 
-  const canonicalConfigPath = await realpath(configPath);
+// `cwd` and `env` are the run() seam's; nothing here reads the process's own.
+// `config` is the validated manifest (see manifest/manifest.mjs).
+export async function loadProjectContext(options) {
+  const canonicalConfigPath = await locateProjectConfig(options);
   const projectRoot = dirname(canonicalConfigPath);
-  const config = validateConfig(await readConfig(canonicalConfigPath));
+  const config = await loadManifest(canonicalConfigPath);
   const machineEnvPath = getMachineEnvPath(options.env);
   const [machineEnv, projectEnv] = await Promise.all([
     machineEnvPath ? readEnvFile(machineEnvPath) : {},
@@ -58,32 +63,9 @@ async function resolveConfigPath(options) {
   if (options.config) return resolve(options.cwd, options.config);
   if (options.project) {
     const project = resolve(options.cwd, options.project);
-    return project.endsWith(CONFIG_FILENAME) ? project : join(project, CONFIG_FILENAME);
+    return project.endsWith(MANIFEST_FILENAME) ? project : join(project, MANIFEST_FILENAME);
   }
   return findProjectConfig(options.cwd);
-}
-
-async function readConfig(path) {
-  try {
-    return JSON.parse(await readFile(path, "utf8"));
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      throw new Error(`${path} is not valid JSON: ${error.message}`, {
-        cause: error,
-      });
-    }
-    throw error;
-  }
-}
-
-function validateConfig(config) {
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    throw new Error(`${CONFIG_FILENAME} must contain a configuration object.`);
-  }
-  if (typeof config.project !== "string" || !config.project.trim()) {
-    throw new Error(`${CONFIG_FILENAME} must define a non-empty project name.`);
-  }
-  return config;
 }
 
 // Without XDG_CONFIG_HOME or HOME there is no machine file to read.

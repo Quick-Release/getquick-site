@@ -41,21 +41,45 @@ site root. Every site-relative path resolves from there. `--project <dir>` or
 
 ```json
 {
+  "$schema": "./node_modules/@getquick/site/schema/gq.ops.schema.json",
+  "schemaVersion": 1,
   "project": "example-site",
+  "variant": "content",
+  "domains": { "admin": "example-site-cms.bnq.pt", "frontend": "example-site-fe.bnq.pt" },
   "ploi": { "serverId": "12345", "siteId": "67890" },
   "cloudflare": {
     "accountId": "0123456789abcdef0123456789abcdef",
     "zoneId": "abcdef0123456789abcdef0123456789",
     "zoneName": "example.com"
   },
-  "github": {
-    "repository": "Quick-Release/example-site",
-    "environment": "production",
-    "secrets": ["CLOUDFLARE_API_TOKEN"],
-    "variables": ["CLOUDFLARE_ACCOUNT_ID"]
-  }
+  "github": { "repository": "Quick-Release/example-site" }
 }
 ```
+
+`gq.ops.json` is validated against schema v1 before any command runs
+([ADR 0002](docs/adr/0002-generate-sites-from-a-versioned-manifest.md)):
+`schemaVersion`, `project` and `variant` (`content` or `commerce`) are
+required, `domains` has the roles `admin` and `frontend` and an optional
+`docs`, and an unknown or misspelt key fails by its path. The blocks each
+command reads (`ploi`, `cloudflare`, `releases`, `media`, `backups`, `local`,
+`artifacts`, `ci`, `github`, `sigillo`, `wordpress.plugins`) are optional;
+a command names the keys it needs. `$schema` points editors at the JSON
+Schema generated from it ([schema/gq.ops.schema.json](schema/gq.ops.schema.json)).
+
+A manifest without `schemaVersion` is v0, the shape before versioning. Every
+command refuses it, and one newer than the installed `gq` reads, with the
+step to take. `gq sync` migrates it:
+
+```sh
+gq sync --manifest --variant content   # v0 → v1, written back
+gq sync --manifest --check             # report pending migrations, exit 1, write nothing
+```
+
+v0 never recorded the variant, so the v0 → v1 migration takes it from
+`--variant` rather than guessing. It drops the keys of flows `gq` no longer
+has (`credentials`, `github.environment`, `github.secrets`,
+`github.variables`) and names each one. `gq sync` needs no network access
+and no secrets.
 
 Provider IDs are safe to commit; tokens are not. `gq` reads `PLOI_API_TOKEN`,
 `CLOUDFLARE_API_TOKEN` and optional ID overrides (`PLOI_SERVER_ID`,
@@ -73,6 +97,7 @@ Provider IDs are safe to commit; tokens are not. `gq` reads `PLOI_API_TOKEN`,
 ```sh
 gq --version
 gq context show [--json]
+gq sync [--manifest] [--check] [--variant <content|commerce>]
 
 gq setup [--no-ddev]
 gq doctor
@@ -115,8 +140,6 @@ gq github setup [--dry-run]
 gq git artifacts setup
 gq git artifacts get | store | erase
 
-gq github actions sync [--dry-run] [--yes]
-
 gq sigillo run <environment> -- <command> [arguments...]
 gq sigillo login
 gq sigillo setup <environment>
@@ -136,8 +159,7 @@ provider's JSON. In a terminal, `gq` with no arguments opens a command picker.
 ([inventory](docs/research/ploi-api.md)); operation IDs follow the docs' routes,
 such as `sites.log-site`. Every non-GET operation needs `--yes` (or a prompt in
 a terminal); `--dry-run` prints the resolved request without sending it.
-The `cloudflare accounts|zones|zone|dns` commands are read-only. `github actions sync` pipes each value to
-`gh` on stdin and never prints it.
+The `cloudflare accounts|zones|zone|dns` commands are read-only.
 
 ## Sigillo secrets
 
@@ -439,6 +461,7 @@ with its `pid` once it has started.
 ```sh
 pnpm install
 pnpm check   # Prettier, ESLint, node:test
+pnpm schema  # regenerate schema/gq.ops.schema.json after changing src/manifest/schema.mjs
 ```
 
 Tests call `run()` against a fixture site (a temporary Git repository with a

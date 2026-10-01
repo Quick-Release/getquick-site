@@ -1,5 +1,8 @@
 {
+  "$schema": "../schema/gq.ops.schema.json",
+  "schemaVersion": 1,
   "project": "example-project",
+  "variant": "content",
   "ploi": {
     "serverId": "12345",
     "siteId": "67890"

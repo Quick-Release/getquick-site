@@ -1,6 +1,5 @@
 import { loadProjectContext } from "./project-context.mjs";
 import { createCloudflareClient } from "./providers/cloudflare.mjs";
-import { syncActionsValues } from "./providers/github.mjs";
 import { createPloiClient } from "./providers/ploi.mjs";
 import { printValue } from "./output.mjs";
 import {
@@ -38,11 +37,11 @@ import {
   runWorkspaceCommand,
   WORKSPACE_USAGE,
 } from "../workspace/commands.mjs";
+import { isSyncCommand, runSyncCommand, SYNC_USAGE } from "../sync/commands.mjs";
 import { VERSION } from "../version.mjs";
 
 const COMMAND_OPTIONS = new Map([
   ["context show", []],
-  ["github actions sync", ["yes", "dryRun"]],
   ["ploi servers list", []],
   ["ploi server show", ["server"]],
   ["ploi sites list", ["server"]],
@@ -63,6 +62,8 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
   if (isCmsCommand(argv)) return runCmsCommand(argv.slice(1), { cwd, env, exec, io, interactive });
   // And the workspace runners (setup, doctor, verify), with their own flags.
   if (isWorkspaceCommand(argv)) return runWorkspaceCommand(argv, { cwd, env, exec, io });
+  // And gq sync, which reads a manifest older than the other commands accept.
+  if (isSyncCommand(argv)) return runSyncCommand(argv.slice(1), { cwd, io });
 
   let effectiveArguments = argv;
   if (effectiveArguments.length === 0 && interactive) {
@@ -151,22 +152,6 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
 
   if (provider === "context" && resource === "show") {
     printValue(io, contextSummary(context), parsed);
-    return;
-  }
-
-  if (provider === "github" && resource === "actions" && action === "sync") {
-    printValue(
-      io,
-      await syncActionsValues({
-        context,
-        env,
-        exec,
-        dryRun: parsed.dryRun,
-        interactive,
-        yes: parsed.yes,
-      }),
-      parsed,
-    );
     return;
   }
 
@@ -425,7 +410,7 @@ Usage:
 Project:
   gq context show
 ${WORKSPACE_USAGE.map((usage) => `  ${usage}`).join("\n")}
-  gq github actions sync [--dry-run] [--yes]
+${SYNC_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Ploi:
   gq ploi servers list

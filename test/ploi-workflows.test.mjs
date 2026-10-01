@@ -12,7 +12,9 @@ const DEPLOY_SCRIPT = "#!/usr/bin/env bash\necho deploy v1.4.0\n";
 const SERVER_IP = "203.0.113.7";
 
 const OPS = Object.freeze({
+  schemaVersion: 1,
   project: "fixture",
+  variant: "content",
   domains: { admin: "admin.example.test", frontend: "www.example.test" },
   ploi: {
     serverId: "12",
@@ -403,6 +405,23 @@ test("ploi provision --yes applies the plan and records the site ID in gq.ops.js
   const ops = JSON.parse(await readFile(fixture.path("gq.ops.json"), "utf8"));
   assert.equal(ops.ploi.siteId, "34");
   assert.match(result.stdout, /Deploy with: gq ploi release\n$/u);
+});
+
+test("ploi provision records the site ID when gq.ops.json has no ploi.siteId yet", async () => {
+  const ploi = { ...OPS.ploi };
+  delete ploi.siteId;
+  const fixture = await site({ ops: { ...OPS, ploi } });
+  const { fetch } = fakeProviders();
+
+  const result = await fixture.run(["ploi", "provision", "--yes"], {
+    env: RELEASE_ENV,
+    fetch,
+    lookup: resolvesToServer,
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  const ops = JSON.parse(await readFile(fixture.path("gq.ops.json"), "utf8"));
+  assert.deepEqual(ops, OPS);
 });
 
 test("ploi provision records the site ID in the gq.ops.json --config selects", async () => {

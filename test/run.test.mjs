@@ -10,7 +10,6 @@ import packageJson from "../package.json" with { type: "json" };
 import {
   createFixtureSite,
   json,
-  recordingExec,
   recordingFetch,
   runGq,
   temporaryDirectory,
@@ -57,7 +56,7 @@ test("--help lists the command groups without a project", async () => {
   assert.match(result.stdout, /^gq operations CLI\n/);
   for (const form of [
     "gq context show",
-    "gq github actions sync [--dry-run] [--yes]",
+    "gq sync [--manifest] [--check] [--variant <content|commerce>]",
     "gq ploi api <operation-id>",
     "gq cloudflare dns list",
     "gq version check [version]",
@@ -130,10 +129,12 @@ test("--project and --config select a site from elsewhere", async () => {
 });
 
 test("a gq.ops.json without a project name is an actionable error", async () => {
-  const fixture = await createFixtureSite({ ops: { ploi: {} } });
+  const fixture = await createFixtureSite({
+    ops: { schemaVersion: 1, project: " ", variant: "content", ploi: {} },
+  });
   const result = await fixture.run(["context", "show"]);
   assert.equal(result.code, 1);
-  assert.equal(result.stderr, "gq: gq.ops.json must define a non-empty project name.\n");
+  assert.equal(result.stderr, "gq: gq.ops.json is invalid: project must not be empty.\n");
 });
 
 test("credentials merge machine, project .env, and env in increasing precedence", async () => {
@@ -239,7 +240,7 @@ test("ploi flags and env override the configured IDs", async () => {
 
 test("a missing Ploi site ID names where to set it", async () => {
   const fixture = await createFixtureSite({
-    ops: { project: "fixture", ploi: { serverId: "12" } },
+    ops: { schemaVersion: 1, project: "fixture", variant: "content", ploi: { serverId: "12" } },
   });
   const result = await fixture.run(["ploi", "site", "show"], { env: PLOI_TOKEN });
   assert.equal(result.code, 1);
@@ -446,143 +447,12 @@ test("cloudflare zone show refuses an ambiguous zone name", async () => {
   );
 });
 
-test("github actions sync --dry-run plans without running gh", async () => {
-  const fixture = await createFixtureSite({
-    ops: {
-      project: "fixture",
-      github: {
-        repository: "Example/fixture",
-        secrets: ["CLOUDFLARE_API_TOKEN"],
-        variables: ["CLOUDFLARE_ACCOUNT_ID"],
-      },
-    },
-  });
-
-  const result = await fixture.run(["github", "actions", "sync", "--dry-run", "--json"], {
-    env: { CLOUDFLARE_API_TOKEN: "secret", CLOUDFLARE_ACCOUNT_ID: "account-1" },
-  });
-
-  assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), {
-    repository: "Example/fixture",
-    environment: "production",
-    secrets: ["CLOUDFLARE_API_TOKEN"],
-    variables: ["CLOUDFLARE_ACCOUNT_ID"],
-    applied: false,
-  });
-  assert.equal(result.exec.calls.length, 0);
-  assert.doesNotMatch(result.stdout, /secret"/);
-});
-
-test("github actions sync --yes pipes each value to gh on stdin", async () => {
-  const fixture = await createFixtureSite({
-    ops: {
-      project: "fixture",
-      github: {
-        repository: "Example/fixture",
-        environment: "staging",
-        secrets: ["CLOUDFLARE_API_TOKEN"],
-        variables: ["CLOUDFLARE_ACCOUNT_ID"],
-      },
-    },
-  });
-  const exec = recordingExec();
-
-  const result = await fixture.run(["github", "actions", "sync", "--yes"], {
-    env: {
-      CLOUDFLARE_API_TOKEN: "token-value",
-      CLOUDFLARE_ACCOUNT_ID: "account-1",
-      GITHUB_TOKEN: "gh-token",
-    },
-    exec,
-  });
-
-  assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(
-    exec.calls.map(({ command, args, input, env }) => ({
-      command,
-      args,
-      input,
-      token: env.GH_TOKEN,
-    })),
-    [
-      {
-        command: "gh",
-        args: [
-          "secret",
-          "set",
-          "CLOUDFLARE_API_TOKEN",
-          "--repo",
-          "Example/fixture",
-          "--env",
-          "staging",
-        ],
-        input: "token-value",
-        token: "gh-token",
-      },
-      {
-        command: "gh",
-        args: [
-          "variable",
-          "set",
-          "CLOUDFLARE_ACCOUNT_ID",
-          "--repo",
-          "Example/fixture",
-          "--env",
-          "staging",
-        ],
-        input: "account-1",
-        token: "gh-token",
-      },
-    ],
-  );
-  assert.ok(exec.calls.every(({ args }) => !args.includes("token-value")));
-});
-
-test("github actions sync reports a failing gh and missing values", async () => {
-  const fixture = await createFixtureSite({
-    ops: {
-      project: "fixture",
-      github: { repository: "Example/fixture", secrets: ["TOKEN"], variables: [] },
-    },
-  });
-
-  const missing = await fixture.run(["github", "actions", "sync", "--yes"]);
-  assert.equal(missing.code, 1);
-  assert.equal(
-    missing.stderr,
-    "gq: Missing values in .env or the process environment: secret TOKEN\n",
-  );
-
-  const exec = recordingExec(() => ({ code: 1, stderr: "HTTP 404\n" }));
-  const failed = await fixture.run(["github", "actions", "sync", "--yes"], {
-    env: { TOKEN: "value" },
-    exec,
-  });
-  assert.equal(failed.code, 1);
-  assert.equal(failed.stderr, "gq: gh secret set TOKEN failed: HTTP 404\n");
-});
-
-test("github actions sync needs --yes outside a terminal", async () => {
-  const fixture = await createFixtureSite({
-    ops: {
-      project: "fixture",
-      github: { repository: "Example/fixture", secrets: [], variables: [] },
-    },
-  });
-  const result = await fixture.run(["github", "actions", "sync"]);
-  assert.equal(result.code, 1);
-  assert.equal(
-    result.stderr,
-    "gq: GitHub synchronization requires --yes outside an interactive terminal.\n",
-  );
-});
-
 test("gq-ops commands classified obsolete are gone", async () => {
   const fixture = await createFixtureSite();
   for (const argv of [
     ["credentials", "configure"],
     ["test", "post-deploy"],
+    ["github", "actions", "sync"],
   ]) {
     const result = await fixture.run(argv);
     assert.equal(result.code, 1);

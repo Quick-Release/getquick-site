@@ -3,6 +3,35 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## 0.9.0 — 2026-10-01
+
+### Added
+
+- `gq.ops.json` schema v1, validated before any command runs: an integer
+  `schemaVersion`, `project`, `variant` (`content` or `commerce`), `domains`
+  with the roles `admin`, `frontend` and an optional `docs`, a
+  `wordpress.plugins` list, and the blocks commands already read. Unknown
+  keys fail by their path. The JSON Schema editors load through `$schema`
+  ships as `schema/gq.ops.schema.json`, generated from the zod schema.
+- `gq sync [--manifest] [--check] [--variant <content|commerce>]`, which
+  applies pending manifest migrations and writes `gq.ops.json` back, or with
+  `--check` reports them and exits 1 without writing. The v0 → v1 migration
+  takes the variant from `--variant`, and drops and names `credentials`,
+  `github.environment`, `github.secrets` and `github.variables`.
+
+### Changed
+
+- Every command refuses a manifest without `schemaVersion` (v0), pointing at
+  `gq sync --manifest`, and one newer than the installed `gq` reads. Sites
+  migrate with `gq sync --manifest --variant <content|commerce>`.
+- `gq ploi provision` records a new site ID through the validated manifest
+  writer, so it also works when `ploi.siteId` is absent.
+
+### Removed
+
+- `gq github actions sync`: its `github.secrets`/`github.variables` are not
+  part of v1, and no site deploys from GitHub Actions.
+
 ## 0.8.0 — 2026-10-01
 
 ### Added

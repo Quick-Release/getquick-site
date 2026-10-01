@@ -15,7 +15,9 @@ import { webhookConfig, webhookUrl } from "../src/ci/github-setup.mjs";
 import { createFixtureSite, recordingExec, recordingFetch } from "./support/fixture-site.mjs";
 
 const OPS = Object.freeze({
+  schemaVersion: 1,
   project: "fixture",
+  variant: "content",
   sigillo: {
     apiUrl: "https://secrets.example.test",
     projectId: "PROJECT123",

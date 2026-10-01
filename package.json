@@ -1,6 +1,6 @@
 {
   "name": "@getquick/site",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Shared tooling for GETQUICK sites: the gq CLI",
   "license": "MIT",
   "type": "module",
@@ -14,6 +14,7 @@
   "files": [
     "bin",
     "src",
+    "schema",
     "docs/research/ploi-api.md",
     "CHANGELOG.md",
     "README.md",
@@ -25,11 +26,13 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "test": "node --test \"test/*.test.mjs\"",
+    "schema": "node scripts/generate-schema.mjs",
     "release:publish": "node scripts/publish.mjs"
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",
-    "aws4fetch": "1.0.20"
+    "aws4fetch": "1.0.20",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

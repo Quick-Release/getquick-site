@@ -12,7 +12,9 @@ import { VERSION } from "../src/version.mjs";
 import { createFixtureSite, recordingExec } from "./support/fixture-site.mjs";
 
 const OPS = {
+  schemaVersion: 1,
   project: "fixture",
+  variant: "content",
   sigillo: {
     apiUrl: "https://secrets.example.test",
     projectId: "PROJECT1",

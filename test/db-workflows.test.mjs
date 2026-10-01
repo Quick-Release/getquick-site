@@ -17,7 +17,9 @@ import {
 } from "./support/fixture-site.mjs";
 
 const OPS = Object.freeze({
+  schemaVersion: 1,
   project: "fixture",
+  variant: "content",
   domains: { admin: "admin.example.test", frontend: "www.example.test" },
   ploi: {
     serverId: "12",

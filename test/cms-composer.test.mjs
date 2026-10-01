@@ -68,7 +68,10 @@ for (const action of ["install", "update", "reinstall"]) {
     writeFileSync(join(source, "getquick-design.php"), "local edits");
     writeFileSync(join(plugin, "getquick-design.php"), "registry release");
     writeFileSync(join(state, "config.json"), JSON.stringify({ getquickDesign: source }));
-    writeFileSync(join(root, "gq.ops.json"), JSON.stringify({ project: "fixture" }));
+    writeFileSync(
+      join(root, "gq.ops.json"),
+      JSON.stringify({ schemaVersion: 1, project: "fixture", variant: "content" }),
+    );
     syncLocalDesign(cms, { CI: "" });
     const bin = join(root, "bin");
     mkdirSync(bin);

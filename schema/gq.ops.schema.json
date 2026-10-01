@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1
+    },
+    "variant": {
+      "type": "string",
+      "enum": [
+        "content",
+        "commerce"
+      ]
+    },
+    "domains": {
+      "type": "object",
+      "properties": {
+        "admin": {
+          "type": "string",
+          "minLength": 1
+        },
+        "frontend": {
+          "type": "string",
+          "minLength": 1
+        },
+        "docs": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "admin",
+        "frontend"
+      ],
+      "additionalProperties": false
+    },
+    "sigillo": {
+      "type": "object",
+      "properties": {
+        "apiUrl": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "environments": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ploi": {
+      "type": "object",
+      "properties": {
+        "serverId": {
+          "type": "string"
+        },
+        "siteId": {
+          "type": "string"
+        },
+        "systemUser": {
+          "type": "string"
+        },
+        "projectRoot": {
+          "type": "string"
+        },
+        "webDirectory": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "envTemplate": {
+          "type": "string"
+        },
+        "deployScript": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "wordpress": {
+      "type": "object",
+      "properties": {
+        "plugins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "plugins"
+      ],
+      "additionalProperties": false
+    },
+    "releases": {
+      "type": "object",
+      "properties": {
+        "bucket": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "bucket"
+      ],
+      "additionalProperties": false
+    },
+    "media": {
+      "type": "object",
+      "properties": {
+        "bucket": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "bucket",
+        "domain"
+      ],
+      "additionalProperties": false
+    },
+    "backups": {
+      "type": "object",
+      "properties": {
+        "bucket": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "bucket"
+      ],
+      "additionalProperties": false
+    },
+    "local": {
+      "type": "object",
+      "properties": {
+        "adminEmail": {
+          "type": "string"
+        },
+        "frontendUrl": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "namespace",
+        "repo"
+      ],
+      "additionalProperties": false
+    },
+    "ci": {
+      "type": "object",
+      "properties": {
+        "worker": {
+          "type": "string"
+        },
+        "backupBucket": {
+          "type": "string"
+        },
+        "directory": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cloudflare": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string"
+        },
+        "zoneId": {
+          "type": "string"
+        },
+        "zoneName": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "github": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "project",
+    "variant"
+  ],
+  "additionalProperties": false,
+  "title": "gq.ops.json",
+  "description": "A GETQUICK site's manifest (schema v1)."
+}

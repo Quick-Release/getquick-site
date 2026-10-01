@@ -51,7 +51,9 @@ process.exit(result.status ?? 1);
 test("gq sigillo run re-enters the real bin and runs the command with injected secrets", async () => {
   const fixture = await createFixtureSite({
     ops: {
+      schemaVersion: 1,
       project: "fixture",
+      variant: "content",
       sigillo: {
         apiUrl: "https://secrets.example.test",
         projectId: "PROJECT123",

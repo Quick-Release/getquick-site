@@ -10,10 +10,11 @@
 //   gq ploi provision --yes        # apply without prompting (CI/non-TTY)
 
 import { randomBytes } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { updateManifest } from "../manifest/manifest.mjs";
 import { createReporter } from "../reporter.mjs";
 import { createPloiServerClient } from "./server-client.mjs";
 
@@ -265,11 +266,11 @@ export async function applyAction(action, context) {
       );
       if (!active) throw new Error(`Site ${siteId()} did not become active within 3 minutes.`);
       state.site = active;
-      recordSiteId(config, siteId());
+      await recordSiteId(config, siteId());
       return;
     }
     case "record-site-id":
-      recordSiteId(config, siteId());
+      await recordSiteId(config, siteId());
       return;
     case "site-paths":
       await client.request("PATCH", `/sites/${siteId()}`, {
@@ -381,13 +382,11 @@ export async function applyAction(action, context) {
   }
 }
 
-function recordSiteId(config, siteId) {
+async function recordSiteId(config, siteId) {
   if (config.siteId === String(siteId)) return;
-  const path = config.configPath;
-  const source = readFileSync(path, "utf8");
-  const updated = source.replace(/("siteId":\s*)"[^"]*"/u, `$1"${siteId}"`);
-  if (updated === source) throw new Error("Could not update ploi.siteId in gq.ops.json.");
-  writeFileSync(path, updated);
+  await updateManifest(config.configPath, (manifest) => {
+    manifest.ploi.siteId = String(siteId);
+  });
   config.siteId = String(siteId);
 }
 

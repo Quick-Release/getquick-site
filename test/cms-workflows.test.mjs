@@ -13,7 +13,9 @@ import { createFixtureSite, recordingExec } from "./support/fixture-site.mjs";
 const GQ_BIN = fileURLToPath(new URL("../bin/gq.mjs", import.meta.url));
 
 const OPS = {
+  schemaVersion: 1,
   project: "fixture",
+  variant: "content",
   media: { bucket: "fixture-media", domain: "media.example.test" },
 };
 

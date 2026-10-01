@@ -9,7 +9,10 @@ test("discovers the project config from a nested working directory", async () =>
   const root = await temporaryDirectory();
   const nested = join(root, "apps", "web");
   await mkdir(nested, { recursive: true });
-  await writeFile(join(root, "gq.ops.json"), '{"project":"discovered"}\n');
+  await writeFile(
+    join(root, "gq.ops.json"),
+    '{"schemaVersion":1,"project":"discovered","variant":"content"}\n',
+  );
 
   assert.equal(await findProjectConfig(nested), join(root, "gq.ops.json"));
   const context = await loadProjectContext({ cwd: nested, env: {} });
@@ -22,7 +25,10 @@ test("merges machine, project, and process environment in increasing precedence"
   const root = await temporaryDirectory();
   const configHome = join(root, "machine");
   await mkdir(join(configHome, "gq"), { recursive: true });
-  await writeFile(join(root, "gq.ops.json"), '{"project":"env-test"}\n');
+  await writeFile(
+    join(root, "gq.ops.json"),
+    '{"schemaVersion":1,"project":"env-test","variant":"content"}\n',
+  );
   await writeFile(join(configHome, "gq", "ops.env"), "SOURCE=machine\nMACHINE_ONLY=yes\n");
   await writeFile(join(root, ".env"), "SOURCE=project\nPROJECT_ONLY=yes\n");
 
@@ -40,7 +46,10 @@ test("does not inherit configuration across a nested Git repository", async () =
   const root = await temporaryDirectory();
   const nestedRepository = join(root, "untrusted");
   await mkdir(join(nestedRepository, ".git"), { recursive: true });
-  await writeFile(join(root, "gq.ops.json"), '{"project":"parent"}\n');
+  await writeFile(
+    join(root, "gq.ops.json"),
+    '{"schemaVersion":1,"project":"parent","variant":"content"}\n',
+  );
 
   assert.equal(await findProjectConfig(nestedRepository), null);
 });
