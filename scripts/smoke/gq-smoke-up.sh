@@ -260,6 +260,35 @@ copy_secret() {
   printf '  %s✓ stored%s %s in Sigillo (%s)\n' "$GREEN" "$RESET" "$name" "$to"
 }
 
+# registry_accepts ENVIRONMENT: the proxy answers 200 to the Composer login in
+# the site's Sigillo ENVIRONMENT (local or staging). Prints nothing secret.
+registry_accepts() {
+  # shellcheck disable=SC2016 # JavaScript, not shell
+  site pnpm --silent exec gq sigillo run "$1" -- node -e '
+    const login = JSON.parse(process.env.COMPOSER_AUTH ?? "{}")["http-basic"]?.["proxy.composer.getquick.io"];
+    if (!login) process.exit(1);
+    const authorization = "Basic " + Buffer.from(`${login.username}:${login.password}`).toString("base64");
+    fetch("https://proxy.composer.getquick.io/packages.json", { headers: { authorization } })
+      .then((response) => process.exit(response.status === 200 ? 0 : 1), () => process.exit(1));
+  ' >/dev/null 2>&1
+}
+
+# wait_for_registry ENVIRONMENT: the proxy picks up a new login only once its
+# redeploy has propagated, so a Composer install straight after `client add`
+# gets HTTP 401. Waits up to two minutes, then offers to keep waiting.
+wait_for_registry() {
+  local tries=0
+  until registry_accepts "$1"; do
+    tries=$((tries + 1))
+    if (( tries % 24 == 0 )); then
+      warn "The registry proxy still rejects the $1 login."
+      confirm "Keep waiting?" || exit 1
+    fi
+    sleep 5
+  done
+  printf '  %s✓%s the registry proxy accepts the %s login\n' "$GREEN" "$RESET" "$1"
+}
+
 # wait_for_release TAG: watches the CI Workflow until the human says the
 # tag's run finished, then checks Ploi deployed exactly the tagged commit.
 wait_for_release() {
@@ -434,6 +463,9 @@ for pair in staging:staging:$PROJECT dev:local:$PROJECT-dev; do
     confirm "Retry?" || exit 1
   done
 done
+say "Waiting for the registry proxy to accept both logins (its redeploy takes a moment)."
+wait_for_registry staging
+wait_for_registry local
 pause
 
 # ── 8 ─────────────────────────────────────────────────────────────────────
