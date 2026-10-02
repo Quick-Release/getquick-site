@@ -42,7 +42,10 @@ What the stack provides:
 - **The CMS retries, by resending the recorded event.** A new site-owned
   must-use plugin, `web/app/mu-plugins/delivery-retries.php`, reads every
   delivery on record as one list, whatever the event's action:
-  - entries from publication-events.php's post meta;
+  - entries from publication-events.php's records, publications and
+    [ADR 0006](0006-withdraw-publications-through-signed-cms-events.md)'s
+    withdrawals alike: post meta, or `gq_publication_events_deleted` for an
+    entry deleted outright;
   - settings from settings-events.php's options;
   - another kind of event through the `gq_events_deliveries` filter.
 
@@ -136,8 +139,9 @@ What the stack provides:
   reported until an operator, a newer event or reconciliation delivers it.
 - The cron's `wp` runs every minute. A run with nothing due reads the records
   and writes `gq_events_scheduler`.
-- A withdrawal (#44) recorded in an entry's post meta is retried with no
-  change here. One recorded elsewhere joins through `gq_events_deliveries`.
+- Withdrawals (ADR 0006) are retried like publications, including a deleted
+  entry's from its option. A later kind of event recorded elsewhere joins
+  through `gq_events_deliveries`.
 - Unverified live: the Ploi crontab API and its command on a real server,
   `wp` on cron's PATH there, and the block editor notices against the real
   GETQUICK admin.

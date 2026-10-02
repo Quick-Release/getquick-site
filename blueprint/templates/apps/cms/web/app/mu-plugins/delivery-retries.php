@@ -12,7 +12,8 @@
  * an event names (publication-events.php, settings-events.php). Each kind of
  * event keeps its last event and its delivery on record: per entry in post
  * meta, per shared setting in an option. This plugin reads those records as
- * one list of deliveries, whatever the event's action, and:
+ * one list of deliveries, whatever the event's action (a publication, a
+ * withdrawal or a setting), and:
  *
  * - retries the ones the Frontend didn't confirm: a failed one after a
  *   growing delay (1, 2, 5, 10 and 30 minutes, then hourly), until it has been
@@ -86,9 +87,10 @@ function available(): bool
  * Every event on record and its delivery, as
  * `['subject', 'label', 'event', 'delivery', 'deliver' => fn(array $event): array, 'post'?]`.
  * `deliver` sends the event and records how it went, the way the event's own
- * plugin does. Entries come from publication-events.php's post meta (whatever
- * the event's action), settings from settings-events.php's options; another
- * kind of event adds its own through `gq_events_deliveries`.
+ * plugin does. Entries come from publication-events.php's records (post meta,
+ * or its option for deleted entries), whatever the event's action (publish
+ * or withdraw); settings from settings-events.php's options; another kind of
+ * event adds its own through `gq_events_deliveries`.
  */
 function deliveries(): array
 {
@@ -104,15 +106,17 @@ function deliveries(): array
         'fields' => 'ids',
         'suppress_filters' => true,
     ]);
-    foreach ($posts as $post_id) {
-        $post_id = (int) $post_id;
+    // A deleted entry's withdrawal is kept in an option until it is refreshed.
+    $deleted = get_option(\GetQuick\Site\PublicationEvents\DELETED_OPTION, []);
+    $deleted = is_array($deleted) ? array_keys($deleted) : [];
+    foreach (array_unique(array_map('intval', [...$posts, ...$deleted])) as $post_id) {
         $recorded = \GetQuick\Site\PublicationEvents\recorded($post_id);
         if ($recorded === null) {
             continue;
         }
         $deliveries[] = [
             'subject' => "post:{$post_id}",
-            'label' => (string) ($recorded['event']['entry']['uri'] ?? get_the_title($post_id)),
+            'label' => (string) ($recorded['event']['entry']['uri'] ?? ''),
             'post' => $post_id,
             'event' => $recorded['event'],
             'delivery' => $recorded['delivery'],
@@ -552,7 +556,7 @@ function reporting(): void
             $setting = str_starts_with($row['subject'], 'setting:') ? substr($row['subject'], 8) : null;
             $name = $setting !== null
                 ? SETTING_NAMES[$setting] ?? $setting
-                : sprintf('%s (%s)', get_the_title((int) ($row['post'] ?? 0)), $row['label']);
+                : trim(sprintf('%s (%s)', get_the_title((int) ($row['post'] ?? 0)), $row['label']));
             $items[] = sprintf(
                 '<li>%s: %s</li>',
                 esc_html($name),

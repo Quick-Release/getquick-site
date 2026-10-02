@@ -22,15 +22,21 @@
 //   global-styles REST route GQ Design uses) reach the homepage and the
 //   entries through a later outage; a failed settings refresh is recorded,
 //   `wp gq-events settings status` lists it and `wp gq-events settings retry`
-//   recovers it. delivery-retries.php's scheduler (`wp gq-events retry-due`,
-//   on a clock this proof moves on) delivers what the Frontend didn't
-//   confirm once its delay passes, without visits or republishing: a
-//   publication sent while the Frontend was down, a publication and a
-//   setting the Frontend couldn't read back (backing off while it can't), and
-//   one whose request was interrupted; it stops after the last attempt, which
-//   editors, `wp gq-events delays` and Site Health report, and an overlapping
-//   run sends nothing. Last, with the local ddev/ddev-webserver Docker image
-//   present, a real cron daemon runs the crontab `gq ploi events` installs.
+//   recovers it. Unpublishing, password-protecting, trashing and deleting a
+//   page send withdrawals that make it a 404 at once, though the CMS the
+//   Frontend reads still returns it and then goes down, and republishing
+//   serves it again; a deletion while the Frontend is down is kept for
+//   `wp gq-events retry`. delivery-retries.php's scheduler
+//   (`wp gq-events retry-due`, on a clock this proof moves on) delivers what
+//   the Frontend didn't confirm once its delay passes, without visits or
+//   republishing: a publication sent while the Frontend was down, a
+//   publication and a setting the Frontend couldn't read back (backing off
+//   while it can't), one whose request was interrupted, and the withdrawal
+//   of a page deleted while the Frontend was down; it stops after the last
+//   attempt, which editors, `wp gq-events delays` and Site Health report, and
+//   an overlapping run sends nothing. Last, with the local
+//   ddev/ddev-webserver Docker image present, a real cron daemon runs the
+//   crontab `gq ploi events` installs.
 //
 // The Frontend reads published content from a stub WordPress that this proof
 // keeps in step with what it publishes, since the GETQUICK GraphQL schema
@@ -731,6 +737,158 @@ try {
     /The retry scheduler last ran at/u.test(table.stdout),
     table.stdout + table.stderr,
   );
+
+  // Withdrawals. The stub CMS keeps returning the entry throughout, as a
+  // WordPress whose GraphQL a cache still answers for would: only the event
+  // can make the Frontend stop serving it.
+  cms.entries.get("/launch/").content = "Published again.";
+  await wpOrFail(["post", "update", id, "--post_title=News"], cmsEnv);
+  check(
+    "the entry is served before it is withdrawn",
+    (await visit(port, "/launch/")).html.includes("Published again."),
+  );
+
+  await wpOrFail(["post", "update", id, "--post_status=draft"], cmsEnv);
+  const unpublished = await recorded(id);
+  const draft = await visit(port, "/launch/");
+  await cms.stop();
+  const draftDuringOutage = await visit(port, "/launch/");
+  check(
+    "unpublishing sends a withdrawal, and the entry is a 404 at once and through a CMS outage",
+    unpublished?.event?.action === "withdraw" &&
+      unpublished.event.entry.uri === "/launch/" &&
+      unpublished.event.entry.id === nodeId(id) &&
+      unpublished.delivery?.status === "refreshed" &&
+      draft.status === 404 &&
+      draftDuringOutage.status === 404 &&
+      !draftDuringOutage.html.includes("Published again."),
+    `${JSON.stringify(unpublished)} HTTP ${draft.status}, ${draftDuringOutage.status}`,
+  );
+
+  await cms.start();
+  await wpOrFail(["post", "update", id, "--post_status=publish"], cmsEnv);
+  const republished = await visit(port, "/launch/");
+  check(
+    "republishing serves it again",
+    republished.status === 200 && republished.html.includes("Published again."),
+    `HTTP ${republished.status}`,
+  );
+
+  await wpOrFail(["post", "update", id, "--post_password=members-only"], cmsEnv);
+  const protectedEvent = await recorded(id);
+  const protectedVisit = await visit(port, "/launch/");
+  check(
+    "password-protecting it withdraws it",
+    protectedEvent?.event?.action === "withdraw" && protectedVisit.status === 404,
+    `${JSON.stringify(protectedEvent?.event)} HTTP ${protectedVisit.status}`,
+  );
+  await wpOrFail(["post", "update", id, "--post_password="], cmsEnv);
+  check("removing the password publishes it again", (await visit(port, "/launch/")).status === 200);
+
+  await wpOrFail(["post", "delete", id], cmsEnv);
+  const trashed = await recorded(id);
+  const trashedVisit = await visit(port, "/launch/");
+  check(
+    "trashing it sends a withdrawal at the URI it had, and it is a 404",
+    trashed?.event?.action === "withdraw" &&
+      trashed.event.entry.uri === "/launch/" &&
+      trashed.delivery?.status === "refreshed" &&
+      trashedVisit.status === 404,
+    `${JSON.stringify(trashed)} HTTP ${trashedVisit.status}`,
+  );
+
+  // A draft first (no event), so the stub CMS knows its id when it is published.
+  const publishPage = async (slug, content) => {
+    const page = await wpOrFail(
+      [
+        "post",
+        "create",
+        "--post_type=page",
+        "--post_status=draft",
+        `--post_title=${slug}`,
+        `--post_name=${slug}`,
+        `--post_content=${content}`,
+        "--porcelain",
+      ],
+      cmsEnv,
+    );
+    cms.entries.set(`/${slug}/`, { id: nodeId(page), title: slug, content });
+    await wpOrFail(["post", "update", page, "--post_status=publish"], cmsEnv);
+    return page;
+  };
+  const deletedOption = async () =>
+    JSON.parse(
+      (await wp(["option", "get", "gq_publication_events_deleted", "--format=json"])).stdout ||
+        "{}",
+    );
+
+  const team = await publishPage("team", "Our team.");
+  check("a second page is published", (await visit(port, "/team/")).status === 200);
+  await wpOrFail(["post", "delete", team, "--force"], cmsEnv);
+  const deleted = await visit(port, "/team/");
+  check(
+    "deleting a published page outright withdraws it, and leaves no record once refreshed",
+    deleted.status === 404 && !(team in (await deletedOption())),
+    `HTTP ${deleted.status}`,
+  );
+
+  const old = await publishPage("old", "Old news.");
+  await stopWorker(worker);
+  const deletedOffline = await wp(["post", "delete", old, "--force"], cmsEnv);
+  const pendingDeletion = (await deletedOption())[old];
+  const listedDeletion = await wp(["gq-events", "status", "--format=json"], cmsEnv);
+  check(
+    "with the Frontend down, deleting succeeds and keeps the failed withdrawal for a retry",
+    deletedOffline.code === 0 &&
+      pendingDeletion?.event?.action === "withdraw" &&
+      pendingDeletion.delivery?.status === "failed" &&
+      pendingDeletion.delivery.reason === "network" &&
+      JSON.parse(listedDeletion.stdout || "[]").some((row) => String(row.post) === old),
+    JSON.stringify(pendingDeletion) + listedDeletion.stdout + listedDeletion.stderr,
+  );
+  worker = await local.start(port);
+  const stillServed = await visit(port, "/old/");
+  const retriedDeletion = await wp(["gq-events", "retry", old], cmsEnv);
+  const withdrawnLater = await visit(port, "/old/");
+  check(
+    "wp gq-events retry delivers it once the Frontend is back, and the page is a 404",
+    stillServed.status === 200 &&
+      retriedDeletion.code === 0 &&
+      withdrawnLater.status === 404 &&
+      !(old in (await deletedOption())),
+    `HTTP ${stillServed.status} → ${withdrawnLater.status}: ${retriedDeletion.stdout}${retriedDeletion.stderr}`,
+  );
+
+  // A withdrawal the Frontend didn't receive (a page deleted outright while
+  // it was down, kept in the CMS's option for deleted entries) is retried by
+  // the scheduler like a publication.
+  const archive = await publishPage("archive", "Archived.");
+  await stopWorker(worker);
+  await wpOrFail(["post", "delete", archive, "--force"], cmsEnv);
+  const lostWithdrawal = (await deletedOption())[archive];
+  const listedWithdrawal = (await delays()).rows.find((row) => row.subject === `post:${archive}`);
+  worker = await local.start(port);
+  const beforeRetry = await visit(port, "/archive/");
+  await clock(61);
+  const withdrawnByScheduler = await retryDue();
+  const afterWithdrawal = await visit(port, "/archive/");
+  check(
+    "the scheduler delivers a withdrawal the Frontend missed, and the page is a 404",
+    lostWithdrawal?.delivery?.status === "failed" &&
+      listedWithdrawal?.action === "withdraw" &&
+      listedWithdrawal.state === "retrying" &&
+      beforeRetry.status === 200 &&
+      sentBy(withdrawnByScheduler).some(
+        (row) =>
+          row.subject === `post:${archive}` &&
+          row.action === "withdraw" &&
+          row.status === "refreshed",
+      ) &&
+      afterWithdrawal.status === 404 &&
+      !(archive in (await deletedOption())),
+    `${JSON.stringify(listedWithdrawal)} HTTP ${beforeRetry.status} → ${afterWithdrawal.status}: ${withdrawnByScheduler.stdout}${withdrawnByScheduler.stderr}`,
+  );
+  await clock(0);
 
   // The real scheduler: a cron daemon (Debian's, in the local DDEV web server
   // image, with WP-CLI in /usr/local/bin as on Ploi) runs the exact crontab

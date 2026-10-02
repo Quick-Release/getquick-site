@@ -1,5 +1,5 @@
 import { log } from "@clack/prompts";
-import { runCli } from "./ops/cli.mjs";
+import { runCli } from "./cli/dispatch.mjs";
 
 // The whole CLI behind one in-process call: every provider request goes
 // through `fetch`, every child process through `exec`, every DNS lookup

@@ -14,7 +14,7 @@
 // probe among them), "configured" (everything but the probe passed) or
 // "not-ready"; only "ready" sets `ready`.
 
-import { parseDotenv } from "../dotenv.mjs";
+import { parseDotenv } from "../dotenv-text.mjs";
 import { mediaEnv } from "../ploi/media.mjs";
 import { createPloiServerClient } from "../ploi/server-client.mjs";
 import { createR2Client } from "../r2.mjs";

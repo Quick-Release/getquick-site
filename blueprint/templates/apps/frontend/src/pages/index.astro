@@ -12,6 +12,10 @@ const home = await publishedHome(Astro.site?.origin);
 // a front page that can't be served is a 503, not a page that looks served.
 const placeholder = home.kind === "unavailable" && import.meta.env.DEV;
 Astro.response.status = placeholder ? 200 : responseStatus(home);
+// Every visit is answered from the store, so a cache may keep the page but
+// must ask again before reusing it: a withdrawn front page is never presented
+// from one.
+Astro.response.headers.set("Cache-Control", "no-cache");
 const content = home.kind === "found" ? home.content.home : null;
 const chrome = home.kind === "found" ? home.content.chrome : home.kind === "missing" ? home.chrome : null;
 const { vars, colorRules } = blockPresetStyles(content?.spacingSizes ?? [], content?.colors ?? []);

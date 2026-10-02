@@ -7,77 +7,6 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ### Added
 
-- `gq media check` reports whether a site's WordPress uploads are hosted
-  independently of its CMS, with an actionable step for each check that
-  isn't ready and exit 1 until they are. Through `gq sigillo run staging`
-  it checks the `media` configuration, that the media domain is neither the
-  CMS's nor the Frontend's host, that the deploy activates `s3-uploads`, the
-  Ploi `.env`'s `S3_UPLOADS_*` lines (compared, never shown), the bucket
-  credentials, the public domain and the Frontend's rendered homepage
-  (`configured`). `--upload` proves the upload path: it uploads a probe
-  image through the CMS's REST API as `CMS_CHECK_USER` with the application
-  password `CMS_CHECK_APP_PASSWORD`, requires its URL on the media domain,
-  compares the bucket's object with what the media domain serves, and
-  deletes the probe (`ready`). `--local` checks local development offline:
-  uploads stay on disk unless `apps/cms/.env` holds R2 credentials.
-  `--json` prints the result for other tooling.
-- New sites get the `media:check`, `media:check:upload` and
-  `media:check:local` scripts. `gq new`'s provisioning sequence now includes
-  `ploi:media` after `cf:media`, and ends with `media:check:upload`.
-- `gq doctor` reports local media, and fails when `apps/cms/.env` holds R2
-  credentials, which would make the local CMS write to the live bucket.
-- The gq-smoke wizard proves independent media on its disposable site
-  (stage 17).
-- New Frontends test their routes: `src/routes.test.ts` renders the home and
-  entry pages through Astro's Container API (`vitest.config.ts`) against a
-  stubbed CMS and checks their content and HTTP status.
-  `scripts/smoke/frontend-check.sh` runs a disposable generated site's
-  Frontend tests, `astro check`, lint and format check.
-- **Existing sites:** the Frontend is site-owned, so syncing doesn't change
-  it. To adopt, copy `src/lib/wordpress.ts`, its test, `src/routes.test.ts`,
-  the two pages, `src/layouts/Layout.astro` and `vitest.config.ts` from a
-  newly generated site (and add `vitest.config.ts` to `tsconfig.json`),
-  keeping the site's own changes.
-- New content sites serve a durable last-known-good homepage
-  ([ADR 0003](docs/adr/0003-serve-published-content-from-a-durable-store.md)).
-  The Frontend serves the front page and its menu, logo, site identity and
-  design presets from its publication store, a D1 database of its own
-  (`<project>-fe-publications`, retained in production) that
-  `infra/frontend.run.ts` declares, migrates from `apps/frontend/migrations`
-  and binds as `PUBLICATION_DB`. Visits never read the CMS, so the homepage
-  outlives CMS outages of any length, Worker restarts and redeploys. Until a
-  refresh has stored it, the homepage is a 503, never a placeholder or a 404.
-- `gq frontend refresh` (`pnpm frontend:refresh`) is the trusted refresh: it
-  posts to the Frontend's `/gq/refresh` with `FRONTEND_REFRESH_TOKEN` (a
-  per-site secret in Sigillo staging, bound to the Worker by
-  `pnpm deploy:frontend`). The Frontend reads the CMS anonymously and promotes
-  each complete, valid read; a timeout, network, HTTP or GraphQL error,
-  missing required data or a front page without its blocks keeps the stored
-  version, a failed chrome read doesn't touch the stored front page, and an
-  older read never overwrites a newer one. The report says what was kept and
-  why; the command exits 1 until the homepage is ready and refreshed. Without
-  the token bound, the Frontend refuses every refresh. `gq new` lists the
-  deploy and refresh after media.
-- The Frontend skeleton's `src/homepage.test.ts` renders the homepage through
-  refreshes, outages, time far beyond any cache expiry, restarts, refused
-  refreshes and unreadable or incompatible stored state, with the store on
-  SQLite and the same migrations. `scripts/smoke/frontend-runtime.sh` proves
-  it on a disposable generated site without Cloudflare: Alchemy's Astro
-  build served in workerd with a local D1 store, through a CMS outage, a
-  Worker restart and a rebuilt redeploy.
-- **Existing sites:** `infra/frontend.run.ts` only creates the store when
-  `apps/frontend/migrations` exists, so syncing changes nothing for a
-  site-owned Frontend that doesn't have it. To adopt, copy `migrations/`,
-  `src/lib/delivery.ts`, `src/lib/publications.ts`, `src/lib/runtime.ts`,
-  `src/pages/gq/refresh.ts`, `src/test/`, `src/homepage.test.ts`, the updated
-  `src/pages/index.astro`, `src/layouts/Layout.astro`, `src/env.d.ts` and
-  `src/routes.test.ts` from a newly generated site, add
-  `FRONTEND_REFRESH_TOKEN` to Sigillo staging, deploy and run
-  `pnpm frontend:refresh`.
-- **Not yet:** Cloudflare CI releases don't pass `FRONTEND_REFRESH_TOKEN`, so
-  a CI release disables refresh (stored content is still served) until the
-  next `pnpm deploy:frontend`; refresh is manual until WordPress events
-  arrive.
 - New content sites serve their published pages and posts (entries) from the
   publication store too
   ([ADR 0004](docs/adr/0004-serve-entries-from-the-store-with-a-cold-lookup.md)),
@@ -164,8 +93,7 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
     `.env.production.example`.
   - Add `PUBLICATION_EVENT_SECRET` to Sigillo staging, rerun `pnpm ci:deploy`,
     deploy the Frontend, run `pnpm ploi:events` and release the CMS.
-- **Not yet:** withdrawals (#44), and automated retries with editor-facing
-  delay reports (#46).
+- **Not yet:** automated retries with editor-facing delay reports (#46).
 - New content sites refresh their shared settings through events: a change to
   the menus, the logo, the site's identity (title, tagline, icon) or the
   design presets reaches the homepage and every entry without republishing
@@ -197,12 +125,52 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
     `src/settings.test.ts` and the updated `src/lib/delivery.ts`,
     `src/lib/events.ts`, `src/lib/wordpress.ts`, `src/pages/gq/events.ts` and
     `src/test/wordpress-stub.ts` from a newly generated site.
+- New content sites withdraw a page or post from the Frontend when an editor
+  unpublishes it, makes it private, adds a password, trashes it or deletes it
+  ([ADR 0006](docs/adr/0006-withdraw-publications-through-signed-cms-events.md)).
+  The CMS plugin sends a signed `withdraw` event with the entry's id and the
+  URI it had while published. The Frontend makes every route of that entry a
+  404 at once, without reading the CMS, so the withdrawal holds through CMS
+  outages and restarts. Other publications are untouched.
+- The Frontend records each withdrawal (migration `0004_withdrawals.sql`) and
+  applies it in one D1 transaction. While a withdrawal is in force, nothing
+  promotes that entry again: not a refresh, a cold lookup, a CMS (or a cache
+  in front of it) that still returns it, a duplicate, or an older read still
+  in flight. Refresh reports show such a read as `withdrawn`.
+- Ordering follows the CMS: a publication older than the withdrawal is
+  superseded, a withdrawal older than a recorded publication changes
+  nothing, and a later publication lifts the withdrawal and refreshes the
+  entry as usual. A password-protected entry now sends a withdrawal rather
+  than a publication.
+- A deleted entry's withdrawal is kept in the option
+  `gq_publication_events_deleted` until it is delivered.
+  `wp gq-events status` lists it and `wp gq-events retry <post>` sends it.
+- The homepage and entry pages answer with `Cache-Control: no-cache`, so no
+  browser or proxy reuses a copy without asking the Worker.
+- The Frontend skeleton's `src/withdrawals.test.ts` renders withdrawals
+  through outages and restarts, stale CMS answers, refreshes and cold
+  lookups racing them, delayed, duplicate and reordered events,
+  republications, moved entries, the front page, refused events and Site
+  isolation. `scripts/smoke/frontend-runtime.sh` checks a withdrawal in
+  workerd with a local D1. `scripts/smoke/cms-events.sh` checks unpublishing,
+  password-protecting, trashing and deleting (also while the Frontend is
+  down) with a real WordPress.
+- **Existing sites** that adopted events:
+  - From a newly generated site, copy `migrations/0004_withdrawals.sql`,
+    `src/withdrawals.test.ts` and the updated `src/lib/delivery.ts`,
+    `src/lib/events.ts`, `src/lib/publications.ts`, `src/lib/wordpress.ts`,
+    `src/pages/index.astro`, `src/pages/[...slug].astro` and
+    `src/test/sqlite-d1.ts`.
+  - Copy the CMS's updated `web/app/mu-plugins/publication-events.php`.
+  - Deploy the Frontend before releasing the CMS: an older Frontend answers a
+    withdraw event 422 (unsupported), which the CMS records as `rejected`.
 - New content sites retry the events the Frontend didn't confirm, without
   visits or republishing, and report delayed public delivery
   ([ADR 0008](docs/adr/0008-retry-event-delivery-from-the-cms-on-a-server-cron.md)).
   - The CMS skeleton gains `web/app/mu-plugins/delivery-retries.php`. It
     reads the entries' and settings' delivery records as one list, whatever
-    the event's action (another kind joins through `gq_events_deliveries`).
+    the event's action (publish, withdraw or settings; another kind joins
+    through `gq_events_deliveries`).
     `wp gq-events retry-due` resends the same event once its delay has passed:
     1, 2, 5, 10 and 30 minutes, then hourly, up to 12 attempts. It also sends
     a pending event its own request never sent. A lock keeps runs from
@@ -231,6 +199,93 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
     the updated `publication-events.php`, then run `pnpm ploi:events` to add
     the crontab.
 
+## 0.13.5 — 2026-10-02
+
+### Fixed
+
+- Generated site formatting and lint hooks exclude imported agent skills so
+  commits preserve their exact upstream contents and lockfile hashes.
+
+### Added
+
+- `gq skills update` installs and updates registered upstream agent skills in
+  `.agents/skills` without needing `gq.ops.json`. Registrations live in
+  `.agents/skills.json`, `skills-lock.json` records the installed commit,
+  per-file hashes and modes, `--check` is read-only, GitHub tokens are read
+  from `GITHUB_TOKEN`/`GH_TOKEN`, unregistered local skills are untouched, and
+  drift, unsafe paths, symlink anchors and concurrent writers are refused.
+- `gq media check` reports whether a site's WordPress uploads are hosted
+  independently of its CMS, with an actionable step for each check that
+  isn't ready and exit 1 until they are. Through `gq sigillo run staging`
+  it checks the `media` configuration, that the media domain is neither the
+  CMS's nor the Frontend's host, that the deploy activates `s3-uploads`, the
+  Ploi `.env`'s `S3_UPLOADS_*` lines (compared, never shown), the bucket
+  credentials, the public domain and the Frontend's rendered homepage
+  (`configured`). `--upload` proves the upload path: it uploads a probe
+  image through the CMS's REST API as `CMS_CHECK_USER` with the application
+  password `CMS_CHECK_APP_PASSWORD`, requires its URL on the media domain,
+  compares the bucket's object with what the media domain serves, and
+  deletes the probe (`ready`). `--local` checks local development offline:
+  uploads stay on disk unless `apps/cms/.env` holds R2 credentials.
+  `--json` prints the result for other tooling.
+- New sites get the `media:check`, `media:check:upload` and
+  `media:check:local` scripts. `gq new`'s provisioning sequence now includes
+  `ploi:media` after `cf:media`, and ends with `media:check:upload`.
+- `gq doctor` reports local media, and fails when `apps/cms/.env` holds R2
+  credentials, which would make the local CMS write to the live bucket.
+- The gq-smoke wizard proves independent media on its disposable site
+  (stage 17).
+- New Frontends test their routes: `src/routes.test.ts` renders the home and
+  entry pages through Astro's Container API (`vitest.config.ts`) against a
+  stubbed CMS and checks their content and HTTP status.
+  `scripts/smoke/frontend-check.sh` runs a disposable generated site's
+  Frontend tests, `astro check`, lint and format check.
+- **Existing sites:** the Frontend is site-owned, so syncing doesn't change
+  it. To adopt, copy `src/lib/wordpress.ts`, its test, `src/routes.test.ts`,
+  the two pages, `src/layouts/Layout.astro` and `vitest.config.ts` from a
+  newly generated site (and add `vitest.config.ts` to `tsconfig.json`),
+  keeping the site's own changes.
+- New content sites serve a durable last-known-good homepage
+  ([ADR 0003](docs/adr/0003-serve-published-content-from-a-durable-store.md)).
+  The Frontend serves the front page and its menu, logo, site identity and
+  design presets from its publication store, a D1 database of its own
+  (`<project>-fe-publications`, retained in production) that
+  `infra/frontend.run.ts` declares, migrates from `apps/frontend/migrations`
+  and binds as `PUBLICATION_DB`. Visits never read the CMS, so the homepage
+  outlives CMS outages of any length, Worker restarts and redeploys. Until a
+  refresh has stored it, the homepage is a 503, never a placeholder or a 404.
+- `gq frontend refresh` (`pnpm frontend:refresh`) is the trusted refresh: it
+  posts to the Frontend's `/gq/refresh` with `FRONTEND_REFRESH_TOKEN` (a
+  per-site secret in Sigillo staging, bound to the Worker by
+  `pnpm deploy:frontend`). The Frontend reads the CMS anonymously and promotes
+  each complete, valid read; a timeout, network, HTTP or GraphQL error,
+  missing required data or a front page without its blocks keeps the stored
+  version, a failed chrome read doesn't touch the stored front page, and an
+  older read never overwrites a newer one. The report says what was kept and
+  why; the command exits 1 until the homepage is ready and refreshed. Without
+  the token bound, the Frontend refuses every refresh. `gq new` lists the
+  deploy and refresh after media.
+- The Frontend skeleton's `src/homepage.test.ts` renders the homepage through
+  refreshes, outages, time far beyond any cache expiry, restarts, refused
+  refreshes and unreadable or incompatible stored state, with the store on
+  SQLite and the same migrations. `scripts/smoke/frontend-runtime.sh` proves
+  it on a disposable generated site without Cloudflare: Alchemy's Astro
+  build served in workerd with a local D1 store, through a CMS outage, a
+  Worker restart and a rebuilt redeploy.
+- **Existing sites:** `infra/frontend.run.ts` only creates the store when
+  `apps/frontend/migrations` exists, so syncing changes nothing for a
+  site-owned Frontend that doesn't have it. To adopt, copy `migrations/`,
+  `src/lib/delivery.ts`, `src/lib/publications.ts`, `src/lib/runtime.ts`,
+  `src/pages/gq/refresh.ts`, `src/test/`, `src/homepage.test.ts`, the updated
+  `src/pages/index.astro`, `src/layouts/Layout.astro`, `src/env.d.ts` and
+  `src/routes.test.ts` from a newly generated site, add
+  `FRONTEND_REFRESH_TOKEN` to Sigillo staging, deploy and run
+  `pnpm frontend:refresh`.
+- **Not yet:** Cloudflare CI releases don't pass `FRONTEND_REFRESH_TOKEN`, so
+  a CI release disables refresh (stored content is still served) until the
+  next `pnpm deploy:frontend`; entries still read the CMS live; refresh is
+  manual until WordPress events arrive.
+
 ### Fixed
 
 - New content sites' Frontends no longer present a CMS failure as a missing
@@ -246,6 +301,20 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   and the page is still served without them.
 - The front page retries without blocks after a CMS 5xx, like entries do; a
   timeout isn't retried, and a failed retry is unavailable, never missing.
+
+## 0.13.4 — 2026-10-02
+
+### Changed
+
+- Clarified CLI and provider source ownership and role-based filenames while
+  preserving the package's public exports and command behavior.
+- Made the README an entry point to focused site guides, command references
+  and contributor documentation, all included in the published package.
+- Distinguished blueprint section and managed-key fragments from whole-file
+  sources without changing generated site paths or ownership rules.
+- Organized tests by module and subject, clarified shared helper roles and
+  documented fixture provenance. Test discovery still excludes extracted site
+  scripts, and existing fixture contents are preserved.
 
 ## 0.13.3 — 2026-10-02
 

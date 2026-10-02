@@ -81,7 +81,16 @@ reaches the homepage and every entry without re-reading them. Each setting's
 events are ordered on their own, like an entry's, and a failed read keeps the
 stored menus, branding and design.
 
-The CMS retries an event the Frontend didn't confirm (its
+When an editor unpublishes, password-protects, trashes or deletes an entry,
+the CMS sends a `withdraw` event instead. The Frontend makes every route of
+that entry a 404 at once, without reading the CMS (`withdrawEntry` in
+`src/lib/delivery.ts`). It records the withdrawal in `withdrawals`, and the
+store refuses to promote that entry again, whatever a read returns, until a
+publication that happened later lifts it. Pages answer with
+`Cache-Control: no-cache`; don't put a cache in front of the store that could
+outlive a withdrawal.
+
+The CMS retries an event (a publication, a withdrawal or a setting) the Frontend didn't confirm (its
 `delivery-retries.php`, on the server's cron) by sending the same event again,
 signed anew, so a failed event is processed again and the rules above still
 order it. The Frontend has no scheduler of its own.
@@ -103,11 +112,12 @@ change it here; a shared renderer package is planned.
 renders the pages through Astro's Container API against a stubbed CMS
 (`vitest.config.ts` gives Vitest Astro's Vite config); `src/homepage.test.ts`,
 `src/entries.test.ts`, `src/events.test.ts`, `src/settings.test.ts` and
-`src/retries.test.ts` drive the durable homepage, entries, publication events,
-shared settings and the CMS's retries through refreshes, outages, restarts,
-new and moved publications, refused, duplicate, delayed, failed and retried
-events, with the
-store on SQLite (`src/test/sqlite-d1.ts`, the same migrations and SQL).
+`src/withdrawals.test.ts` and `src/retries.test.ts` drive the durable
+homepage, entries, publication events, shared settings, withdrawals and the
+CMS's retries through refreshes, outages, restarts, new and moved
+publications, refused, duplicate, delayed, racing, failed and retried events,
+with the store on SQLite (`src/test/sqlite-d1.ts`, the same migrations and
+SQL).
 
 ## Deploys
 

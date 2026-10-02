@@ -51,9 +51,12 @@ post is published or updated, so it refreshes its public copy without a
 deploy. It signs each event with `PUBLICATION_EVENT_SECRET` (in the server's
 `.env`, from `pnpm ploi:events`) and sends it to `GETQUICK_FRONTEND_URL` at
 the end of the request; publishing never waits on it or fails because of it.
-Each entry records its last event and how it went (post meta
-`_gq_publication_event`). Without the key, outside production, nothing is
-sent. On the server:
+Unpublishing, making private, password-protecting, trashing or deleting a
+published entry sends a withdrawal, which makes the Frontend stop serving it
+at once. Each entry records its last event and how it went (post meta
+`_gq_publication_event`; for a deleted entry, the option
+`gq_publication_events_deleted` until it is delivered). Without the key,
+outside production, nothing is sent. On the server:
 
 ```sh
 wp gq-events check            # the Frontend accepts this Site's events

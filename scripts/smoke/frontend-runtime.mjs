@@ -13,18 +13,23 @@
 //   failed refresh keeps them; Worker restart and a rebuilt redeploy → still
 //   served; CMS back → a cold entry is looked up, a made-up one is a 404, a
 //   change, a new publication and a moved entry are refreshed; the Worker's
-//   event secret accepts this Site's signed events and refuses another key's.
+//   event secret accepts this Site's signed events and refuses another key's;
+//   a signed withdrawal is a 404 at once with the CMS down, through a Worker
+//   restart, a delayed older publication and a refresh from a CMS that still
+//   returns the entry, until a later republication.
 //
 // Nothing reaches Cloudflare: no account, token or remote resource is used.
 //
 //   node scripts/smoke/frontend-runtime.mjs <generated site directory>
 
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   buildFrontend,
   checker,
+  deliverEvent,
   freePort,
   localWorker,
   runGq,
@@ -259,6 +264,68 @@ try {
     "and refuses events signed with another key",
     refused.code === 1 && refused.json?.status === 401,
     refused.stdout + refused.stderr,
+  );
+
+  // A withdrawal, as WordPress sends one when /news/ is unpublished, accepted
+  // by the built Worker in workerd and its local D1 store.
+  const event = (action, occurredAt) => ({
+    site: "acme",
+    id: randomUUID(),
+    action,
+    occurredAt,
+    entry: { id: "page-80", uri: "/news/" },
+  });
+  const delayed = event("publish", Date.now() - 60_000);
+  if (cms.server?.listening) await cms.stop();
+  const withdrawn = await deliverEvent(port, eventKey, event("withdraw", Date.now() - 1000));
+  const gone = await visit(port, "/news/");
+  check(
+    "a signed withdrawal, with the CMS down, makes the entry a 404 at once",
+    withdrawn.status === 200 &&
+      withdrawn.body?.status === "withdrawn" &&
+      gone.status === 404 &&
+      !gone.html.includes("We launched.") &&
+      gone.cacheControl === "no-cache",
+    `${JSON.stringify(withdrawn.body)} HTTP ${gone.status} (${gone.cacheControl})`,
+  );
+  const kept = await visit(port, "/contact/");
+  check(
+    "and the other entries are still served",
+    kept.status === 200 && kept.html.includes("Write to us."),
+    `HTTP ${kept.status}`,
+  );
+
+  await stopWorker(worker);
+  worker = await local.start(port);
+  const stale = await deliverEvent(port, eventKey, delayed);
+  const afterRestart = await visit(port, "/news/");
+  check(
+    "after a Worker restart it is still a 404, and a delayed older publication is superseded",
+    stale.status === 200 && stale.body?.status === "superseded" && afterRestart.status === 404,
+    `${JSON.stringify(stale.body)} HTTP ${afterRestart.status}`,
+  );
+
+  // The CMS (or a cache in front of it) still returns the entry.
+  await cms.start();
+  const whole = await refresh(port);
+  const afterRefresh = await visit(port, "/news/");
+  check(
+    "a whole-Site refresh from a CMS that still returns it doesn't restore it",
+    whole.report?.entries?.["/news/"]?.outcome === "withdrawn" && afterRefresh.status === 404,
+    `${JSON.stringify(whole.report?.entries?.["/news/"])} HTTP ${afterRefresh.status}`,
+  );
+
+  cms.entries.get("/news/").content = "We launched again.";
+  const republished = await deliverEvent(port, eventKey, event("publish", Date.now()));
+  await cms.stop();
+  const back = await visit(port, "/news/");
+  check(
+    "a later republication serves it again, through an outage",
+    republished.status === 200 &&
+      republished.body?.status === "refreshed" &&
+      back.status === 200 &&
+      servedEntry(back.html, "We launched again.", "Contact"),
+    `${JSON.stringify(republished.body)} HTTP ${back.status}`,
   );
 } catch (error) {
   console.error(error.message);

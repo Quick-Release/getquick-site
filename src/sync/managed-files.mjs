@@ -18,7 +18,7 @@ import { chmod, lstat, mkdir, readFile, readlink, rm, symlink, writeFile } from 
 import { dirname, join } from "node:path";
 
 import ownership from "../../blueprint/ownership.json" with { type: "json" };
-import packageTemplate from "../../blueprint/templates/package.json" with { type: "json" };
+import packageTemplate from "../../blueprint/templates/fragments/package.keys.json" with { type: "json" };
 import packageJson from "../../package.json" with { type: "json" };
 import { deployStatusMarker } from "../ploi/provision.mjs";
 import { VERSION } from "../version.mjs";

@@ -13,6 +13,8 @@ export interface SqlStatement {
 
 export interface SqlDatabase {
   prepare(query: string): SqlStatement;
+  /** Runs the statements in order as one transaction: all of them apply, or none. */
+  batch<T = Record<string, unknown>>(statements: SqlStatement[]): Promise<Array<{ results: T[] }>>;
 }
 
 /**
@@ -25,7 +27,8 @@ export const PUBLICATION_FORMAT = 1;
 export type StoredPublication<T> =
   | { state: "published"; content: T; promotedAt: number }
   | { state: "missing"; promotedAt: number }
-  | { state: "moved"; uri: string; promotedAt: number };
+  | { state: "moved"; uri: string; promotedAt: number }
+  | { state: "withdrawn"; promotedAt: number };
 
 /**
  * What a refresh promotes. `nodeId` is the WordPress post or page a row holds
@@ -78,6 +81,15 @@ export interface RecordedEvent extends PublicationEvent {
   message: string | null;
 }
 
+/**
+ * What a withdraw event did: withdrew the entry (the keys now withdrawn), or
+ * nothing, because a publication or withdrawal of the entry that happened
+ * later was already accepted (`by`, when it is known).
+ */
+export type WithdrawalOutcome =
+  | { status: "withdrawn"; keys: string[] }
+  | { status: "superseded"; by: string | null };
+
 export type EventOutcome =
   | { status: "refreshed" | "superseded" }
   | { status: "failed"; reason: string; message: string };
@@ -100,13 +112,14 @@ export interface PublicationStore {
   ): Promise<StoredPublication<T> | Unusable | null>;
   /**
    * Replaces the row at key unless a read that started later was already
-   * promoted there; "superseded" then, and nothing changes.
+   * promoted there ("superseded"), or the entry it holds is withdrawn
+   * ("withdrawn"); nothing changes then.
    */
   promote<T>(
     key: string,
     publication: Promotion<T>,
     readStartedAt: number,
-  ): Promise<"promoted" | "superseded">;
+  ): Promise<"promoted" | "superseded" | "withdrawn">;
   /**
    * Marks every other row holding nodeId as moved to uri, unless its read
    * started at readBefore or later. Resolves to the keys it marked.
@@ -125,6 +138,19 @@ export interface PublicationStore {
    * was refreshed, null if there is none.
    */
   newerRefreshedEvent(event: PublicationEvent): Promise<string | null>;
+  /**
+   * Withdraws the event's entry, in one transaction, unless a publication or
+   * withdrawal of it that happened later was already accepted: every row
+   * holding it, and the row at key unless it holds another entry, become
+   * withdrawn, and nothing promotes the entry again until a later
+   * publication lifts the withdrawal.
+   */
+  withdraw(event: PublicationEvent, key: string, acceptedAt: number): Promise<WithdrawalOutcome>;
+  /**
+   * Lifts the entry's withdrawal if it happened before this publication.
+   * Resolves to the withdraw event lifted, null if none was.
+   */
+  liftWithdrawal(event: PublicationEvent): Promise<string | null>;
   /** Counts a processing attempt of the event. */
   startEvent(id: string): Promise<void>;
   /**
@@ -192,6 +218,7 @@ export function publicationStore(db: SqlDatabase): PublicationStore {
         };
       }
       if (row.state === "missing") return { state: "missing", promotedAt: row.promoted_at };
+      if (row.state === "withdrawn") return { state: "withdrawn", promotedAt: row.promoted_at };
       if (row.state === "moved") {
         const uri = movedTo(row.body);
         if (uri) return { state: "moved", uri, promotedAt: row.promoted_at };
@@ -221,11 +248,14 @@ export function publicationStore(db: SqlDatabase): PublicationStore {
             ? JSON.stringify({ uri: publication.uri })
             : null;
       const nodeId = publication.state === "missing" ? null : (publication.nodeId ?? null);
+      // An entry under a withdrawal in force is never promoted, by any read.
       const result = await guard("be written", () =>
         db
           .prepare(
             `INSERT INTO publications (key, state, format, body, read_started_at, promoted_at, node_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
+             WHERE ?7 IS NULL OR NOT EXISTS (
+               SELECT 1 FROM withdrawals WHERE node_id = ?7 AND republished_at IS NULL)
              ON CONFLICT (key) DO UPDATE SET
                state = excluded.state,
                format = excluded.format,
@@ -238,7 +268,17 @@ export function publicationStore(db: SqlDatabase): PublicationStore {
           .bind(key, publication.state, PUBLICATION_FORMAT, body, readStartedAt, Date.now(), nodeId)
           .run(),
       );
-      return result.meta.changes > 0 ? "promoted" : "superseded";
+      if (result.meta.changes > 0) return "promoted";
+      if (nodeId === null) return "superseded";
+      const withdrawn = await guard("be read", () =>
+        db
+          .prepare(
+            "SELECT 1 AS found FROM withdrawals WHERE node_id = ? AND republished_at IS NULL",
+          )
+          .bind(nodeId)
+          .first(),
+      );
+      return withdrawn ? "withdrawn" : "superseded";
     },
 
     async supersede(nodeId, uri, keep, readBefore) {
@@ -328,6 +368,102 @@ export function publicationStore(db: SqlDatabase): PublicationStore {
           .first<{ id: string }>(),
       );
       return row?.id ?? null;
+    },
+
+    async withdraw(event, key, acceptedAt) {
+      const inForce = `EXISTS (SELECT 1 FROM withdrawals
+        WHERE node_id = ?1 AND event_id = ?2 AND republished_at IS NULL)`;
+      const now = Date.now();
+      const [, , , [current], [newer], withdrawn] = await guard("record a withdrawal", () =>
+        db
+          .batch([
+            // Accepted unless a publication that happened later is recorded,
+            // or a later withdrawal is in force.
+            db
+              .prepare(
+                `INSERT INTO withdrawals (node_id, event_id, uri, withdrawn_at, accepted_at)
+                 SELECT ?1, ?2, ?3, ?4, ?5
+                 WHERE NOT EXISTS (SELECT 1 FROM publication_events
+                   WHERE node_id = ?1 AND action = 'publish' AND occurred_at > ?4)
+                 ON CONFLICT (node_id) DO UPDATE SET
+                   event_id = excluded.event_id,
+                   uri = excluded.uri,
+                   withdrawn_at = excluded.withdrawn_at,
+                   accepted_at = excluded.accepted_at,
+                   republished_by = NULL,
+                   republished_at = NULL
+                 WHERE excluded.withdrawn_at > withdrawals.withdrawn_at
+                   AND excluded.withdrawn_at > coalesce(withdrawals.republished_at, 0)`,
+              )
+              .bind(event.nodeId, event.id, event.uri, event.occurredAt, acceptedAt),
+            // Every route serving the entry, or redirecting for it.
+            db
+              .prepare(
+                `UPDATE publications SET
+                   state = 'withdrawn', format = ?3, body = NULL,
+                   read_started_at = max(read_started_at, ?4), promoted_at = ?5
+                 WHERE node_id = ?1 AND state <> 'withdrawn' AND ${inForce}`,
+              )
+              .bind(event.nodeId, event.id, PUBLICATION_FORMAT, acceptedAt, now),
+            // The URI it was withdrawn at, even if the store never held it
+            // there, so a cold lookup can't bring it back; unless another
+            // entry is stored there.
+            db
+              .prepare(
+                `INSERT INTO publications (key, state, format, body, read_started_at, promoted_at, node_id)
+                 SELECT ?3, 'withdrawn', ?4, NULL, ?5, ?6, ?1 WHERE ${inForce}
+                 ON CONFLICT (key) DO UPDATE SET
+                   state = 'withdrawn', format = excluded.format, body = NULL,
+                   read_started_at = max(publications.read_started_at, excluded.read_started_at),
+                   promoted_at = excluded.promoted_at, node_id = excluded.node_id
+                 WHERE publications.node_id IS NULL AND publications.state <> 'withdrawn'`,
+              )
+              .bind(event.nodeId, event.id, key, PUBLICATION_FORMAT, acceptedAt, now),
+            db
+              .prepare(
+                "SELECT event_id FROM withdrawals WHERE node_id = ? AND republished_at IS NULL",
+              )
+              .bind(event.nodeId),
+            db
+              .prepare(
+                `SELECT id FROM publication_events
+                 WHERE node_id = ?1 AND action = 'publish' AND occurred_at > ?2
+                 ORDER BY occurred_at DESC LIMIT 1`,
+              )
+              .bind(event.nodeId, event.occurredAt),
+            db
+              .prepare(
+                "SELECT key FROM publications WHERE node_id = ? AND state = 'withdrawn' ORDER BY key",
+              )
+              .bind(event.nodeId),
+          ])
+          .then((results) => results.map((result) => result.results)),
+      );
+      const inForceBy = (current as { event_id?: string } | undefined)?.event_id;
+      if (inForceBy === event.id) {
+        return {
+          status: "withdrawn",
+          keys: (withdrawn as Array<{ key: string }>).map((row) => row.key),
+        };
+      }
+      return {
+        status: "superseded",
+        by: (newer as { id?: string } | undefined)?.id ?? inForceBy ?? null,
+      };
+    },
+
+    async liftWithdrawal(event) {
+      const row = await guard("record a publication", () =>
+        db
+          .prepare(
+            `UPDATE withdrawals SET republished_by = ?2, republished_at = ?3
+             WHERE node_id = ?1 AND republished_at IS NULL AND withdrawn_at < ?3
+             RETURNING event_id`,
+          )
+          .bind(event.nodeId, event.id, event.occurredAt)
+          .first<{ event_id: string }>(),
+      );
+      return row?.event_id ?? null;
     },
 
     async startEvent(id) {

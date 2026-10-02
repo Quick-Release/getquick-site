@@ -15,7 +15,7 @@
 import { text } from "node:stream/consumers";
 import { join } from "node:path";
 
-import { artifactsRemoteUrl, createArtifactsClient } from "../cloudflare/client.mjs";
+import { artifactsRemoteUrl, createArtifactsClient } from "../cloudflare/account-client.mjs";
 
 function artifactsConfig(context) {
   const accountId = context.config.cloudflare?.accountId;

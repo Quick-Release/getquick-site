@@ -265,6 +265,7 @@ test("work interrupted before its outcome was recorded is completed by the CMS's
       }
       return db.prepare(query);
     },
+    batch: (statements) => db.batch(statements),
   });
   const event = publication();
 

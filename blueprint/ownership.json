@@ -53,13 +53,13 @@
     { "path": ".claude/skills", "symlink": "../.agents/skills" }
   ],
   "generatedSections": [
-    { "path": ".gitignore", "template": "templates/gitignore" },
-    { "path": "AGENTS.md", "template": "templates/AGENTS.md" }
+    { "path": ".gitignore", "template": "templates/fragments/gitignore.section" },
+    { "path": "AGENTS.md", "template": "templates/fragments/AGENTS.section.md" }
   ],
   "managedKeys": [
     {
       "path": "package.json",
-      "template": "templates/package.json",
+      "template": "templates/fragments/package.keys.json",
       "initial": "templates/package.initial.json"
     }
   ],
@@ -237,6 +237,11 @@
       "app": "apps/frontend"
     },
     {
+      "path": "apps/frontend/migrations/0004_withdrawals.sql",
+      "template": "templates/apps/frontend/migrations/0004_withdrawals.sql",
+      "app": "apps/frontend"
+    },
+    {
       "path": "apps/frontend/src/entries.test.ts",
       "template": "templates/apps/frontend/src/entries.test.ts",
       "app": "apps/frontend"
@@ -299,6 +304,11 @@
     {
       "path": "apps/frontend/src/test/wordpress-stub.ts",
       "template": "templates/apps/frontend/src/test/wordpress-stub.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/withdrawals.test.ts",
+      "template": "templates/apps/frontend/src/withdrawals.test.ts",
       "app": "apps/frontend"
     },
     {

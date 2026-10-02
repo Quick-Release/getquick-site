@@ -14,8 +14,8 @@
 //
 //   gq ploi events [--dry-run]
 
-import { applyEnv } from "../dotenv.mjs";
-import { createReporter } from "../reporter.mjs";
+import { applyEnv } from "../dotenv-text.mjs";
+import { createReporter } from "../cli/reporter.mjs";
 import { createPloiServerClient } from "./server-client.mjs";
 
 export const EVENT_SECRET = "PUBLICATION_EVENT_SECRET";
