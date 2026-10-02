@@ -612,6 +612,7 @@
 - **Response:** `{ message }`
 - **Logical CLI:** `gq ploi deployments deploy-site`
 - **Source:** [Ploi API reference — Deploy site](https://developers.ploi.io/deployments/deploy-site)
+- **See also:** there is no REST rollback, release or deployment-list endpoint; a zero-downtime rollback is panel-only. See [ploi-atomic-deploys.md](ploi-atomic-deploys.md).
 
 ### Deploy staging site to production
 
@@ -1788,6 +1789,7 @@
 - **Response:** `{ data: { id, server_id, domain, deploy_script, web_directory, project_type, project_root, last_deploy_at, system_user, php_version, health_url, notification_urls, has_repository, created_at }, message }`; **notes:** operation may be queued/backgrounded
 - **Logical CLI:** `gq ploi sites update-site`
 - **Source:** [Ploi API reference — Update site](https://developers.ploi.io/sites/update-site)
+- **See also:** the reference says enabling `zero_downtime_deployment` needs an attached repository and a plan that includes it, and rewrites the deploy script to run inside `{RELEASE}`. See [ploi-atomic-deploys.md](ploi-atomic-deploys.md).
 
 ## ssh-keys
 
