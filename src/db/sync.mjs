@@ -44,7 +44,7 @@ import {
 import { syncLocalDesign } from "../cms/local-design.mjs";
 import { createPloiServerClient } from "../ploi/server-client.mjs";
 import { createR2Client } from "../r2.mjs";
-import { createReporter } from "../reporter.mjs";
+import { createReporter } from "../cli/reporter.mjs";
 
 const gqBin = fileURLToPath(new URL("../../bin/gq.mjs", import.meta.url));
 

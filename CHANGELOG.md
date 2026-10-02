@@ -7,6 +7,12 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ### Added
 
+- `gq skills update` installs and updates registered upstream agent skills in
+  `.agents/skills` without needing `gq.ops.json`. Registrations live in
+  `.agents/skills.json`, `skills-lock.json` records the installed commit,
+  per-file hashes and modes, `--check` is read-only, GitHub tokens are read
+  from `GITHUB_TOKEN`/`GH_TOKEN`, unregistered local skills are untouched, and
+  drift, unsafe paths, symlink anchors and concurrent writers are refused.
 - `gq media check` reports whether a site's WordPress uploads are hosted
   independently of its CMS, with an actionable step for each check that
   isn't ready and exit 1 until they are. Through `gq sigillo run staging`
@@ -94,6 +100,20 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   and the page is still served without them.
 - The front page retries without blocks after a CMS 5xx, like entries do; a
   timeout isn't retried, and a failed retry is unavailable, never missing.
+
+## 0.13.4 — 2026-10-02
+
+### Changed
+
+- Clarified CLI and provider source ownership and role-based filenames while
+  preserving the package's public exports and command behavior.
+- Made the README an entry point to focused site guides, command references
+  and contributor documentation, all included in the published package.
+- Distinguished blueprint section and managed-key fragments from whole-file
+  sources without changing generated site paths or ownership rules.
+- Organized tests by module and subject, clarified shared helper roles and
+  documented fixture provenance. Test discovery still excludes extracted site
+  scripts, and existing fixture contents are preserved.
 
 ## 0.13.3 — 2026-10-02
 

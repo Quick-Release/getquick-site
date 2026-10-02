@@ -13,9 +13,9 @@
 //
 //   gq cloudflare ci [--dry-run]
 
-import { createReporter } from "../reporter.mjs";
-import { sigilloSecrets } from "../sigillo/sigillo.mjs";
-import { createArtifactsClient, createCloudflareAccountClient } from "./client.mjs";
+import { createReporter } from "../cli/reporter.mjs";
+import { sigilloSecrets } from "../sigillo/commands.mjs";
+import { createArtifactsClient, createCloudflareAccountClient } from "./account-client.mjs";
 import {
   accountPolicy,
   applyToken,

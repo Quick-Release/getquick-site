@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { updateManifest } from "../manifest/manifest.mjs";
-import { createReporter } from "../reporter.mjs";
+import { createReporter } from "../cli/reporter.mjs";
 import { createPloiServerClient } from "./server-client.mjs";
 
 const placeholderPattern = /replace-me|replace-with/u;

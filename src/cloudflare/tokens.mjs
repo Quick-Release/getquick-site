@@ -5,7 +5,7 @@
 // Cloudflare never shows a token's value twice.
 
 import { s3CredentialsFromToken } from "../r2.mjs";
-import { createCloudflareAccountClient } from "./client.mjs";
+import { createCloudflareAccountClient } from "./account-client.mjs";
 
 const ONE_HOUR = 60 * 60 * 1000;
 

@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { createR2Client } from "../r2.mjs";
-import { createReporter } from "../reporter.mjs";
+import { createReporter } from "../cli/reporter.mjs";
 import { deploy, syncDeployScript } from "./provision.mjs";
 import { createPloiServerClient } from "./server-client.mjs";
 

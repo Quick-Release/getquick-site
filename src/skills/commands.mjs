@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { requestJson } from "../ops/providers/http.mjs";
+import { requestJson } from "../ops/http.mjs";
 
 export const SKILLS_USAGE = ["gq skills update [--check]"];
 

@@ -8,7 +8,7 @@ import { cancel, isCancel, select, text } from "@clack/prompts";
 import { mkdir, readdir } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
 
-import packageTemplate from "../../blueprint/templates/package.json" with { type: "json" };
+import packageTemplate from "../../blueprint/templates/fragments/package.keys.json" with { type: "json" };
 import { MANIFEST_FILENAME, validateManifest, writeManifest } from "../manifest/manifest.mjs";
 import { SCHEMA_URL, SCHEMA_VERSION, VARIANTS } from "../manifest/schema.mjs";
 import { applyManagedFiles, planManagedFiles } from "./managed-files.mjs";

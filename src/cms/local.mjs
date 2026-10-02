@@ -7,7 +7,7 @@ import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { platform } from "node:os";
 import { join } from "node:path";
 
-import { applyEnv, parseDotenv } from "../dotenv.mjs";
+import { applyEnv, parseDotenv } from "../dotenv-text.mjs";
 import { runDesignCommand, withDesignRegistryInstall } from "./local-design.mjs";
 
 // Layout: where the Bedrock app lives in a site.
