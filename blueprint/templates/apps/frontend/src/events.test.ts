@@ -572,7 +572,7 @@ test("a check event proves the Frontend accepts this Site's events, and changes 
   });
 
   expect(status).toBe(200);
-  expect(body).toEqual({ status: "checked", site: SITE });
+  expect(body).toEqual({ status: "checked", site: SITE, reconciliation: null });
   expect(fetchMock).not.toHaveBeenCalled();
   expect(await recordedEvents()).toEqual([]);
 });

@@ -27,6 +27,23 @@ export function routes(...uris: string[]): Answer {
   });
 }
 
+/** A published entry as WordPress lists it: its URI, and its id and modification time when given. */
+export interface ListedNode {
+  uri: string;
+  id?: string | null;
+  modifiedGmt?: string | null;
+}
+
+/** WordPress's list of published entries with their ids and modification times, on one page. */
+export function listing(...nodes: ListedNode[]): Answer {
+  return data({ contentNodes: { pageInfo: { hasNextPage: false, endCursor: null }, nodes } });
+}
+
+/** A time as WPGraphQL gives modifiedGmt: GMT, to the second, without a zone. */
+export function gmt(ms: number) {
+  return new Date(ms).toISOString().slice(0, 19);
+}
+
 export function data(value: unknown): Answer {
   return { ok: true, json: async () => ({ data: value }) };
 }

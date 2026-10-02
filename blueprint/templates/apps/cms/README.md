@@ -85,9 +85,17 @@ minute (`pnpm ploi:events` adds the Ploi crontab; WP-Cron isn't used).
 Editors see delayed public delivery in the editor, the page and post lists
 and on the Dashboard; Site Health has a "Public website delivery" test.
 
+Each run then asks the Frontend to reconcile with WordPress, which catches a
+change no event was recorded for (a hook that didn't fire, a change made
+outside the editor). The Frontend compares what it serves with what WordPress
+publishes and refreshes what differs. The outcome is kept in the option
+`gq_reconciliation`, and Site Health warns when the Frontend hasn't matched
+WordPress for ten minutes. The `gq_events_reconcile` filter turns it off.
+
 ```sh
-wp gq-events retry-due  # send what is due (the cron runs it with --quiet)
-wp gq-events delays     # what the Frontend hasn't confirmed, and the cron's last run
+wp gq-events retry-due  # send what is due, then reconcile (the cron runs it with --quiet)
+wp gq-events reconcile  # reconcile now
+wp gq-events delays     # what the Frontend hasn't confirmed, the cron's last run and the last reconciliation
 ```
 
 ## Checks

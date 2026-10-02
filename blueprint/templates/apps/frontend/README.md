@@ -95,6 +95,19 @@ The CMS retries an event (a publication, a withdrawal or a setting) the Frontend
 signed anew, so a failed event is processed again and the rules above still
 order it. The Frontend has no scheduler of its own.
 
+Each of those cron runs also sends a signed `reconcile` event, which catches a
+change whose own event was never sent (`src/lib/reconciliation.ts`). The
+Frontend reads the shared rows and WordPress's list of published entries (id,
+URI, modification time), compares them with the store (`modified_at`,
+migration `0005_reconciliation.sql`), and refreshes what differs: a new, changed,
+moved or removed entry, or a withdrawn one WordPress modified after its
+withdrawal. A changed entry is processed as a publication event dated by its
+modification time, so the rules above still order it. A run makes at most 40
+CMS requests and leaves the rest for the next minute. A lease keeps runs from
+overlapping, and the last outcome is kept in `reconciliation`, which the signed
+`check` event reports. A failed read keeps what is stored, and an incomplete
+list removes nothing.
+
 `pnpm dev` has no store: it reads the CMS live, as before.
 
 ## Blocks
@@ -111,13 +124,13 @@ change it here; a shared renderer package is planned.
 (`vp test`) run from the workspace root, and in `pnpm verify`. `src/routes.test.ts`
 renders the pages through Astro's Container API against a stubbed CMS
 (`vitest.config.ts` gives Vitest Astro's Vite config); `src/homepage.test.ts`,
-`src/entries.test.ts`, `src/events.test.ts`, `src/settings.test.ts` and
-`src/withdrawals.test.ts` and `src/retries.test.ts` drive the durable
-homepage, entries, publication events, shared settings, withdrawals and the
-CMS's retries through refreshes, outages, restarts, new and moved
-publications, refused, duplicate, delayed, racing, failed and retried events,
-with the store on SQLite (`src/test/sqlite-d1.ts`, the same migrations and
-SQL).
+`src/entries.test.ts`, `src/events.test.ts`, `src/settings.test.ts`,
+`src/withdrawals.test.ts`, `src/retries.test.ts` and
+`src/reconciliation.test.ts` drive the durable homepage, entries, publication
+events, shared settings, withdrawals, the CMS's retries and reconciliation
+through refreshes, outages, restarts, new and moved publications, refused,
+duplicate, delayed, racing, failed, retried and missed events, with the store
+on SQLite (`src/test/sqlite-d1.ts`, the same migrations and SQL).
 
 ## Deploys
 

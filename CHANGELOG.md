@@ -198,6 +198,75 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   - **Existing sites** that adopted events: copy `delivery-retries.php` and
     the updated `publication-events.php`, then run `pnpm ploi:events` to add
     the crontab.
+- New content sites reconcile their Frontend with WordPress every minute, so a
+  change whose event was never sent still reaches visitors within the
+  five-minute target while the CMS is healthy. Examples are a hook that didn't
+  fire, a plugin or script writing the database, or a request that died before
+  recording its event
+  ([ADR 0009](docs/adr/0009-reconcile-missed-changes-on-the-cms-scheduler.md)).
+  - After its retries, each `wp gq-events retry-due` run (the existing crontab)
+    sends the Frontend a signed `reconcile` event. `wp gq-events reconcile`
+    sends one at once, and the `gq_events_reconcile` filter turns it off. No
+    new crontab, secret or Cloudflare resource is needed.
+  - The Frontend (`src/lib/reconciliation.ts`) compares the front page, the
+    chrome and the design presets with what it stores, by content. It
+    compares WordPress's list of published pages and posts (id, URI and
+    `modifiedGmt`) with its stored entries. It refreshes a new, changed, moved
+    or removed entry, and a withdrawn one WordPress modified after its
+    withdrawal. It also re-reads two stored entries each run, so a change that
+    kept its modification time is caught too, later.
+  - The same rules as events apply. A changed entry is processed as a
+    publication event dated by its modification time, with an id derived from
+    the change, so it is ordered, superseded and retried like the CMS's own.
+    A failed read keeps what is stored, an incomplete list removes nothing,
+    and only WordPress confirming an entry missing makes it a 404. An older
+    scan or a read in flight can't undo a withdrawal.
+  - A run makes at most 40 CMS requests (Workers' Free plan allows 50
+    subrequests) and leaves the rest for the next minute, reporting `behind`.
+    A lease in D1 keeps runs from overlapping, and an interrupted run's lease
+    expires.
+  - Migration `0005_reconciliation.sql` adds `publications.modified_at` and the
+    one-row `reconciliation` table: the lease, the last outcome, counts, the
+    first failure, and when the store last matched WordPress. The entry query
+    and the list of published routes now also ask WPGraphQL for `modifiedGmt`
+    (and the list for `id`).
+  - Diagnostics: the Frontend answers 200 when reconciled, behind or busy and
+    503 with the first failure when a read failed. The signed `check` answer
+    includes the last reconciliation, which `gq frontend events check`
+    prints. The CMS keeps each run in `gq_reconciliation`; `wp gq-events
+delays` shows it, and Site Health turns "recommended" after ten minutes
+    without a match. None shows content or a secret.
+  - `src/reconciliation.test.ts` covers, on a controlled clock with the
+    scheduler every minute:
+    - a lost publication, update, move, removal, republication and each
+      shared setting, each public within five minutes without a visit
+      reading the CMS;
+    - outages of any length without lost pages or false withdrawals, then
+      recovery;
+    - a failed list or entry read;
+    - withdrawals against older scans and reads in flight;
+    - overlapping and interrupted runs;
+    - 50 changes over several runs within the request budget;
+    - refused requests.
+
+    `scripts/smoke/frontend-runtime.sh` reconciles in workerd with a local D1,
+    including 60 changes within 40 CMS requests per run.
+    `scripts/smoke/cms-events.sh` makes changes with WordPress's hooks
+    removed and checks that `retry-due` brings them to visitors, and that a
+    failed run is reported. With the local `ddev/ddev-webserver` image, it
+    checks that a real cron brings such a change to visitors within five
+    minutes.
+
+  - **Existing sites** that adopted retries: from a newly generated site, copy
+    `migrations/0005_reconciliation.sql`, `src/lib/reconciliation.ts`,
+    `src/reconciliation.test.ts` and the updated `src/lib/delivery.ts`,
+    `src/lib/events.ts`, `src/lib/publications.ts`, `src/lib/wordpress.ts`,
+    `src/events.test.ts` and `src/test/wordpress-stub.ts`. Copy the CMS's
+    updated `delivery-retries.php` and `publication-events.php`. Deploy the
+    Frontend before releasing the CMS: an older Frontend answers `reconcile`
+    422, which the CMS records as a failed reconciliation. Stored entries
+    have no modification time until read again, so the first runs re-read
+    them, 18 per run.
 
 ## 0.13.5 — 2026-10-02
 

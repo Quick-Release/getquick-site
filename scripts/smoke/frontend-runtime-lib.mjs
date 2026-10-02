@@ -6,7 +6,7 @@
 // from the Frontend's own migrations. Nothing reaches Cloudflare.
 
 import { spawn, spawnSync } from "node:child_process";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -24,10 +24,26 @@ export function checker() {
 }
 
 /**
+ * When WordPress last modified an entry, as WPGraphQL's modifiedGmt: the
+ * entry's `modified` (ms) if it has one, else a time in 2026's first months
+ * derived from its content, so an edit changes it, and it is older than
+ * anything a proof withdraws.
+ */
+function modifiedGmt(entry) {
+  const seconds = createHash("sha256")
+    .update(`${entry.title}\n${entry.content}`)
+    .digest()
+    .readUInt32BE(0);
+  const ms = entry.modified ?? Date.parse("2026-01-01T00:00:00Z") + (seconds % 5_000_000) * 1000;
+  return new Date(ms).toISOString().slice(0, 19);
+}
+
+/**
  * WordPress, answering the Frontend's queries by name from `entries`
- * (published entries by URI: { id, title, content }), `heading` (the front
- * page's) and the shared settings: `menuLabel`, `logo`, `icon`, `title`,
- * `tagline` and `color` (the brand preset's).
+ * (published entries by URI: { id, title, content, modified? }), `heading`
+ * (the front page's) and the shared settings: `menuLabel`, `logo`, `icon`,
+ * `title`, `tagline` and `color` (the brand preset's). `requests` counts the
+ * queries it answered.
  */
 export function stubCms(entries) {
   const cms = {
@@ -41,11 +57,13 @@ export function stubCms(entries) {
     entries: new Map(entries),
     server: null,
     port: 0,
+    requests: 0,
     start() {
       this.server = createServer((request, response) => {
         let body = "";
         request.on("data", (chunk) => (body += chunk));
         request.on("end", () => {
+          this.requests += 1;
           const { query, variables } = JSON.parse(body);
           const name = /query (\w+)/.exec(query)?.[1];
           const entry = name === "EntryByUri" ? this.entries.get(decodeURI(variables.uri)) : null;
@@ -61,6 +79,7 @@ export function stubCms(entries) {
                     uri: decodeURI(variables.uri),
                     status: "publish",
                     isRestricted: false,
+                    modifiedGmt: modifiedGmt(entry),
                     featuredImage: null,
                   }
                 : null,
@@ -69,7 +88,14 @@ export function stubCms(entries) {
             PublishedRoutes: {
               contentNodes: {
                 pageInfo: { hasNextPage: false, endCursor: null },
-                nodes: ["/", ...this.entries.keys()].map((uri) => ({ uri })),
+                nodes: [
+                  { uri: "/", id: null, modifiedGmt: null },
+                  ...[...this.entries].map(([uri, entry]) => ({
+                    uri,
+                    id: entry.id,
+                    modifiedGmt: modifiedGmt(entry),
+                  })),
+                ],
               },
             },
             DesignPresets: { designTokens: brand },

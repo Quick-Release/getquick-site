@@ -147,6 +147,16 @@ last-known-good content until it succeeds; editors and Site Health are told
 ([ADR 0008](docs/adr/0008-retry-event-delivery-from-the-cms-on-a-server-cron.md)).
 _Avoid_: sync, publish (for the Frontend's side)
 
+**Reconciliation**:
+The Frontend comparing its publication store with what WordPress publishes and
+refreshing what differs, so a change whose event was never sent still reaches
+visitors. The CMS's scheduler asks for it every minute
+([ADR 0009](docs/adr/0009-reconcile-missed-changes-on-the-cms-scheduler.md)).
+It follows the same promotion, ordering and withdrawal rules as events. A failed
+read keeps what is stored, and only WordPress confirming an entry missing makes
+it a 404.
+_Avoid_: sync, polling, full refresh (a whole-Site refresh reads every entry)
+
 **Cold lookup**:
 A visit's read of an entry the publication store has never held, the only CMS
 read a visit makes: a published entry is stored and served, a confirmed

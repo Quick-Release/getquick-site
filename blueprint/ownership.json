@@ -242,6 +242,11 @@
       "app": "apps/frontend"
     },
     {
+      "path": "apps/frontend/migrations/0005_reconciliation.sql",
+      "template": "templates/apps/frontend/migrations/0005_reconciliation.sql",
+      "app": "apps/frontend"
+    },
+    {
       "path": "apps/frontend/src/entries.test.ts",
       "template": "templates/apps/frontend/src/entries.test.ts",
       "app": "apps/frontend"
@@ -249,6 +254,11 @@
     {
       "path": "apps/frontend/src/events.test.ts",
       "template": "templates/apps/frontend/src/events.test.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/reconciliation.test.ts",
+      "template": "templates/apps/frontend/src/reconciliation.test.ts",
       "app": "apps/frontend"
     },
     {
@@ -279,6 +289,11 @@
     {
       "path": "apps/frontend/src/lib/publications.ts",
       "template": "templates/apps/frontend/src/lib/publications.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/lib/reconciliation.ts",
+      "template": "templates/apps/frontend/src/lib/reconciliation.ts",
       "app": "apps/frontend"
     },
     {

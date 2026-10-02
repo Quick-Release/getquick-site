@@ -1,6 +1,7 @@
 # ADR 0008: Retry event delivery from the CMS on a server cron
 
-- Status: Accepted
+- Status: Accepted; amended by [ADR 0009](0009-reconcile-missed-changes-on-the-cms-scheduler.md)
+  (each `retry-due` run also asks the Frontend to reconcile)
 - Date: 2026-10-02
 
 ## Context

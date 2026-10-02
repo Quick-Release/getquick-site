@@ -10,8 +10,10 @@
 // event older than one already refreshed for the same entry is superseded
 // rather than processed, and one whose refresh failed stays on record, failed,
 // for a retry. Each action has its own handler: "publish" for a page or post,
-// "withdraw" for one that stopped being public, and "settings" for a shared
-// setting (menus, logo, site identity, design presets).
+// "withdraw" for one that stopped being public, "settings" for a shared
+// setting (menus, logo, site identity, design presets), and "reconcile", which
+// the CMS's scheduler sends every minute to have the Frontend catch up with
+// any change whose own event never arrived (reconciliation.ts).
 //
 // A withdrawal is the one event that changes what is served without reading
 // the CMS: the event's signature and the entry's identity are the authority,
@@ -33,6 +35,7 @@ import {
   type PublicationEvent,
   type PublicationStore,
 } from "./publications";
+import { reconcile } from "./reconciliation";
 import { frontendBindings } from "./runtime";
 
 /** The Site this Frontend serves: events for any other are refused. */
@@ -63,6 +66,13 @@ const envelope = {
 
 /** Proves the Frontend accepts this Site's events; changes nothing. */
 const checkEvent = z.object({ ...envelope, action: z.literal("check") }).strict();
+
+/**
+ * Asks for a reconciliation run: the store is compared with what WordPress
+ * publishes, and what differs is refreshed. It names nothing, so it can only
+ * make the Frontend read published content.
+ */
+const reconcileEvent = z.object({ ...envelope, action: z.literal("reconcile") }).strict();
 
 /** A page or post was published or updated (and, with previousUri, moved). */
 const publishEvent = z
@@ -153,14 +163,27 @@ function handler<E extends { occurredAt: number }>(
 }
 
 const handlers: Record<string, Handler> = {
-  check: handler(checkEvent, async () => ({
-    status: 200,
-    body: { status: "checked", site: SITE },
-  })),
+  check: handler(checkEvent, handleCheck),
   publish: handler(publishEvent, handlePublish),
   withdraw: handler(withdrawEvent, handleWithdraw),
   settings: handler(settingsEvent, handleSettings),
+  reconcile: handler(reconcileEvent, handleReconcile),
 };
+
+/**
+ * A check: the Frontend accepts this Site's events. It also says how the last
+ * reconciliation went, when the store can tell, so the check shows a Site
+ * that has stopped catching up.
+ */
+async function handleCheck(store: PublicationStore): Promise<EventAnswer> {
+  let reconciliation = null;
+  try {
+    reconciliation = await store.reconciliation();
+  } catch (error) {
+    if (!(error instanceof StoreFailure)) throw error;
+  }
+  return { status: 200, body: { status: "checked", site: SITE, reconciliation } };
+}
 
 /** The event key when the Worker has one bound, and it is strong enough. */
 async function eventAuthority(): Promise<
@@ -288,14 +311,28 @@ export async function receiveEvent(
  * the stored versions stay served.
  */
 async function handlePublish(store: PublicationStore, event: PublishEvent): Promise<EventAnswer> {
-  const publication: PublicationEvent = {
+  return applyPublication(store, {
     id: event.id,
     action: event.action,
     nodeId: event.entry.id,
     uri: event.entry.uri,
     previousUri: event.entry.previousUri ?? null,
     occurredAt: event.occurredAt,
-  };
+  });
+}
+
+/**
+ * Records a publication and processes it, unless it is a duplicate of one
+ * already processed or older than one already refreshed for the same entry:
+ * it lifts the entry's withdrawal if that happened before it, then refreshes
+ * its routes. The same for an event the CMS sent and for a change a
+ * reconciliation found, so both follow the same ordering and withdrawal rules.
+ */
+export async function applyPublication(
+  store: PublicationStore,
+  publication: PublicationEvent,
+): Promise<EventAnswer> {
+  const event = publication;
   const { recorded, duplicate } = await store.receiveEvent(publication);
   if (duplicate && (recorded.status === "refreshed" || recorded.status === "superseded")) {
     console.info(`Events: ${event.id} is a duplicate of a ${recorded.status} event`);
@@ -441,5 +478,23 @@ async function handleSettings(
       setting: event.setting,
       ...parts,
     },
+  };
+}
+
+/**
+ * A reconciliation run (reconciliation.ts): 200 when the store now matches
+ * WordPress ("reconciled"), when changes are left for the next run within its
+ * budget ("behind"), or when another run is under way ("busy"); 503 when a
+ * read or a refresh failed, which kept what was stored.
+ */
+async function handleReconcile(
+  store: PublicationStore,
+  event: z.infer<typeof reconcileEvent>,
+  { siteOrigin }: EventContext,
+): Promise<EventAnswer> {
+  const report = await reconcile(store, { runId: event.id, siteOrigin, publish: applyPublication });
+  return {
+    status: report.status === "failed" ? 503 : 200,
+    body: { event: event.id, ...report },
   };
 }

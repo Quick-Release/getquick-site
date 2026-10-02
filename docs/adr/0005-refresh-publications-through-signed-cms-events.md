@@ -2,6 +2,9 @@
 
 - Status: Accepted; amended by [ADR 0006](0006-withdraw-publications-through-signed-cms-events.md)
   (withdraw events; a password-protected entry is withdrawn, not refreshed)
+  and [ADR 0009](0009-reconcile-missed-changes-on-the-cms-scheduler.md) (a
+  signed `reconcile` event asks the Frontend to compare the whole store with
+  WordPress)
 - Date: 2026-10-02
 
 ## Context

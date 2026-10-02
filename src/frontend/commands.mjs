@@ -13,7 +13,8 @@
 // publication events (POST /gq/events, src/pages/gq/events.ts): it sends a
 // signed check event, which changes nothing, with PUBLICATION_EVENT_SECRET,
 // the key the Site's CMS signs its events with. The secret is never sent or
-// printed, only the signature.
+// printed, only the signature. A Frontend that reconciles with WordPress
+// (ADR 0009) also says how its last reconciliation went, which is printed.
 //
 //   gq frontend refresh [--uri <path>]... [--url <frontend origin>] [--json]
 //   gq frontend events check [--url <frontend origin>] [--json]
@@ -26,6 +27,9 @@ export const FRONTEND_USAGE = [
 ];
 
 const MARKS = { promoted: "✓", superseded: "✓", kept: "✗" };
+
+/** Without a reconciliation that matched WordPress for this long, it is reported as behind. */
+const RECONCILIATION_STALE_MS = 10 * 60_000;
 
 const COMMANDS = new Map([
   ["frontend refresh", ["url", "uri"]],
@@ -208,9 +212,25 @@ async function checkEvents({ context, parsed, fetch, io }) {
     io.out(JSON.stringify({ accepted, status: response.status, answer }, null, 2));
   } else if (accepted) {
     io.out(`✓ The Frontend at ${url.origin} accepts ${site}'s publication events.`);
+    if ("reconciliation" in answer) io.out(describeReconciliation(answer.reconciliation));
   } else {
     const reason = answer?.error ?? `HTTP ${response.status}`;
     io.out(`✗ The Frontend at ${url.origin} refused ${site}'s publication events: ${reason}`);
   }
   return accepted ? 0 : 1;
+}
+
+/** The Frontend's last reconciliation with WordPress, in one line. */
+function describeReconciliation(reconciliation) {
+  if (!reconciliation) {
+    return "✗ It hasn't reconciled with WordPress yet: the CMS's cron (gq ploi events) asks for it every minute.";
+  }
+  const time = (ms) => (ms ? new Date(ms).toISOString() : "never");
+  const fresh =
+    reconciliation.reconciledAt &&
+    Date.now() - reconciliation.reconciledAt <= RECONCILIATION_STALE_MS;
+  const failure = reconciliation.reason
+    ? ` (${reconciliation.reason}: ${reconciliation.message})`
+    : "";
+  return `${fresh ? "✓" : "✗"} It last reconciled with WordPress at ${time(reconciliation.startedAt)}: ${reconciliation.outcome ?? "unfinished"}${failure}; it last matched WordPress at ${time(reconciliation.reconciledAt)}.`;
 }
