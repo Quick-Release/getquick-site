@@ -47,11 +47,24 @@ agent skills. Manifest and deployment contracts such as `domains.admin`,
 
 ### Tests
 
-Keep tests flat in `test/`, named `<module>-<subject>.test.mjs` (for example,
-`workspace-verify.test.mjs` or `sync-ownership.test.mjs`); a module-only name is
-fine for a whole-module suite. Shared helpers live in `test/support/` and baseline
-evidence in `test/fixtures/`. Test discovery selects only `test/*.test.mjs`, not
-the extracted test scripts inside fixtures.
+Group module-specific suites in `test/<module>/`, named `<subject>.test.mjs`
+(for example, `cms/composer.test.mjs` or `sync/ownership.test.mjs`). The folder
+supplies the module name; don't repeat it in the filename. Use
+`commands.test.mjs` for a module's command suite and lowercase kebab-case for
+other subjects. Keep package-wide `run.test.mjs` and `exec.test.mjs` at the
+`test/` root, matching their source modules.
+
+Shared helpers stay in `test/support/` and baseline evidence in `test/fixtures/`.
+The `test` script selects root suites and one level of explicitly named module
+folders, never recursively through fixtures or support. Add new module folders
+to that script's allowlist; extracted site test scripts must not become package
+suites. Move coherent suites intact before considering a subject split.
+
+```sh
+pnpm test                                      # all package suites
+node --test "test/cms/*.test.mjs"               # one module
+node --test test/cms/composer.test.mjs           # one subject
+```
 
 Tests call `run()` against a fixture site (a temporary Git repository with a
 `gq.ops.json`) with recording fakes for `fetch` and `exec`
