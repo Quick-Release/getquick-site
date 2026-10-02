@@ -164,8 +164,7 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
     `.env.production.example`.
   - Add `PUBLICATION_EVENT_SECRET` to Sigillo staging, rerun `pnpm ci:deploy`,
     deploy the Frontend, run `pnpm ploi:events` and release the CMS.
-- **Not yet:** withdrawals (#44), and automated retries with editor-facing
-  delay reports (#46).
+- **Not yet:** automated retries with editor-facing delay reports (#46).
 - New content sites refresh their shared settings through events: a change to
   the menus, the logo, the site's identity (title, tagline, icon) or the
   design presets reaches the homepage and every entry without republishing
@@ -197,6 +196,45 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
     `src/settings.test.ts` and the updated `src/lib/delivery.ts`,
     `src/lib/events.ts`, `src/lib/wordpress.ts`, `src/pages/gq/events.ts` and
     `src/test/wordpress-stub.ts` from a newly generated site.
+- New content sites withdraw a page or post from the Frontend when an editor
+  unpublishes it, makes it private, adds a password, trashes it or deletes it
+  ([ADR 0006](docs/adr/0006-withdraw-publications-through-signed-cms-events.md)).
+  The CMS plugin sends a signed `withdraw` event with the entry's id and the
+  URI it had while published. The Frontend makes every route of that entry a
+  404 at once, without reading the CMS, so the withdrawal holds through CMS
+  outages and restarts. Other publications are untouched.
+- The Frontend records each withdrawal (migration `0004_withdrawals.sql`) and
+  applies it in one D1 transaction. While a withdrawal is in force, nothing
+  promotes that entry again: not a refresh, a cold lookup, a CMS (or a cache
+  in front of it) that still returns it, a duplicate, or an older read still
+  in flight. Refresh reports show such a read as `withdrawn`.
+- Ordering follows the CMS: a publication older than the withdrawal is
+  superseded, a withdrawal older than a recorded publication changes
+  nothing, and a later publication lifts the withdrawal and refreshes the
+  entry as usual. A password-protected entry now sends a withdrawal rather
+  than a publication.
+- A deleted entry's withdrawal is kept in the option
+  `gq_publication_events_deleted` until it is delivered.
+  `wp gq-events status` lists it and `wp gq-events retry <post>` sends it.
+- The homepage and entry pages answer with `Cache-Control: no-cache`, so no
+  browser or proxy reuses a copy without asking the Worker.
+- The Frontend skeleton's `src/withdrawals.test.ts` renders withdrawals
+  through outages and restarts, stale CMS answers, refreshes and cold
+  lookups racing them, delayed, duplicate and reordered events,
+  republications, moved entries, the front page, refused events and Site
+  isolation. `scripts/smoke/frontend-runtime.sh` checks a withdrawal in
+  workerd with a local D1. `scripts/smoke/cms-events.sh` checks unpublishing,
+  password-protecting, trashing and deleting (also while the Frontend is
+  down) with a real WordPress.
+- **Existing sites** that adopted events:
+  - From a newly generated site, copy `migrations/0004_withdrawals.sql`,
+    `src/withdrawals.test.ts` and the updated `src/lib/delivery.ts`,
+    `src/lib/events.ts`, `src/lib/publications.ts`, `src/lib/wordpress.ts`,
+    `src/pages/index.astro`, `src/pages/[...slug].astro` and
+    `src/test/sqlite-d1.ts`.
+  - Copy the CMS's updated `web/app/mu-plugins/publication-events.php`.
+  - Deploy the Frontend before releasing the CMS: an older Frontend answers a
+    withdraw event 422 (unsupported), which the CMS records as `rejected`.
 
 ### Fixed
 

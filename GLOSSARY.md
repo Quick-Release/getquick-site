@@ -96,7 +96,8 @@ _Avoid_: cache (it isn't evicted), KV
 
 **Last-known-good content**:
 What the publication store holds: the most recent complete, valid read of a
-publication. It has no age limit; only a newer read replaces it.
+publication. It has no age limit; only a newer read or a withdrawal replaces
+it.
 _Avoid_: stale content (as a fault)
 
 **Refresh**:
@@ -117,6 +118,16 @@ It carries no content. An event older than one already refreshed for the
 same entry is superseded; one whose refresh failed stays recorded for a retry.
 Publishing never waits on it.
 _Avoid_: webhook (for the domain event), purge
+
+**Withdrawal**:
+The Site's CMS telling its Frontend that a published page or post stopped
+being public: unpublished, made private or password-protected, trashed or
+deleted. It is a signed event like a publication event
+([ADR 0006](docs/adr/0006-withdraw-publications-through-signed-cms-events.md)).
+The Frontend makes every route of that entry a 404 at once, without reading
+the CMS. While the withdrawal is in force, no read promotes the entry again.
+Only a publication that happened after it lifts it.
+_Avoid_: purge, invalidation, delete (for an unpublish)
 
 **Shared setting**:
 Site-wide data every page is served with: the menus, the logo, the site's

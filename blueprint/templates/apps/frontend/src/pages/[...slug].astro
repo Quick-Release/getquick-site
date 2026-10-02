@@ -17,6 +17,9 @@ if (delivery.kind === "moved") {
 }
 // Only a confirmed missing entry is a 404; a CMS or store failure is a 503.
 Astro.response.status = responseStatus(delivery);
+// Every visit is answered from the store, so a cache may keep a page but must
+// ask again before reusing it: a withdrawn entry is never presented from one.
+Astro.response.headers.set("Cache-Control", "no-cache");
 const entry = delivery.kind === "found" ? delivery.content.entry : null;
 const chrome =
   delivery.kind === "found" ? delivery.content.chrome : delivery.kind === "missing" ? delivery.chrome : null;

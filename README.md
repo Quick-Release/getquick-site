@@ -745,15 +745,25 @@ pnpm frontend:events:check    # gq frontend events check
   proves the CMS's key against the Frontend. Automatic retries come later.
 - `gq frontend events check` sends a signed check event, which changes
   nothing, to prove the deployed Frontend has this Site's key bound.
+- Unpublishing, making private, password-protecting, trashing or deleting a
+  page or post sends a signed withdrawal
+  ([ADR 0006](docs/adr/0006-withdraw-publications-through-signed-cms-events.md)).
+  The Frontend makes every route of that entry a 404 at once, without reading
+  the CMS. No refresh, cold lookup, delayed or duplicate event, or stale CMS
+  answer brings it back; only a later publication does. Pages answer with
+  `Cache-Control: no-cache`, so no cache reuses a withdrawn page without
+  asking the Worker. A withdrawal the Frontend never received while the CMS
+  is down too can't be known: the entry stays served until either is back.
 
 `scripts/smoke/frontend-runtime.sh` proves it on a disposable generated site
 without Cloudflare: Alchemy's Astro build, served in workerd (Wrangler's local
 mode) with a local D1 store, against a stub CMS taken down, a Worker restart,
 a rebuilt redeploy, a cold lookup, a new publication, a moved entry and the
-Worker's event key. `scripts/smoke/cms-events.sh` adds a real WordPress (the
-pinned version, on SQLite, with WP-CLI) running the site's publication-events
-plugin against that Worker: drafts, publications, updates, renames, the
-Frontend down, failed refreshes, another key and a missing one.
+Worker's event key and withdrawals. `scripts/smoke/cms-events.sh` adds a real
+WordPress (the pinned version, on SQLite, with WP-CLI) running the site's
+publication-events plugin against that Worker: drafts, publications, updates,
+renames, the Frontend down, failed refreshes, another key, a missing one, and
+unpublishing, password-protecting, trashing and deleting.
 
 ### Shared settings
 

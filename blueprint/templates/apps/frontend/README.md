@@ -81,6 +81,15 @@ reaches the homepage and every entry without re-reading them. Each setting's
 events are ordered on their own, like an entry's, and a failed read keeps the
 stored menus, branding and design.
 
+When an editor unpublishes, password-protects, trashes or deletes an entry,
+the CMS sends a `withdraw` event instead. The Frontend makes every route of
+that entry a 404 at once, without reading the CMS (`withdrawEntry` in
+`src/lib/delivery.ts`). It records the withdrawal in `withdrawals`, and the
+store refuses to promote that entry again, whatever a read returns, until a
+publication that happened later lifts it. Pages answer with
+`Cache-Control: no-cache`; don't put a cache in front of the store that could
+outlive a withdrawal.
+
 `pnpm dev` has no store: it reads the CMS live, as before.
 
 ## Blocks
@@ -97,10 +106,12 @@ change it here; a shared renderer package is planned.
 (`vp test`) run from the workspace root, and in `pnpm verify`. `src/routes.test.ts`
 renders the pages through Astro's Container API against a stubbed CMS
 (`vitest.config.ts` gives Vitest Astro's Vite config); `src/homepage.test.ts`,
-`src/entries.test.ts`, `src/events.test.ts` and `src/settings.test.ts` drive
-the durable homepage, entries, publication events and shared settings through refreshes, outages, restarts, new and
-moved publications, refused, duplicate, delayed and failed events, with the
-store on SQLite (`src/test/sqlite-d1.ts`, the same migrations and SQL).
+`src/entries.test.ts`, `src/events.test.ts`, `src/settings.test.ts` and
+`src/withdrawals.test.ts` drive the durable homepage, entries, publication
+events, shared settings and withdrawals through refreshes, outages, restarts,
+new and moved publications, refused, duplicate, delayed, racing and failed
+events, with the store on SQLite (`src/test/sqlite-d1.ts`, the same migrations
+and SQL).
 
 ## Deploys
 

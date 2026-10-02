@@ -2,7 +2,7 @@
 
 /**
  * Plugin Name: {{Project}} Publication Events
- * Description: Tells the Frontend when a page or post is published or updated, so it refreshes its public copy without a deploy.
+ * Description: Tells the Frontend when a page or post is published, updated or withdrawn, so its public copy follows without a deploy.
  * Author: {{Project}}
  * License: GPL-2.0-or-later
  */
@@ -15,6 +15,14 @@
  * signed with PUBLICATION_EVENT_SECRET (HMAC-SHA256 of "<timestamp>.<body>").
  * The Frontend refreshes the entry from WordPress's public GraphQL, so the
  * event carries no content.
+ *
+ * An entry that stops being public (unpublished, made private or
+ * password-protected, trashed, or deleted while published) sends a withdraw
+ * event with the URI it had while published: the Frontend stops serving it
+ * at once, without reading WordPress, and only a later publication brings it
+ * back. A deleted entry's event and delivery are kept in the option
+ * `gq_publication_events_deleted` until it is refreshed, since its post meta
+ * goes with it.
  *
  * Publishing never waits on it or fails because of it: the event is sent at
  * the end of the request, after the editor's response where PHP-FPM allows,
@@ -35,6 +43,9 @@ const SITE = '{{project}}';
 
 /** The entry's last event and its delivery. */
 const META_KEY = '_gq_publication_event';
+
+/** Deleted entries' last events and their deliveries, by post id, until refreshed. */
+const DELETED_OPTION = 'gq_publication_events_deleted';
 
 /** The post types the Frontend serves as entries. */
 const POST_TYPES = ['page', 'post'];
@@ -94,14 +105,15 @@ function node_id(WP_Post $post): string
 }
 
 /**
- * The event a saved entry gives, or null: only a public page or post that is
- * published (a password-protected one too, so the Frontend stops serving it).
+ * The publication event a saved entry gives, or null: only a public page or
+ * post that is published (a password-protected one is withdrawn instead).
  */
 function event_for(WP_Post $post, ?WP_Post $before): ?array
 {
     if (
         ! in_array($post->post_type, POST_TYPES, true)
         || $post->post_status !== 'publish'
+        || $post->post_password !== ''
         || wp_is_post_revision($post)
         || wp_is_post_autosave($post)
     ) {
@@ -123,16 +135,68 @@ function event_for(WP_Post $post, ?WP_Post $before): ?array
     ];
 }
 
+/**
+ * The withdraw event a saved entry gives, or null: a page or post that was
+ * published and isn't public now (another status, or a password), at the URI
+ * it had while published. A published one with a password withdraws on every
+ * save, so the Frontend never keeps it.
+ */
+function withdrawal_for(WP_Post $post, ?WP_Post $before): ?array
+{
+    if (! in_array($post->post_type, POST_TYPES, true) || wp_is_post_revision($post) || wp_is_post_autosave($post)) {
+        return null;
+    }
+    $protected = $post->post_status === 'publish' && $post->post_password !== '';
+    $unpublished = $before instanceof WP_Post && $before->post_status === 'publish' && $post->post_status !== 'publish';
+    if (! $protected && ! $unpublished) {
+        return null;
+    }
+
+    return [
+        'site' => SITE,
+        'id' => wp_generate_uuid4(),
+        'action' => 'withdraw',
+        'occurredAt' => (int) floor(microtime(true) * 1000),
+        'entry' => ['id' => node_id($post), 'uri' => uri_of($unpublished ? $before : $post)],
+    ];
+}
+
+/** Posts being deleted in this request: their records go to DELETED_OPTION. */
+function deleting(?int $post_id = null): array
+{
+    static $deleting = [];
+    if ($post_id !== null) {
+        $deleting[$post_id] = true;
+    }
+
+    return $deleting;
+}
+
 /** Records an entry's event and its delivery state. */
 function record(int $post_id, array $event, array $delivery): void
 {
-    update_post_meta($post_id, META_KEY, wp_slash(['event' => $event, 'delivery' => $delivery]));
+    if (get_post($post_id) instanceof WP_Post && ! isset(deleting()[$post_id])) {
+        update_post_meta($post_id, META_KEY, wp_slash(['event' => $event, 'delivery' => $delivery]));
+
+        return;
+    }
+    $deleted = get_option(DELETED_OPTION, []);
+    $deleted = is_array($deleted) ? $deleted : [];
+    unset($deleted[$post_id]);
+    if ($delivery['status'] !== 'refreshed') {
+        $deleted[$post_id] = ['event' => $event, 'delivery' => $delivery];
+    }
+    update_option(DELETED_OPTION, $deleted, false);
 }
 
 /** The entry's last event and its delivery, if it has one. */
 function recorded(int $post_id): ?array
 {
     $recorded = get_post_meta($post_id, META_KEY, true);
+    if (! is_array($recorded)) {
+        $deleted = get_option(DELETED_OPTION, []);
+        $recorded = is_array($deleted) ? ($deleted[$post_id] ?? null) : null;
+    }
 
     return is_array($recorded) && isset($recorded['event'], $recorded['delivery']) ? $recorded : null;
 }
@@ -248,11 +312,9 @@ function send_queued(): void
     }
 }
 
-add_action('wp_after_insert_post', static function (int $post_id, WP_Post $post, bool $update, ?WP_Post $before): void {
-    $event = event_for($post, $before);
-    if ($event === null) {
-        return;
-    }
+/** Records an entry's event as pending and sends it at the end of the request. */
+function enqueue(int $post_id, array $event): void
+{
     // Not configured outside production (such as local development without a
     // Frontend store): nothing to record. In production it is a failure to fix.
     if ((endpoint() === '' || secret() === '') && wp_get_environment_type() !== 'production') {
@@ -264,7 +326,33 @@ add_action('wp_after_insert_post', static function (int $post_id, WP_Post $post,
         add_action('shutdown', __NAMESPACE__ . '\\send_queued', 1000);
     }
     queue($event, $post_id);
+}
+
+add_action('wp_after_insert_post', static function (int $post_id, WP_Post $post, bool $update, ?WP_Post $before): void {
+    $event = event_for($post, $before) ?? withdrawal_for($post, $before);
+    if ($event !== null) {
+        enqueue($post_id, $event);
+    }
 }, 10, 4);
+
+// Deleting a published entry outright (not through the trash) withdraws it too.
+add_action('before_delete_post', static function (int $post_id, WP_Post $post): void {
+    if (
+        ! in_array($post->post_type, POST_TYPES, true)
+        || $post->post_status !== 'publish'
+        || wp_is_post_revision($post)
+    ) {
+        return;
+    }
+    deleting($post_id);
+    enqueue($post_id, [
+        'site' => SITE,
+        'id' => wp_generate_uuid4(),
+        'action' => 'withdraw',
+        'occurredAt' => (int) floor(microtime(true) * 1000),
+        'entry' => ['id' => node_id($post), 'uri' => uri_of($post)],
+    ]);
+}, 10, 2);
 
 if (defined('WP_CLI') && WP_CLI) {
     /**
@@ -291,8 +379,9 @@ if (defined('WP_CLI') && WP_CLI) {
                 'meta_key' => META_KEY,
                 'fields' => 'ids',
             ]);
+            $deleted = get_option(DELETED_OPTION, []);
             $rows = [];
-            foreach ($posts as $post_id) {
+            foreach ([...$posts, ...array_keys(is_array($deleted) ? $deleted : [])] as $post_id) {
                 $recorded = recorded((int) $post_id);
                 if ($recorded === null || $recorded['delivery']['status'] === 'refreshed') {
                     continue;
@@ -337,15 +426,13 @@ if (defined('WP_CLI') && WP_CLI) {
          */
         public function retry(array $args): void
         {
-            $post = get_post((int) $args[0]);
-            if (! $post instanceof WP_Post) {
-                \WP_CLI::error("No post {$args[0]}.");
-            }
-            $event = recorded($post->ID)['event'] ?? event_for($post, null);
+            $post_id = (int) $args[0];
+            $post = get_post($post_id);
+            $event = recorded($post_id)['event'] ?? ($post instanceof WP_Post ? event_for($post, null) : null);
             if ($event === null) {
-                \WP_CLI::error("Post {$post->ID} isn't a published page or post.");
+                \WP_CLI::error("Post {$args[0]} isn't a published page or post, and has no event to send.");
             }
-            $delivery = deliver($post->ID, $event);
+            $delivery = deliver($post_id, $event);
             if ($delivery['status'] !== 'refreshed') {
                 \WP_CLI::error("Not refreshed ({$delivery['reason']}): {$delivery['message']}");
             }

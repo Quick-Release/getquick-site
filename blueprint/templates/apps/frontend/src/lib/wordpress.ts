@@ -36,6 +36,8 @@ export interface DesignPresets {
 }
 
 export interface HomeContent extends DesignPresets {
+  /** The front page's WordPress entry (WPGraphQL's global id), if WordPress gave it. */
+  nodeId: string | null;
   settings: WordPressSettings;
   page: { title: string; content: string; hasVideoHero: boolean };
   /** WordPress failed on the blocks, so this is the page without them. */
@@ -108,6 +110,7 @@ const homeData = z.object({
     .union([
       z.object({
         __typename: z.literal("Page"),
+        id: z.string().nullable().optional(),
         isFrontPage: z.boolean(),
         title: z.string().nullable(),
         content: z.string().nullable(),
@@ -176,6 +179,7 @@ const homeQuery = /* GraphQL */ `
     nodeByUri(uri: "/") {
       __typename
       ... on Page {
+        id
         title
         content
         blocks(attributes: true, htmlContent: true, dynamicContent: true, postTemplate: false)
@@ -475,6 +479,7 @@ export async function getHomeContent(): Promise<Delivery<HomeContent>> {
     return {
       kind: "found",
       content: {
+        nodeId: node.id ?? null,
         settings: {
           title: data.generalSettings.title ?? "",
           description: data.generalSettings.description ?? "",
