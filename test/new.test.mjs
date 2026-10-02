@@ -164,6 +164,10 @@ test("gq new prints the provisioning sequence and runs none of it", async () => 
       "  # Once the CMS is released and WordPress installed, prove its uploads are",
       "  # hosted independently of it (needs a CMS check user, see gq media check):",
       "  pnpm media:check:upload   # gq media check --upload",
+      "  # Add FRONTEND_REFRESH_TOKEN to Sigillo staging, deploy the Frontend, then",
+      "  # store its homepage: until then the homepage is a 503 (gq frontend refresh):",
+      "  pnpm deploy:frontend      # pnpm --dir infra run deploy:frontend",
+      "  pnpm frontend:refresh     # gq frontend refresh",
       "",
     ].join("\n"),
   );

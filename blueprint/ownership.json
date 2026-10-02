@@ -207,6 +207,46 @@
       "app": "apps/frontend"
     },
     {
+      "path": "apps/frontend/migrations/0001_publications.sql",
+      "template": "templates/apps/frontend/migrations/0001_publications.sql",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/homepage.test.ts",
+      "template": "templates/apps/frontend/src/homepage.test.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/lib/delivery.ts",
+      "template": "templates/apps/frontend/src/lib/delivery.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/lib/publications.ts",
+      "template": "templates/apps/frontend/src/lib/publications.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/lib/runtime.ts",
+      "template": "templates/apps/frontend/src/lib/runtime.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/pages/gq/refresh.ts",
+      "template": "templates/apps/frontend/src/pages/gq/refresh.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/test/sqlite-d1.ts",
+      "template": "templates/apps/frontend/src/test/sqlite-d1.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/test/wordpress-stub.ts",
+      "template": "templates/apps/frontend/src/test/wordpress-stub.ts",
+      "app": "apps/frontend"
+    },
+    {
       "path": "apps/frontend/package.json",
       "template": "templates/apps/frontend/package.json",
       "app": "apps/frontend"

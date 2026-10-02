@@ -38,6 +38,46 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   the two pages, `src/layouts/Layout.astro` and `vitest.config.ts` from a
   newly generated site (and add `vitest.config.ts` to `tsconfig.json`),
   keeping the site's own changes.
+- New content sites serve a durable last-known-good homepage
+  ([ADR 0003](docs/adr/0003-serve-published-content-from-a-durable-store.md)).
+  The Frontend serves the front page and its menu, logo, site identity and
+  design presets from its publication store, a D1 database of its own
+  (`<project>-fe-publications`, retained in production) that
+  `infra/frontend.run.ts` declares, migrates from `apps/frontend/migrations`
+  and binds as `PUBLICATION_DB`. Visits never read the CMS, so the homepage
+  outlives CMS outages of any length, Worker restarts and redeploys. Until a
+  refresh has stored it, the homepage is a 503, never a placeholder or a 404.
+- `gq frontend refresh` (`pnpm frontend:refresh`) is the trusted refresh: it
+  posts to the Frontend's `/gq/refresh` with `FRONTEND_REFRESH_TOKEN` (a
+  per-site secret in Sigillo staging, bound to the Worker by
+  `pnpm deploy:frontend`). The Frontend reads the CMS anonymously and promotes
+  each complete, valid read; a timeout, network, HTTP or GraphQL error,
+  missing required data or a front page without its blocks keeps the stored
+  version, a failed chrome read doesn't touch the stored front page, and an
+  older read never overwrites a newer one. The report says what was kept and
+  why; the command exits 1 until the homepage is ready and refreshed. Without
+  the token bound, the Frontend refuses every refresh. `gq new` lists the
+  deploy and refresh after media.
+- The Frontend skeleton's `src/homepage.test.ts` renders the homepage through
+  refreshes, outages, time far beyond any cache expiry, restarts, refused
+  refreshes and unreadable or incompatible stored state, with the store on
+  SQLite and the same migrations. `scripts/smoke/frontend-runtime.sh` proves
+  it on a disposable generated site without Cloudflare: Alchemy's Astro
+  build served in workerd with a local D1 store, through a CMS outage, a
+  Worker restart and a rebuilt redeploy.
+- **Existing sites:** `infra/frontend.run.ts` only creates the store when
+  `apps/frontend/migrations` exists, so syncing changes nothing for a
+  site-owned Frontend that doesn't have it. To adopt, copy `migrations/`,
+  `src/lib/delivery.ts`, `src/lib/publications.ts`, `src/lib/runtime.ts`,
+  `src/pages/gq/refresh.ts`, `src/test/`, `src/homepage.test.ts`, the updated
+  `src/pages/index.astro`, `src/layouts/Layout.astro`, `src/env.d.ts` and
+  `src/routes.test.ts` from a newly generated site, add
+  `FRONTEND_REFRESH_TOKEN` to Sigillo staging, deploy and run
+  `pnpm frontend:refresh`.
+- **Not yet:** Cloudflare CI releases don't pass `FRONTEND_REFRESH_TOKEN`, so
+  a CI release disables refresh (stored content is still served) until the
+  next `pnpm deploy:frontend`; entries still read the CMS live; refresh is
+  manual until WordPress events arrive.
 
 ### Fixed
 
