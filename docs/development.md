@@ -51,7 +51,9 @@ Group module-specific suites in `test/<module>/`, named `<subject>.test.mjs`
 (for example, `cms/composer.test.mjs` or `sync/ownership.test.mjs`). The folder
 supplies the module name; don't repeat it in the filename. Use
 `commands.test.mjs` for a module's command suite and lowercase kebab-case for
-other subjects. Keep package-wide `run.test.mjs` and `exec.test.mjs` at the
+other subjects. Qualify distinct command subjects when they warrant separate
+suites, such as `ploi/inspection-commands.test.mjs` and
+`ploi/api-commands.test.mjs`. Keep package-wide `run.test.mjs` and `exec.test.mjs` at the
 `test/` root, matching their source modules.
 
 Shared helpers stay in `test/support/` and baseline evidence in `test/fixtures/`.
@@ -59,6 +61,13 @@ The `test` script selects root suites and one level of explicitly named module
 folders, never recursively through fixtures or support. Add new module folders
 to that script's allowlist; extracted site test scripts must not become package
 suites. Move coherent suites intact before considering a subject split.
+
+Split by independently meaningful behavior, not file length or test style.
+Sync ownership categories have separate suites for generated sections, managed
+keys and create-once files; `sync/ownership.test.mjs` keeps their cross-category
+checks. Provider-specific command cases belong in the provider folder, while
+`run.test.mjs` retains common routing, context, environment and error-reporting
+contracts. Preserve existing assertions and the `run()` seam when splitting.
 
 ```sh
 pnpm test                                      # all package suites
