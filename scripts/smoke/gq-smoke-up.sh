@@ -75,15 +75,27 @@ open_url() {
 }
 
 # pause "msg" waits for the human to confirm they've done the manual part.
+# Any key continues; the rest of a multi-byte key (an arrow) is discarded.
 pause() {
-  printf '  %s%s%s ' "$DIM" "${1:-Press Enter to continue}" "$RESET"
-  read -r _ || true
+  printf '  %s%s%s ' "$DIM" "${1:-Press any key to continue}" "$RESET"
+  read -rsn1 _ || true
+  read -rsn100 -t 0.05 _ || true
+  printf '\n'
 }
 
-# confirm "question" is a y/N gate; returns success on yes.
+# confirm "question" is a Y/n gate; Enter (or anything but n) means yes.
 confirm() {
   local reply=""
-  printf '  %s? %s [y/N] ' "$YELLOW" "$1"
+  printf '  %s? %s [Y/n]%s ' "$YELLOW" "$1" "$RESET"
+  read -r reply || true
+  [[ ! "$reply" =~ ^[Nn] ]]
+}
+
+# confirm_default_no "question" is a y/N gate for irreversible actions and for
+# going on past a failed check: Enter means no.
+confirm_default_no() {
+  local reply=""
+  printf '  %s? %s [y/N]%s ' "$YELLOW" "$1" "$RESET"
   read -r reply || true
   [[ "$reply" =~ ^[Yy] ]]
 }
@@ -232,7 +244,20 @@ sig() { site ./node_modules/.bin/sigillo "$@" --api-url "$SIGILLO_API"; }
 
 # has_secret ENVIRONMENT NAME: the site's Sigillo environment (gq.ops.json
 # name: local, operations or staging) has NAME. Lists names, never values.
-has_secret() { site pnpm --silent exec gq sigillo secrets "$1" 2>/dev/null | grep -qw "$2"; }
+# Captured first: with pipefail, grep -q stopping at a match kills the
+# listing with SIGPIPE and the pipeline reads as "not found".
+has_secret() {
+  local names
+  names=$(site pnpm --silent exec gq sigillo secrets "$1" 2>/dev/null) || return 1
+  grep -qw "$2" <<<"$names"
+}
+
+# behind_cloudflare: the CMS host answers through Cloudflare's proxy.
+behind_cloudflare() {
+  local headers
+  headers=$(curl -sSI "https://$ADMIN_HOST/" 2>/dev/null) || return 1
+  grep -qi '^server: cloudflare' <<<"$headers"
+}
 
 # The project ID of the Sigillo project named $SIGILLO_PROJECT_NAME, if any.
 find_sigillo_project() {
@@ -303,17 +328,54 @@ origin_has_certificate() {
 # deploy script's success line for SHA. The log listing truncates each log,
 # so every deploy's full log is fetched.
 ploi_deployed() {
-  local id
+  local id log
   for id in $(site pnpm --silent ploi:log 2>/dev/null | node -e '
     let text = ""; process.stdin.on("data", (chunk) => (text += chunk)).on("end", () => {
       const start = text.indexOf("{");
       if (start < 0) return;
       for (const log of JSON.parse(text.slice(start)).data ?? []) if (log.type === "deploy") console.log(log.id);
     });'); do
-    site pnpm --silent ops ploi api sites.get-log-site --path "log=$id" 2>/dev/null |
-      grep -q "GQ_SMOKE_DEPLOY_STATUS=success SHA=$1" && return 0
+    log=$(site pnpm --silent ops ploi api sites.get-log-site --path "log=$id" 2>/dev/null) || continue
+    grep -q "GQ_SMOKE_DEPLOY_STATUS=success SHA=$1" <<<"$log" && return 0
   done
   return 1
+}
+
+# check_hosts SITE_TITLE: the CMS's /wp/graphql reports SITE_TITLE, and the
+# Frontend serves the <title> that CMS content implies (its front page's
+# title, else the site title), so it is rendering the CMS live.
+check_hosts() {
+  # shellcheck disable=SC2016 # JavaScript, not shell
+  ADMIN_HOST="$ADMIN_HOST" FRONTEND_HOST="$FRONTEND_HOST" node --input-type=module -e '
+    const [title] = process.argv.slice(1);
+    const { ADMIN_HOST: admin, FRONTEND_HOST: frontend } = process.env;
+    const ok = (text) => console.log(`  ✓ ${text}`);
+    const bad = (text) => { console.log(`  ⚠ ${text}`); process.exitCode = 1; };
+    let data;
+    try {
+      const response = await fetch(`https://${admin}/wp/graphql`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "{ generalSettings { title } nodeByUri(uri: \"/\") { ... on Page { title } } }" }),
+      });
+      data = (await response.json()).data;
+    } catch (error) {
+      bad(`CMS: https://${admin}/wp/graphql failed: ${error.message}`);
+    }
+    const siteTitle = data?.generalSettings?.title;
+    if (siteTitle === title) ok(`CMS: https://${admin}/wp/graphql reports the site title "${title}"`);
+    else if (data) bad(`CMS: /wp/graphql reports the site title "${siteTitle}", not "${title}"`);
+    const expected = data?.nodeByUri?.title || siteTitle;
+    if (expected) {
+      const html = await fetch(`https://${frontend}/`).then((response) => response.text(), () => "");
+      const served = (html.match(/<title>([^<]*)<\/title>/u)?.[1] ?? "")
+        .replace(/&#39;|&apos;/gu, String.fromCharCode(39))
+        .replace(/&quot;/gu, String.fromCharCode(34))
+        .replace(/&lt;/gu, "<").replace(/&gt;/gu, ">").replace(/&amp;/gu, "&");
+      if (served.startsWith(expected)) ok(`Frontend: https://${frontend} renders "${expected}" from the CMS`);
+      else bad(`Frontend: https://${frontend} serves the title "${served}", not "${expected}" from the CMS`);
+    }
+  ' "$1"
 }
 
 # ci_state: "busy" while a CI Workflow run is queued or running, "idle" when
@@ -351,7 +413,7 @@ wait_for_release() {
     warn "Ploi's recent deploy logs don't show GQ_SMOKE_DEPLOY_STATUS=success SHA=$sha."
     note "Read them with: (cd $SITE_DIR && pnpm ploi:log). The CI run's logs are in the dashboard:"
     open_url "https://dash.cloudflare.com/$CF_ACCOUNT_ID/workers/services/view/$PROJECT-ci/production"
-    confirm "Continue anyway?" || exit 1
+    confirm_default_no "Continue anyway?" || exit 1
   fi
 }
 
@@ -506,7 +568,7 @@ for pair in staging:staging:$PROJECT dev:local:$PROJECT-dev; do
   fi
   printf '  %s$ pnpm registry client add %s --project %s --env %s%s\n' "$DIM" "$client" "$SIGILLO_PROJECT_ID" "$slug" "$RESET"
   until (cd "$REGISTRY_DIR" && pnpm registry client add "$client" --project "$SIGILLO_PROJECT_ID" --env "$slug"); do
-    warn "That failed (not logged in? run pnpm registry login in $REGISTRY_DIR)."
+    warn "That failed: see the registry CLI's message above (not logged in? run pnpm registry login in $REGISTRY_DIR)."
     confirm "Retry?" || exit 1
   done
 done
@@ -534,9 +596,9 @@ run git branch -M main
 site git remote get-url origin >/dev/null 2>&1 || run git remote add origin "https://github.com/$REPOSITORY.git"
 if [[ -n "$(site git ls-remote --heads origin main)" ]] && ! site git merge-base --is-ancestor "$(site git ls-remote --heads origin main | cut -f1)" HEAD 2>/dev/null; then
   warn "$REPOSITORY already has a main this checkout doesn't contain (an earlier run's)."
-  confirm "Force-push this site over it?" || exit 1
+  confirm_default_no "Force-push this site over it?" || exit 1
   tags=$(site git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/||')
-  if [[ -n "$tags" ]] && confirm "Also delete the earlier run's tags ($(tr '\n' ' ' <<<"$tags"))?"; then
+  if [[ -n "$tags" ]] && confirm_default_no "Also delete the earlier run's tags ($(tr '\n' ' ' <<<"$tags"))?"; then
     # shellcheck disable=SC2086
     run git push origin --delete $tags
   fi
@@ -572,14 +634,14 @@ say "Creates the system user, the site $ADMIN_HOST, the database, its .env, the 
 say "script and the certificate on Lombardi's server. It shows the plan and asks first."
 run pnpm ploi:provision
 if origin_has_certificate; then
-  if curl -sSI "https://$ADMIN_HOST/" 2>/dev/null | grep -qi '^server: cloudflare'; then
+  if behind_cloudflare; then
     say "$ADMIN_HOST is already behind Cloudflare's proxy."
   else
     say "The certificate is issued: put $ADMIN_HOST behind Cloudflare's proxy, as Lombardi's CMS is."
     open_url "https://dash.cloudflare.com/$CF_ACCOUNT_ID/$CF_ZONE_NAME/dns/records"
     step "Edit the A record $PROJECT-cms → Proxy status: on (orange cloud) → Save."
     note "Ploi renews the certificate over HTTP through the proxy; the first renewal is due in about 60 days."
-    until curl -sSI "https://$ADMIN_HOST/" 2>/dev/null | grep -qi '^server: cloudflare'; do
+    until behind_cloudflare; do
       warn "$ADMIN_HOST isn't answering through Cloudflare yet (DNS caches can take a few minutes)."
       confirm "Check again?" || break
     done
@@ -587,7 +649,7 @@ if origin_has_certificate; then
 else
   warn "No valid certificate on the server for $ADMIN_HOST yet: once it resolves to $SERVER_IP,"
   warn "re-run pnpm ploi:provision (or this wizard) to request it, then turn the proxy on."
-  confirm "Continue without it?" || exit 1
+  confirm_default_no "Continue without it?" || exit 1
 fi
 pause
 
@@ -638,12 +700,19 @@ wait_for_release "$FIRST_TAG"
 pause
 
 # ── 15 ────────────────────────────────────────────────────────────────────
-stage "Install WordPress and a front page"
+stage "Install WordPress"
 open_url "https://$ADMIN_HOST/wp/wp-admin/install.php"
-step "Site title: GQ Smoke · pick an admin user and a strong password (keep them in your password manager)."
-step "Log in, then Pages → Add New: give it a unique title, e.g. Smoke $(date +%Y-%m-%d), and Publish."
-step "Settings → Reading → Your homepage displays: A static page → Homepage: that page → Save."
-ask SMOKE_MARKER "The front page's exact title:"
+step "Site title: something unique, e.g. GQ Smoke $(date +%Y-%m-%d) — the last stage looks for it on both hosts."
+step "Pick an admin user and a strong password (keep them in your password manager) → Install WordPress."
+SMOKE_MARKER=""
+until [[ -n "$SMOKE_MARKER" ]]; do
+  ask SMOKE_MARKER "The Site title you entered:"
+  case "$SMOKE_MARKER" in
+    "" | "Content is on its way." | "The front page is almost ready." | GqSmoke)
+      warn "That's the Frontend's placeholder text, not a site title; type the title from the install form."
+      SMOKE_MARKER="" ;;
+  esac
+done
 write_env SMOKE_MARKER "$SMOKE_MARKER"
 pause
 
@@ -658,22 +727,13 @@ else
   SECOND_TAG=$(release_tag 2)
 fi
 wait_for_release "$SECOND_TAG"
-graphql=$(curl -sS -X POST "https://$ADMIN_HOST/wp/graphql" -H 'Content-Type: application/json' \
-  -d '{"query":"{ generalSettings { title } nodeByUri(uri: \"/\") { ... on Page { title } } }"}' || true)
-frontend=$(curl -sS "https://$FRONTEND_HOST/" || true)
-passed=1
-if grep -qF "$SMOKE_MARKER" <<<"$graphql"; then
-  printf '  %s✓%s CMS: https://%s/wp/graphql answers with the front page "%s"\n' "$GREEN" "$RESET" "$ADMIN_HOST" "$SMOKE_MARKER"
-else
-  passed=0; warn "CMS: /wp/graphql didn't return \"$SMOKE_MARKER\": ${graphql:0:300}"
-fi
-if grep -qF "$SMOKE_MARKER" <<<"$frontend"; then
-  printf '  %s✓%s Frontend: https://%s renders "%s" from the CMS\n' "$GREEN" "$RESET" "$FRONTEND_HOST" "$SMOKE_MARKER"
-else
-  passed=0; warn "Frontend: https://$FRONTEND_HOST doesn't show \"$SMOKE_MARKER\"."
-fi
+until check_hosts "$SMOKE_MARKER"; do
+  confirm "Re-enter the site title and check again?" || break
+  ask SMOKE_MARKER "The Site title (WordPress → Settings → General):"
+  write_env SMOKE_MARKER "$SMOKE_MARKER"
+done
 open_url "https://$FRONTEND_HOST/"
-if (( passed )); then
+if check_hosts "$SMOKE_MARKER" >/dev/null; then
   say "Phase 2 gate passed: $SECOND_TAG deployed the CMS and the Frontend through Cloudflare CI."
   note "Record it in docs/plans/getquick-blueprint-rollout.md, then tear down: scripts/smoke/gq-smoke-down.sh"
 else

@@ -75,15 +75,27 @@ open_url() {
 }
 
 # pause "msg" waits for the human to confirm they've done the manual part.
+# Any key continues; the rest of a multi-byte key (an arrow) is discarded.
 pause() {
-  printf '  %s%s%s ' "$DIM" "${1:-Press Enter to continue}" "$RESET"
-  read -r _ || true
+  printf '  %s%s%s ' "$DIM" "${1:-Press any key to continue}" "$RESET"
+  read -rsn1 _ || true
+  read -rsn100 -t 0.05 _ || true
+  printf '\n'
 }
 
-# confirm "question" is a y/N gate; returns success on yes.
+# confirm "question" is a Y/n gate; Enter (or anything but n) means yes.
 confirm() {
   local reply=""
-  printf '  %s? %s [y/N] ' "$YELLOW" "$1"
+  printf '  %s? %s [Y/n]%s ' "$YELLOW" "$1" "$RESET"
+  read -r reply || true
+  [[ ! "$reply" =~ ^[Nn] ]]
+}
+
+# confirm_default_no "question" is a y/N gate for irreversible actions and for
+# going on past a failed check: Enter means no.
+confirm_default_no() {
+  local reply=""
+  printf '  %s? %s [y/N]%s ' "$YELLOW" "$1" "$RESET"
   read -r reply || true
   [[ "$reply" =~ ^[Yy] ]]
 }
@@ -259,7 +271,7 @@ for tool in gh node pnpm; do command -v "$tool" >/dev/null 2>&1 || { warn "Missi
 [[ -x "$SITE_DIR/infra/ci/node_modules/.bin/wrangler" ]] || run pnpm install
 warn "This permanently deletes $PROJECT's Workers, buckets (and their objects), Ploi site and"
 warn "database, DNS record and tokens. The repository and Sigillo project are kept."
-confirm "Tear down $PROJECT?" || exit 1
+confirm_default_no "Tear down $PROJECT?" || exit 1
 
 # ── 2 ─────────────────────────────────────────────────────────────────────
 stage "Frontend Worker"
@@ -273,7 +285,8 @@ pause
 stage "CI Worker"
 say "The CI Worker, its Workflows and its sandbox containers go with your own Wrangler"
 say "login (OAuth in the browser), which also deletes the buckets later."
-if wrangler whoami 2>&1 | grep -qi "not authenticated"; then wrangler login; fi
+whoami=$(wrangler whoami 2>&1 || true)
+if grep -qi "not authenticated" <<<"$whoami"; then wrangler login; fi
 try wrangler delete "$PROJECT-ci"
 for workflow in "$PROJECT-ci" "$PROJECT-mirror"; do
   try wrangler workflows delete "$workflow"
@@ -283,7 +296,7 @@ containers=$(wrangler containers list 2>/dev/null || true)
 grep -i "$PROJECT" <<<"$containers" || note "(none)"
 # shellcheck disable=SC2013 # IDs, one word each
 for id in $(grep -i "$PROJECT" <<<"$containers" | grep -oE '[0-9a-f]{8}-[0-9a-f-]{27}' | sort -u); do
-  confirm "Delete container application $id?" && try wrangler containers delete "$id"
+  confirm_default_no "Delete container application $id?" && try wrangler containers delete "$id"
 done
 pause
 
@@ -342,7 +355,7 @@ pause
 stage "CMS DNS record"
 open_url "https://dash.cloudflare.com/$CF_ACCOUNT_ID/$CF_ZONE_NAME/dns/records"
 step "Search $PROJECT → delete the A record $PROJECT-cms (and any other $PROJECT record left)."
-pause "Press Enter once it's deleted"
+pause "Press any key once it's deleted"
 say "Records left in $CF_ZONE_NAME for $PROJECT's hosts (should be none):"
 for host in "$ADMIN_HOST" "$FRONTEND_HOST" "$MEDIA_HOST"; do
   try pnpm --silent ops cloudflare dns list --name "$host"
@@ -353,7 +366,7 @@ pause
 stage "Cloudflare tokens"
 say "The GETQUICK GQ-SMOKE tokens, deleted last since the stages above used them:"
 run pnpm exec gq sigillo run operations -- node "$CLEANUP" tokens
-if confirm "Delete these tokens?"; then
+if confirm_default_no "Delete these tokens?"; then
   run pnpm exec gq sigillo run operations -- node "$CLEANUP" tokens --delete
 fi
 note "Their values stay in Sigillo staging; the next run's cf:* commands create new tokens over them."
