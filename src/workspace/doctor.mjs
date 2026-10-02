@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { CMS_PATH, commandExists, ddevStatus, phpToolchainAvailable } from "../cms/local.mjs";
 import { artifactsRemoteUrl } from "../cloudflare/client.mjs";
 import { MANIFEST_FILENAME } from "../manifest/schema.mjs";
+import { localMediaReadiness } from "../media/readiness.mjs";
 import {
   hasReleaseConfig,
   RELEASE_CONFIG_FILENAME,
@@ -93,6 +94,17 @@ export async function runDoctor(_options, { context, env, exec, io }) {
   else warn(`${FRONTEND_PATH}/.env is missing — copy .env.example and set the GraphQL URL`);
   if (existsSync(join(root, CMS_PATH, ".env"))) ok(`${CMS_PATH}/.env exists`);
   else warn(`${CMS_PATH}/.env is missing — copy .env.example and set local credentials`);
+
+  // Local uploads only; the production prerequisite is gq media check's.
+  io.out("\nMedia (local development):");
+  const media = localMediaReadiness({
+    ops: context.config,
+    cmsEnv: readText(join(root, CMS_PATH, ".env")),
+  });
+  for (const { status, detail, action } of media.checks) {
+    if (status === "ok") ok(detail);
+    else (status === "not-ready" ? fail : warn)(action ? `${detail} — ${action}` : detail);
+  }
 
   if (context.config.sigillo) {
     io.out("\nSecrets (Sigillo):");

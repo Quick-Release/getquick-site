@@ -157,9 +157,13 @@ test("gq new prints the provisioning sequence and runs none of it", async () => 
       "  pnpm cf:deploy-token      # gq cloudflare deploy-token",
       "  pnpm cf:releases          # gq cloudflare releases",
       "  pnpm cf:media             # gq cloudflare media",
+      "  pnpm ploi:media           # gq ploi media",
       "  pnpm cf:ci                # gq cloudflare ci",
       "  pnpm github:setup         # gq github setup",
       "  pnpm ci:deploy            # gq ci deploy",
+      "  # Once the CMS is released and WordPress installed, prove its uploads are",
+      "  # hosted independently of it (needs a CMS check user, see gq media check):",
+      "  pnpm media:check:upload   # gq media check --upload",
       "",
     ].join("\n"),
   );

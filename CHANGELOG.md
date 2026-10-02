@@ -5,6 +5,40 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ## Unreleased
 
+### Added
+
+- `gq media check` reports whether a site's WordPress uploads are hosted
+  independently of its CMS, with an actionable step for each check that
+  isn't ready and exit 1 until they are. Through `gq sigillo run staging`
+  it checks the `media` configuration, that the media domain is neither the
+  CMS's nor the Frontend's host, that the deploy activates `s3-uploads`, the
+  Ploi `.env`'s `S3_UPLOADS_*` lines (compared, never shown), the bucket
+  credentials, the public domain and the Frontend's rendered homepage
+  (`configured`). `--upload` proves the upload path: it uploads a probe
+  image through the CMS's REST API as `CMS_CHECK_USER` with the application
+  password `CMS_CHECK_APP_PASSWORD`, requires its URL on the media domain,
+  compares the bucket's object with what the media domain serves, and
+  deletes the probe (`ready`). `--local` checks local development offline:
+  uploads stay on disk unless `apps/cms/.env` holds R2 credentials.
+  `--json` prints the result for other tooling.
+- New sites get the `media:check`, `media:check:upload` and
+  `media:check:local` scripts. `gq new`'s provisioning sequence now includes
+  `ploi:media` after `cf:media`, and ends with `media:check:upload`.
+- `gq doctor` reports local media, and fails when `apps/cms/.env` holds R2
+  credentials, which would make the local CMS write to the live bucket.
+- The gq-smoke wizard proves independent media on its disposable site
+  (stage 17).
+- New Frontends test their routes: `src/routes.test.ts` renders the home and
+  entry pages through Astro's Container API (`vitest.config.ts`) against a
+  stubbed CMS and checks their content and HTTP status.
+  `scripts/smoke/frontend-check.sh` runs a disposable generated site's
+  Frontend tests, `astro check`, lint and format check.
+- **Existing sites:** the Frontend is site-owned, so syncing doesn't change
+  it. To adopt, copy `src/lib/wordpress.ts`, its test, `src/routes.test.ts`,
+  the two pages, `src/layouts/Layout.astro` and `vitest.config.ts` from a
+  newly generated site (and add `vitest.config.ts` to `tsconfig.json`),
+  keeping the site's own changes.
+
 ### Fixed
 
 - New content sites' Frontends no longer present a CMS failure as a missing
@@ -20,19 +54,6 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   and the page is still served without them.
 - The front page retries without blocks after a CMS 5xx, like entries do; a
   timeout isn't retried, and a failed retry is unavailable, never missing.
-
-### Added
-
-- New Frontends test their routes: `src/routes.test.ts` renders the home and
-  entry pages through Astro's Container API (`vitest.config.ts`) against a
-  stubbed CMS and checks their content and HTTP status.
-  `scripts/smoke/frontend-check.sh` runs a disposable generated site's
-  Frontend tests, `astro check`, lint and format check.
-- **Existing sites:** the Frontend is site-owned, so syncing doesn't change
-  it. To adopt, copy `src/lib/wordpress.ts`, its test, `src/routes.test.ts`,
-  the two pages, `src/layouts/Layout.astro` and `vitest.config.ts` from a
-  newly generated site (and add `vitest.config.ts` to `tsconfig.json`),
-  keeping the site's own changes.
 
 ## 0.13.3 — 2026-10-02
 

@@ -320,6 +320,24 @@ test("gq doctor reports stopped DDEV, missing env files and a logged-out Sigillo
   );
 });
 
+test("gq doctor checks local media only, and fails when the local CMS would write to the live bucket", async () => {
+  const healthy = await healthySite();
+  const ready = await healthy.run(["doctor"], { exec: machine() });
+  assert.match(
+    ready.stdout,
+    /Media \(local development\):\n {2}✓ the local CMS keeps uploads on disk in apps\/cms\/web\/app\/uploads/u,
+  );
+
+  const live = await healthySite({ "apps/cms/.env": "S3_UPLOADS_SECRET='live-secret'\n" });
+  const result = await live.run(["doctor"], { exec: machine() });
+  assert.equal(result.code, 1, result.stdout);
+  assert.match(
+    result.stdout,
+    /✗ apps\/cms\/\.env sets S3_UPLOADS_SECRET: the local CMS would write uploads to the live bucket — remove/u,
+  );
+  assert.ok(!result.stdout.includes("live-secret"));
+});
+
 test("gq doctor skips the Artifacts check for a site without an Artifacts mirror", async () => {
   const ops = { ...OPS, artifacts: undefined };
   const fixture = await createFixtureSite({

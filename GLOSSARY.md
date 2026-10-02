@@ -87,3 +87,10 @@ development and staging copies. A site's staging hosts are always
 `<project>-cms.bnq.pt` for the CMS and `<project>-fe.bnq.pt` for the
 Frontend, where `<project>` is the client's name (the site's `project` in
 `gq.ops.json`).
+
+**Independent media**:
+A site's WordPress uploads stored on R2 and served from the media bucket's
+own public domain, not from the CMS, so they stay available while the CMS is
+down. The production prerequisite `gq media check` verifies; keeping uploads
+on disk is only for local development.
+_Avoid_: offloaded media, CDN media

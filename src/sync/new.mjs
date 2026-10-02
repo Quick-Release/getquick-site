@@ -35,11 +35,13 @@ const CONTENT_PLUGINS = [
 
 // The root scripts that provision a new site, in order. Each runs its gq
 // command through gq sigillo run, which injects the command's secrets.
+// cf:media and ploi:media host the CMS's uploads on R2, independently of it.
 const PROVISIONING = [
   "ploi:provision",
   "cf:deploy-token",
   "cf:releases",
   "cf:media",
+  "ploi:media",
   "cf:ci",
   "github:setup",
   "ci:deploy",
@@ -104,10 +106,15 @@ function reportProvisioning(io, { project, directory }) {
   io.out("  # Fill in gq.ops.json (sigillo, domains, ploi, releases, media, backups,");
   io.out("  # cloudflare, artifacts, ci, github), then regenerate the managed files:");
   io.out("  pnpm exec gq sync");
-  for (const script of PROVISIONING) {
-    const command = packageTemplate.scripts[script].replace(/^gq sigillo run \S+ -- /u, "");
-    io.out(`  ${`pnpm ${script}`.padEnd(24)}  # ${command}`);
-  }
+  for (const script of PROVISIONING) io.out(scriptLine(script));
+  io.out("  # Once the CMS is released and WordPress installed, prove its uploads are");
+  io.out("  # hosted independently of it (needs a CMS check user, see gq media check):");
+  io.out(scriptLine("media:check:upload"));
+}
+
+function scriptLine(script) {
+  const command = packageTemplate.scripts[script].replace(/^gq sigillo run \S+ -- /u, "");
+  return `  ${`pnpm ${script}`.padEnd(24)}  # ${command}`;
 }
 
 // The options with each missing one asked for, the project suggested from
