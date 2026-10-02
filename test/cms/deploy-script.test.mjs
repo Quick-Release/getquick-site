@@ -160,7 +160,7 @@ test("gq new writes the deploy script and the deploy extension directory", async
 
   const script = await readSite(site.root, "deploy/ploi/admin.sh");
   assert.equal((await lstat(join(site.root, "deploy/ploi/admin.sh"))).mode & 0o777, 0o755);
-  assert.match(script, /^ {2}for plugin in getquick-design gq-support .* safe-svg; do$/mu);
+  assert.match(script, /^ {2}for plugin in gq-design gq-support .* safe-svg; do$/mu);
   assert.match(script, /^ {4}echo "ACME_DEPLOY_STATUS=success SHA=\$deployed_sha"$/mu);
   assert.match(
     await readSite(site.root, "deploy/ploi/admin.d/README.md"),

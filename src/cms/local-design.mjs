@@ -1,10 +1,11 @@
 // The local Design source override (Lombardi's scripts/lib/cms-local-design.mjs):
 // a developer opts in with an ignored apps/cms/.local-plugins/config.json
-// naming a getquick-design checkout, which is then symlinked over the
+// naming a Design checkout (gq-design or legacy getquick-design), symlinked over the
 // registry copy and bind-mounted into DDEV. Composer only ever sees the
 // registry copy: dependency changes unlink the checkout, run, and relink under
 // a filesystem lock. CI never consults the override.
 import {
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -12,13 +13,19 @@ import {
   readlinkSync,
   realpathSync,
   renameSync,
+  rmSync,
   rmdirSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { hostname } from "node:os";
+
+const designSlugs = ["gq-design", "getquick-design"];
+const composeHeader =
+  "# Generated from ignored .local-plugins/config.json; local development only.\n";
+const hooksHeader = "# Generated local-only hooks; not shipped to CI or staging.\n";
 
 function stat(path) {
   try {
@@ -36,6 +43,7 @@ function validateDestinations(cmsRoot) {
     join(cmsRoot, "web"),
     join(cmsRoot, "web/app"),
     join(cmsRoot, "web/app/plugins"),
+    join(cmsRoot, ".ddev"),
   ]) {
     const entry = stat(path);
     if (entry && (!entry.isDirectory() || entry.isSymbolicLink())) {
@@ -51,25 +59,36 @@ export function localDesignOverride(cmsRoot, env) {
   const config = join(state, "config.json");
   if (!existsSync(config)) return null;
   validateDestinations(cmsRoot);
-  const { getquickDesign } = JSON.parse(readFileSync(config, "utf8"));
-  if (typeof getquickDesign !== "string" || !isAbsolute(getquickDesign)) {
-    throw new Error(`${config} needs an absolute getquickDesign checkout path.`);
+  const { gqDesign, getquickDesign } = JSON.parse(readFileSync(config, "utf8"));
+  if (gqDesign !== undefined && getquickDesign !== undefined && gqDesign !== getquickDesign) {
+    throw new Error(`${config} has conflicting gqDesign and getquickDesign checkout paths.`);
   }
-  const source = realpathSync(getquickDesign);
+  const checkout = gqDesign ?? getquickDesign;
+  if (typeof checkout !== "string" || !isAbsolute(checkout)) {
+    throw new Error(`${config} needs an absolute gqDesign (or getquickDesign) checkout path.`);
+  }
+  const source = realpathSync(checkout);
   const withinCms = relative(realpathSync(cmsRoot), source);
   if (!withinCms.startsWith("../") && !isAbsolute(withinCms)) {
     throw new Error("The Design source checkout must be outside apps/cms.");
   }
-  if (!stat(source)?.isDirectory() || !existsSync(join(source, "getquick-design.php"))) {
+  const slug = designSlugs.find((name) => stat(join(source, `${name}.php`))?.isFile());
+  if (!stat(source)?.isDirectory() || !slug) {
     throw new Error(`Not a Design checkout: ${source}`);
   }
+  const slots = designSlugs.map((name) => ({
+    slug: name,
+    plugin: join(cmsRoot, "web/app/plugins", name),
+    backup: join(state, `${name}-release`),
+    compose: join(cmsRoot, `.ddev/docker-compose.${name}.local.yaml`),
+    hooks: join(cmsRoot, `.ddev/config.${name}.local.yaml`),
+  }));
   return {
     source,
     state,
-    plugin: join(cmsRoot, "web/app/plugins/getquick-design"),
-    backup: join(state, "getquick-design-release"),
-    compose: join(cmsRoot, ".ddev/docker-compose.getquick-design.local.yaml"),
-    hooks: join(cmsRoot, ".ddev/config.getquick-design.local.yaml"),
+    slug,
+    slots,
+    ...slots.find((slot) => slot.slug === slug),
     lock: join(state, "design-operation.lock"),
   };
 }
@@ -184,47 +203,103 @@ export function runDesignCommand(exec, command, args, override, options) {
   );
 }
 
-function inspect(override) {
-  const plugin = stat(override.plugin);
-  const backup = stat(override.backup);
-  if (backup && (!backup.isDirectory() || backup.isSymbolicLink())) {
-    throw new Error(`Refusing an unsafe registry backup: ${override.backup}`);
-  }
-  if (plugin?.isSymbolicLink()) {
-    const target = resolve(override.plugin, "..", readlinkSync(override.plugin));
-    if (target !== override.source) {
-      throw new Error(`Refusing to replace a different plugin symlink: ${override.plugin}`);
+function inspect(override, restored = new Set()) {
+  // Validate BOTH names before mutating either. Backups stay under their own
+  // slug: an old package's directory must never masquerade as gq-design.
+  return override.slots.map((slot) => {
+    const plugin = stat(slot.plugin);
+    const backup = stat(slot.backup);
+    if (backup && (!backup.isDirectory() || backup.isSymbolicLink())) {
+      throw new Error(`Refusing an unsafe registry backup: ${slot.backup}`);
     }
-  } else if (plugin && !plugin.isDirectory()) {
-    throw new Error(`Refusing to replace a non-directory: ${override.plugin}`);
-  } else if (plugin && backup) {
-    throw new Error(
-      "Both the installed Design directory and its backup exist; refusing to overwrite either.",
-    );
-  }
-  return { plugin, backup };
+    if (stat(`${slot.backup}.previous`)) {
+      throw new Error(`A registry backup replacement needs inspection: ${slot.backup}.previous`);
+    }
+    for (const file of [slot.compose, slot.hooks]) {
+      const entry = stat(file);
+      if (entry && (!entry.isFile() || entry.isSymbolicLink())) {
+        throw new Error(`Refusing an unsafe local DDEV file: ${file}`);
+      }
+      if (
+        entry &&
+        !readFileSync(file, "utf8").startsWith(file === slot.compose ? composeHeader : hooksHeader)
+      ) {
+        throw new Error(`Refusing to replace a non-generated local DDEV file: ${file}`);
+      }
+    }
+    if (plugin?.isSymbolicLink()) {
+      const target = resolve(dirname(slot.plugin), readlinkSync(slot.plugin));
+      // Only the exact dangling sibling produced by the checkout rename may
+      // be migrated. A live checkout or unrelated dangling link is not ours.
+      const renamed =
+        slot.slug !== override.slug &&
+        basename(override.source) === override.slug &&
+        target === join(dirname(override.source), slot.slug) &&
+        !stat(target) &&
+        backup;
+      if (target !== override.source && !renamed) {
+        throw new Error(`Refusing to replace a different plugin symlink: ${slot.plugin}`);
+      }
+    } else if (plugin && !plugin.isDirectory()) {
+      throw new Error(`Refusing to replace a non-directory: ${slot.plugin}`);
+    } else if (plugin && backup && !restored.has(slot.slug)) {
+      throw new Error(
+        "Both the installed Design directory and its backup exist; refusing to overwrite either.",
+      );
+    }
+    return { ...slot, installed: plugin, saved: backup };
+  });
 }
 
-function link(override) {
-  const { plugin } = inspect(override);
-  if (!plugin?.isSymbolicLink()) {
-    if (plugin) renameSync(override.plugin, override.backup);
-    mkdirSync(join(override.plugin, ".."), { recursive: true });
+function saveRegistry(slot) {
+  if (!slot.saved) {
+    renameSync(slot.plugin, slot.backup);
+    return;
+  }
+  // Keep the previous release until its replacement is safely in place.
+  // Only a copy restored by THIS locked install can reach this branch.
+  const previous = `${slot.backup}.previous`;
+  renameSync(slot.backup, previous);
+  try {
+    renameSync(slot.plugin, slot.backup);
+  } catch (error) {
+    renameSync(previous, slot.backup);
+    throw error;
+  }
+  rmSync(previous, { recursive: true });
+}
+
+function link(override, restored) {
+  const slots = inspect(override, restored);
+  for (const slot of slots) {
+    if (slot.installed?.isSymbolicLink()) {
+      if (slot.slug !== override.slug) unlinkSync(slot.plugin);
+    } else if (slot.installed) {
+      saveRegistry(slot);
+    }
+  }
+  if (!stat(override.plugin)) {
+    mkdirSync(dirname(override.plugin), { recursive: true });
     symlinkSync(override.source, override.plugin, "dir");
   }
   // Quote paths as YAML strings. Mount the identical absolute path so both
   // Composer on the host and WordPress in DDEV can resolve the same symlink.
   const path = JSON.stringify(override.source);
-  const compose = `# Generated from ignored .local-plugins/config.json; local development only.\nservices:\n  web:\n    volumes:\n      - type: bind\n        source: ${path}\n        target: ${path}\n        read_only: true\n        bind:\n          create_host_path: false\n`;
+  const compose = `${composeHeader}services:\n  web:\n    volumes:\n      - type: bind\n        source: ${path}\n        target: ${path}\n        read_only: true\n        bind:\n          create_host_path: false\n`;
   mkdirSync(join(override.compose, ".."), { recursive: true });
   if (!existsSync(override.compose) || readFileSync(override.compose, "utf8") !== compose) {
     writeFileSync(override.compose, compose);
   }
   // DDEV runs exec-host hooks in apps/cms; the site's own gq is the
   // @getquick/site its root package.json pins.
-  const hooks = `# Generated local-only hooks; not shipped to CI or staging.\nhooks:\n  pre-start:\n    - exec-host: ../../node_modules/.bin/gq cms design\n  post-start:\n    - exec-host: ../../node_modules/.bin/gq cms design refresh\n`;
+  const hooks = `${hooksHeader}hooks:\n  pre-start:\n    - exec-host: ../../node_modules/.bin/gq cms design\n  post-start:\n    - exec-host: ../../node_modules/.bin/gq cms design refresh\n`;
   if (!existsSync(override.hooks) || readFileSync(override.hooks, "utf8") !== hooks) {
     writeFileSync(override.hooks, hooks);
+  }
+  for (const slot of slots.filter((slot) => slot.slug !== override.slug)) {
+    for (const file of [slot.compose, slot.hooks]) {
+      if (stat(file)) unlinkSync(file);
+    }
   }
 }
 
@@ -253,7 +328,9 @@ export async function withDesignRegistryInstall(cmsRoot, action, { env, afterRel
     // A missing/disabled opt-in must not hand an existing symlink to Composer.
     // Normal CI/staging installs are ordinary directories and take this path.
     validateDestinations(cmsRoot);
-    if (stat(join(cmsRoot, "web/app/plugins/getquick-design"))?.isSymbolicLink()) {
+    if (
+      designSlugs.some((slug) => stat(join(cmsRoot, "web/app/plugins", slug))?.isSymbolicLink())
+    ) {
       throw new Error(
         "Refusing Composer dependency changes on a Design symlink without an active local override.",
       );
@@ -261,17 +338,31 @@ export async function withDesignRegistryInstall(cmsRoot, action, { env, afterRel
     return action(null);
   }
   return locked(override, async () => {
-    const { plugin, backup } = inspect(override);
-    if (plugin?.isSymbolicLink()) {
-      unlinkSync(override.plugin);
-      if (backup) renameSync(override.backup, override.plugin);
-    } else if (!plugin && backup) {
-      renameSync(override.backup, override.plugin);
-    }
+    // Capture an ordinary initial install too, before Composer can remove it.
+    link(override);
+    const slots = inspect(override);
+    const restored = new Set();
     try {
+      for (const slot of slots) {
+        if (slot.installed?.isSymbolicLink()) unlinkSync(slot.plugin);
+        if ((!slot.installed || slot.installed.isSymbolicLink()) && slot.saved) {
+          // Composer may remove the OLD package during a rename, or delete a
+          // directory before failing. Keep its backup until a replacement exists.
+          mkdirSync(dirname(slot.plugin), { recursive: true });
+          try {
+            cpSync(slot.backup, slot.plugin, { recursive: true });
+          } catch (error) {
+            // A partial copy is not a restored release: keep the intact backup
+            // and remove only the destination created by this locked attempt.
+            rmSync(slot.plugin, { recursive: true, force: true });
+            throw error;
+          }
+          restored.add(slot.slug);
+        }
+      }
       return await action(override);
     } finally {
-      link(override);
+      link(override, restored);
       await afterRelink(override);
     }
   });

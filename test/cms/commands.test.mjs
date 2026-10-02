@@ -69,11 +69,11 @@ function actions(exec) {
     .filter((line) => line.join(" ") !== "ddev describe -j");
 }
 
-async function withDesignOverride(fixture) {
+async function withDesignOverride(fixture, slug = "getquick-design") {
   const source = fixture.path("design checkout");
   await mkdir(source, { recursive: true });
-  await writeFile(join(source, "getquick-design.php"), "local edits");
-  await mkdir(fixture.path("apps/cms/web/app/plugins/getquick-design"), { recursive: true });
+  await writeFile(join(source, `${slug}.php`), "local edits");
+  await mkdir(fixture.path(`apps/cms/web/app/plugins/${slug}`), { recursive: true });
   await mkdir(fixture.path("apps/cms/.local-plugins"), { recursive: true });
   await writeFile(
     fixture.path("apps/cms/.local-plugins/config.json"),
@@ -120,17 +120,14 @@ test("gq cms start needs DDEV installed", async () => {
   assert.deepEqual(actions(exec), []);
 });
 
-test("DDEV startup links the local Design checkout first, with hooks that run this site's gq", async () => {
+test("DDEV startup links the renamed Design checkout first, with hooks that run this site's gq", async () => {
   const fixture = await site();
-  const source = await withDesignOverride(fixture);
+  const source = await withDesignOverride(fixture, "gq-design");
   const exec = fakeTools();
   const result = await fixture.run(["cms", "start", "--foreground"], { env: { CI: "" }, exec });
   assert.equal(result.code, 0, result.stderr);
-  assert.equal(await readlink(fixture.path("apps/cms/web/app/plugins/getquick-design")), source);
-  const hooks = await readFile(
-    fixture.path("apps/cms/.ddev/config.getquick-design.local.yaml"),
-    "utf8",
-  );
+  assert.equal(await readlink(fixture.path("apps/cms/web/app/plugins/gq-design")), source);
+  const hooks = await readFile(fixture.path("apps/cms/.ddev/config.gq-design.local.yaml"), "utf8");
   assert.match(
     hooks,
     /pre-start:\n {4}- exec-host: \.\.\/\.\.\/node_modules\/\.bin\/gq cms design\n/u,
@@ -237,13 +234,13 @@ test("gq cms rejects an unknown action or a stray background job flag", async ()
 test("gq cms composer update changes dependencies with the host Composer and the registry login", async () => {
   const fixture = await site();
   const exec = fakeTools();
-  const result = await fixture.run(["cms", "composer", "update", "getquick/getquick-design"], {
+  const result = await fixture.run(["cms", "composer", "update", "getquick/gq-design"], {
     env: { CI: "", COMPOSER_AUTH: "{}" },
     exec,
   });
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(actions(exec), [
-    ["composer", "update", "--no-interaction", "getquick/getquick-design"],
+    ["composer", "update", "--no-interaction", "getquick/gq-design"],
   ]);
   assert.equal(exec.calls.at(-1).cwd, fixture.path("apps/cms"));
   assert.equal(exec.calls.at(-1).env.COMPOSER_AUTH, "{}");
@@ -315,9 +312,9 @@ test("gq cms composer gives up without Composer or DDEV, and rejects unknown act
   assert.match(unknown.stderr, /install, update, reinstall, test, lint, lint:fix/u);
 });
 
-test("gq cms design links the checkout, and refresh rebuilds DDEV's autoload under the lock", async () => {
+test("gq cms design links the renamed checkout, and refresh rebuilds DDEV's autoload under the lock", async () => {
   const fixture = await site();
-  const source = await withDesignOverride(fixture);
+  const source = await withDesignOverride(fixture, "gq-design");
   const exec = fakeTools();
   const linked = await fixture.run(["cms", "design"], {
     cwd: fixture.path("apps/cms"),
@@ -326,7 +323,7 @@ test("gq cms design links the checkout, and refresh rebuilds DDEV's autoload und
   });
   assert.equal(linked.code, 0, linked.stderr);
   assert.match(linked.stdout, /Local source linked/u);
-  assert.equal(await readlink(fixture.path("apps/cms/web/app/plugins/getquick-design")), source);
+  assert.equal(await readlink(fixture.path("apps/cms/web/app/plugins/gq-design")), source);
 
   const refreshed = await fixture.run(["cms", "design", "refresh"], {
     cwd: fixture.path("apps/cms"),

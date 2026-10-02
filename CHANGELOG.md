@@ -3,6 +3,23 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## 0.13.3 — 2026-10-02
+
+### Fixed
+
+- Local Design overrides support `gq-design.php` and the `gq-design` plugin
+  slug while preserving legacy checkouts and the `getquickDesign` config key
+  (`gqDesign` is also accepted). The exact dangling link from a sibling
+  checkout rename is migrated under the existing operation lock, with separate
+  registry backups for each package, regenerated DDEV mounts/hooks, and
+  protection for both slugs when no override is active. Composer failures and
+  package rollback retain registry fallback copies and relink before autoload
+  refresh; unsafe or ambiguous local state is refused without overwriting it.
+  An interrupted backup copy is discarded rather than replacing the intact
+  release with a partial copy.
+- New-site scaffolds require `getquick/gq-design ^0.3.1` and parent theme
+  `^0.5.0`, and activate the renamed `gq-design` plugin.
+
 ## 0.13.2 — 2026-10-02
 
 ### Changed
