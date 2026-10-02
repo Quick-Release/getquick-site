@@ -20,9 +20,12 @@ const publicationMigrations = fileURLToPath(
 );
 const durableDelivery = existsSync(publicationMigrations);
 
-// The trusted refresh's credential, from Sigillo staging. Without it the
-// Worker refuses every refresh; what is already stored keeps being served.
+// The trusted refresh's credential and the key the CMS signs its publication
+// events with, from Sigillo staging (CI releases get them from the CI Worker).
+// Without one, the Worker refuses refreshes or events; what is already stored
+// keeps being served.
 const refreshToken = process.env.FRONTEND_REFRESH_TOKEN?.trim();
+const eventSecret = process.env.PUBLICATION_EVENT_SECRET?.trim();
 
 // The Site's last-known-good published content. One database per Site and
 // stage, separate from the Worker, so a redeploy or restart keeps it; Alchemy
@@ -59,6 +62,7 @@ export const Website = Cloudflare.Website.Astro(
         ? {
             PUBLICATION_DB: yield* Publications,
             ...(refreshToken ? { FRONTEND_REFRESH_TOKEN: Redacted.make(refreshToken) } : {}),
+            ...(eventSecret ? { PUBLICATION_EVENT_SECRET: Redacted.make(eventSecret) } : {}),
           }
         : {},
     };

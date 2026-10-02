@@ -242,6 +242,7 @@ gq ploi api <operation-id> [--path name=value] [--query name=value]
 gq ploi provision [--dry-run | --yes]
 gq ploi release [--ref <ref>] [--git-dir <dir>]
 gq ploi media [--dry-run]
+gq ploi events [--dry-run]
 
 gq db sync [--yes]
 gq db backup
@@ -264,6 +265,7 @@ gq cloudflare ci [--dry-run]
 gq media check [--upload | --local] [--json]
 
 gq frontend refresh [--uri <path>]... [--url <frontend origin>] [--json]
+gq frontend events check [--url <frontend origin>] [--json]
 
 gq ci deploy
 gq ci runs
@@ -690,9 +692,10 @@ pnpm frontend:refresh --uri /about-us/       # only these entries
   was refreshed (and, for the whole Site, the homepage is ready).
 - `FRONTEND_REFRESH_TOKEN` is the site's own secret (32 characters or more,
   such as `openssl rand -hex 32`), not a Cloudflare token.
-  `pnpm deploy:frontend` binds it to the Worker; deployed without it, the
-  Frontend refuses every refresh and keeps serving what it holds. Cloudflare
-  CI releases don't pass it yet.
+  `pnpm deploy:frontend` binds it to the Worker, and so do Cloudflare CI
+  releases once `pnpm ci:deploy` has given it to the CI Worker; deployed
+  without it, the Frontend refuses every refresh and keeps serving what it
+  holds.
 - Until a refresh has stored the front page and its chrome, pages are a 503,
   never a placeholder or a 404. A front page WordPress confirms isn't set is
   stored as missing and is a 404.
@@ -709,10 +712,48 @@ pnpm frontend:refresh --uri /about-us/       # only these entries
   `apps/frontend/migrations` exists, so a site-owned Frontend that hasn't
   adopted the files deploys as before.
 
+### Publication events
+
+Publishing or updating a page or post refreshes it on the Frontend without a
+deploy ([ADR 0005](docs/adr/0005-refresh-publications-through-signed-cms-events.md)).
+The CMS skeleton's `web/app/mu-plugins/publication-events.php` sends a signed
+publication event to the Frontend's `/gq/events`; the Frontend reads that
+entry from WordPress anonymously, like any refresh, and promotes it only if it
+is published and complete.
+
+```sh
+pnpm ploi:events              # gq ploi events: the key into the Ploi .env
+pnpm frontend:events:check    # gq frontend events check
+```
+
+- `PUBLICATION_EVENT_SECRET` is the Site's event key (32 characters or more,
+  such as `openssl rand -hex 32`) in Sigillo `staging`: not the refresh token,
+  a deploy token or CORS. `pnpm deploy:frontend` and CI releases bind it to the
+  Worker; `gq ploi events` sets it in the Ploi site's `.env` (leaving every
+  other line, never showing it), and the next CMS release applies it.
+- Events are signed (HMAC-SHA256 of the timestamp and body, valid for five
+  minutes) and name the Site; the Frontend refuses unsigned, stale, tampered,
+  wrong-Site, unsupported and malformed ones without reading the CMS or
+  changing anything. Each event has an id and the time it happened: a
+  duplicate isn't processed twice, and one older than an event already
+  refreshed for the same entry is superseded.
+- Publishing never waits on the Frontend: the event goes out at the end of
+  the request (after the editor's response under PHP-FPM, 15 seconds at most),
+  and the entry records how it went. A failed delivery or refresh keeps the
+  previous version served; `wp gq-events status` lists pending and failed
+  events, `wp gq-events retry <post>` sends one again and `wp gq-events check`
+  proves the CMS's key against the Frontend. Automatic retries come later.
+- `gq frontend events check` sends a signed check event, which changes
+  nothing, to prove the deployed Frontend has this Site's key bound.
+
 `scripts/smoke/frontend-runtime.sh` proves it on a disposable generated site
 without Cloudflare: Alchemy's Astro build, served in workerd (Wrangler's local
 mode) with a local D1 store, against a stub CMS taken down, a Worker restart,
-a rebuilt redeploy, a cold lookup, a new publication and a moved entry.
+a rebuilt redeploy, a cold lookup, a new publication, a moved entry and the
+Worker's event key. `scripts/smoke/cms-events.sh` adds a real WordPress (the
+pinned version, on SQLite, with WP-CLI) running the site's publication-events
+plugin against that Worker: drafts, publications, updates, renames, the
+Frontend down, failed refreshes, another key and a missing one.
 
 ## Programmatic use
 

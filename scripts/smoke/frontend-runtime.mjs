@@ -12,223 +12,52 @@
 //   presets; CMS down → both still served, an uncached entry is a 503 and a
 //   failed refresh keeps them; Worker restart and a rebuilt redeploy → still
 //   served; CMS back → a cold entry is looked up, a made-up one is a 404, a
-//   change, a new publication and a moved entry are refreshed.
+//   change, a new publication and a moved entry are refreshed; the Worker's
+//   event secret accepts this Site's signed events and refuses another key's.
 //
 // Nothing reaches Cloudflare: no account, token or remote resource is used.
 //
 //   node scripts/smoke/frontend-runtime.mjs <generated site directory>
 
-import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  buildFrontend,
+  checker,
+  freePort,
+  localWorker,
+  runGq,
+  stopWorker,
+  stubCms,
+  visit,
+  servedEntry as servedEntryWith,
+} from "./frontend-runtime-lib.mjs";
 
 const site = resolve(process.argv[2] ?? ".");
 const frontend = join(site, "apps/frontend");
-const wrangler = join(site, "infra/ci/node_modules/.bin/wrangler");
-const gq = fileURLToPath(new URL("../../bin/gq.mjs", import.meta.url));
 const work = mkdtempSync(join(tmpdir(), "gq-frontend-runtime-"));
 const token = "runtime-proof-refresh-token-0123456789abcdef";
+const eventKey = "runtime-proof-event-signing-key-0123456789ab";
 
-let failures = 0;
-function check(label, condition, detail = "") {
-  console.log(`${condition ? "✓" : "✗"} ${label}${condition || !detail ? "" : `: ${detail}`}`);
-  if (!condition) failures += 1;
-}
+const results = checker();
+const { check } = results;
 
 // WordPress, answering the Frontend's queries by name.
-const cms = {
-  heading: "Welcome to Acme",
-  menuLabel: "About us",
-  // Published entries by URI.
-  entries: new Map([["/about/", { id: "page-64", title: "About", content: "We make things." }]]),
-  server: null,
-  port: 0,
-  start() {
-    this.server = createServer((request, response) => {
-      let body = "";
-      request.on("data", (chunk) => (body += chunk));
-      request.on("end", () => {
-        const { query, variables } = JSON.parse(body);
-        const name = /query (\w+)/.exec(query)?.[1];
-        const entry = name === "EntryByUri" ? this.entries.get(decodeURI(variables.uri)) : null;
-        const brand = { colors: [{ slug: "brand", color: "#c00" }], spacingSizes: [] };
-        const data = {
-          EntryByUri: {
-            postBy: null,
-            pageBy: entry
-              ? {
-                  id: entry.id,
-                  title: entry.title,
-                  content: `<p class="has-brand-color">${entry.content}</p>`,
-                  uri: decodeURI(variables.uri),
-                  status: "publish",
-                  isRestricted: false,
-                  featuredImage: null,
-                }
-              : null,
-            designTokens: brand,
-          },
-          PublishedRoutes: {
-            contentNodes: {
-              pageInfo: { hasNextPage: false, endCursor: null },
-              nodes: ["/", ...this.entries.keys()].map((uri) => ({ uri })),
-            },
-          },
-          HomePage: {
-            generalSettings: { title: "Acme", description: "Things" },
-            nodeByUri: {
-              __typename: "Page",
-              isFrontPage: true,
-              title: "Home",
-              content: `<h1 class="has-brand-color">${this.heading}</h1>`,
-            },
-            designTokens: { colors: [{ slug: "brand", color: "#c00" }], spacingSizes: [] },
-          },
-          SiteChrome: {
-            generalSettings: {
-              siteIcon: null,
-              siteLogo: { node: { sourceUrl: "https://media.example/logo.svg", altText: "Acme" } },
-            },
-            menuItems: {
-              nodes: [
-                { id: "a", parentId: null, label: this.menuLabel, url: "/about/", target: null },
-              ],
-            },
-          },
-        }[name];
-        response.writeHead(data ? 200 : 400, { "content-type": "application/json" });
-        response.end(JSON.stringify(data ? { data } : { errors: [{ message: "unknown query" }] }));
-      });
-    });
-    return new Promise((done) => this.server.listen(this.port, "127.0.0.1", done)).then(() => {
-      this.port = this.server.address().port;
-    });
-  },
-  stop() {
-    this.server.closeAllConnections();
-    return new Promise((done) => this.server.close(done));
-  },
-};
+const cms = stubCms([["/about/", { id: "page-64", title: "About", content: "We make things." }]]);
 
-async function freePort() {
-  const server = createServer();
-  await new Promise((done) => server.listen(0, "127.0.0.1", done));
-  const { port } = server.address();
-  await new Promise((done) => server.close(done));
-  return port;
-}
+const build = (siteUrl) => buildFrontend(frontend, siteUrl, `http://127.0.0.1:${cms.port}/graphql`);
+const local = localWorker({
+  site,
+  work,
+  vars: { FRONTEND_REFRESH_TOKEN: token, PUBLICATION_EVENT_SECRET: eventKey },
+});
 
-// Alchemy's Astro build, in apps/frontend so its dependencies resolve.
-function build(siteUrl) {
-  const script = `
-    import { buildInChild } from "@alchemy.run/frontend-frameworks/astro/source";
-    import * as Effect from "effect/Effect";
-    import * as NodeServices from "@effect/platform-node/NodeServices";
-    await Effect.runPromise(buildInChild({
-      rootDir: process.cwd(), compatibilityDate: "2026-03-10", compatibilityFlags: ["nodejs_compat"],
-      env: {}, sessionKVBindingName: false, sessions: undefined, sessionDevKV: undefined,
-      prerenderEnvironment: undefined, astro: { output: "server", site: ${JSON.stringify(siteUrl)} },
-      config: undefined,
-    }).pipe(Effect.provide(NodeServices.layer)));
-  `;
-  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
-    cwd: frontend,
-    env: {
-      ...process.env,
-      PUBLIC_WORDPRESS_GRAPHQL_URL: `http://127.0.0.1:${cms.port}/graphql`,
-    },
-    encoding: "utf8",
-  });
-  if (result.status !== 0) throw new Error(`The Alchemy Astro build failed:\n${result.stderr}`);
-}
-
-function writeWranglerConfig() {
-  const config = {
-    name: "acme-fe-runtime-proof",
-    main: join(frontend, "dist/server/entry.mjs"),
-    compatibility_date: "2026-03-10",
-    compatibility_flags: ["nodejs_compat"],
-    no_bundle: true,
-    find_additional_modules: true,
-    rules: [{ type: "ESModule", globs: ["**/*.mjs"] }],
-    assets: { directory: join(frontend, "dist/client"), binding: "ASSETS" },
-    d1_databases: [
-      {
-        binding: "PUBLICATION_DB",
-        database_name: "acme-fe-publications",
-        database_id: "00000000-0000-0000-0000-000000000000",
-        migrations_dir: join(frontend, "migrations"),
-      },
-    ],
-  };
-  const path = join(work, "wrangler.json");
-  writeFileSync(path, JSON.stringify(config, null, 2));
-  return path;
-}
-
-const persist = join(work, "state");
-
-async function startWorker(config, port) {
-  const child = spawn(
-    wrangler,
+// gq frontend refresh, as an operator runs it.
+async function refresh(port, uris = []) {
+  const result = await runGq(
+    site,
     [
-      "dev",
-      "--config",
-      config,
-      "--local",
-      "--ip",
-      "127.0.0.1",
-      "--port",
-      String(port),
-      "--persist-to",
-      persist,
-      "--var",
-      `FRONTEND_REFRESH_TOKEN:${token}`,
-      "--show-interactive-dev-session=false",
-    ],
-    { env: { ...process.env, WRANGLER_SEND_METRICS: "false" }, stdio: ["ignore", "pipe", "pipe"] },
-  );
-  let output = "";
-  child.stdout.on("data", (chunk) => (output += chunk));
-  child.stderr.on("data", (chunk) => (output += chunk));
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    try {
-      await fetch(`http://127.0.0.1:${port}/robots.txt`);
-      return child;
-    } catch {
-      await new Promise((done) => setTimeout(done, 500));
-    }
-  }
-  child.kill();
-  throw new Error(`The Worker didn't start:\n${output}`);
-}
-
-async function stopWorker(child) {
-  if (child.exitCode !== null) return;
-  const exited = new Promise((done) => child.once("exit", done));
-  child.kill("SIGTERM");
-  await exited;
-}
-
-async function visit(port, path = "/") {
-  const response = await fetch(`http://127.0.0.1:${port}${path}`, { redirect: "manual" });
-  return {
-    status: response.status,
-    location: response.headers.get("location"),
-    html: await response.text(),
-  };
-}
-
-// gq frontend refresh, as an operator runs it. Asynchronous: the stub CMS
-// answers the Worker from this process.
-function refresh(port, uris = []) {
-  const child = spawn(
-    process.execPath,
-    [
-      gq,
       "frontend",
       "refresh",
       "--url",
@@ -236,32 +65,13 @@ function refresh(port, uris = []) {
       ...uris.flatMap((uri) => ["--uri", uri]),
       "--json",
     ],
-    { cwd: site, env: { ...process.env, FRONTEND_REFRESH_TOKEN: token } },
+    { FRONTEND_REFRESH_TOKEN: token },
   );
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk) => (stdout += chunk));
-  child.stderr.on("data", (chunk) => (stderr += chunk));
-  return new Promise((done) =>
-    child.on("exit", (code) => {
-      let report;
-      try {
-        report = JSON.parse(stdout);
-      } catch {
-        report = null;
-      }
-      done({ code, report, stderr });
-    }),
-  );
+  return { code: result.code, report: result.json, stderr: result.stderr };
 }
 
 function servedEntry(html, text = "We make things.", menuLabel = cms.menuLabel) {
-  return (
-    html.includes(text) &&
-    new RegExp(`<a href="/about/"[^>]*>${menuLabel}</a>`).test(html) &&
-    html.includes('src="https://media.example/logo.svg"') &&
-    html.includes("--wp--preset--color--brand:#c00")
-  );
+  return servedEntryWith(html, text, menuLabel);
 }
 
 function served(html, heading = cms.heading, menuLabel = cms.menuLabel) {
@@ -279,35 +89,14 @@ try {
   const port = await freePort();
   const siteUrl = `http://127.0.0.1:${port}`;
   build(siteUrl);
-  const config = writeWranglerConfig();
-  // In production Alchemy applies the migrations on deploy; here Wrangler
-  // applies the same files to the local store the Worker is served with.
-  const migrate = spawnSync(
-    wrangler,
-    [
-      "d1",
-      "migrations",
-      "apply",
-      "PUBLICATION_DB",
-      "--local",
-      "--persist-to",
-      persist,
-      "--config",
-      config,
-    ],
-    {
-      env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" },
-      encoding: "utf8",
-      input: "",
-    },
-  );
+  const migrate = local.migrate();
   check(
     "the Frontend's migrations apply to the local D1 store",
     migrate.status === 0,
     migrate.stderr,
   );
 
-  worker = await startWorker(config, port);
+  worker = await local.start(port);
 
   const cold = await visit(port);
   check("a never-refreshed homepage is a 503", cold.status === 503, `HTTP ${cold.status}`);
@@ -379,7 +168,7 @@ try {
   check("and the homepage is still served", served((await visit(port)).html));
 
   await stopWorker(worker);
-  worker = await startWorker(config, port);
+  worker = await local.start(port);
   const restarted = await visit(port);
   check(
     "after a Worker restart, with the CMS still down, it is still served",
@@ -397,7 +186,7 @@ try {
   await cms.start();
   build(siteUrl);
   await cms.stop();
-  worker = await startWorker(config, port);
+  worker = await local.start(port);
   const redeployed = await visit(port);
   check(
     "after a rebuilt redeploy, with the CMS still down, it is still served",
@@ -448,9 +237,32 @@ try {
       servedEntry(newRoute.html, "We make better things.", "Contact"),
     `HTTP ${oldRoute.status} → ${oldRoute.location}, HTTP ${newRoute.status}`,
   );
+
+  // The Worker's event secret is bound at runtime: this Site's signed check
+  // event is accepted, one signed with another key isn't.
+  const accepted = await runGq(
+    site,
+    ["frontend", "events", "check", "--url", `http://127.0.0.1:${port}`, "--json"],
+    { PUBLICATION_EVENT_SECRET: eventKey },
+  );
+  check(
+    "gq frontend events check: the Worker accepts this Site's signed events",
+    accepted.code === 0 && accepted.json?.accepted === true,
+    accepted.stdout + accepted.stderr,
+  );
+  const refused = await runGq(
+    site,
+    ["frontend", "events", "check", "--url", `http://127.0.0.1:${port}`, "--json"],
+    { PUBLICATION_EVENT_SECRET: "another-sites-event-signing-key-0123456789" },
+  );
+  check(
+    "and refuses events signed with another key",
+    refused.code === 1 && refused.json?.status === 401,
+    refused.stdout + refused.stderr,
+  );
 } catch (error) {
   console.error(error.message);
-  failures += 1;
+  results.failures += 1;
 } finally {
   if (worker) await stopWorker(worker);
   if (cms.server?.listening) await cms.stop();
@@ -458,6 +270,8 @@ try {
 }
 
 console.log(
-  failures === 0 ? "Runtime proof passed." : `Runtime proof failed: ${failures} check(s).`,
+  results.failures === 0
+    ? "Runtime proof passed."
+    : `Runtime proof failed: ${results.failures} check(s).`,
 );
-process.exit(failures === 0 ? 0 : 1);
+process.exit(results.failures === 0 ? 0 : 1);

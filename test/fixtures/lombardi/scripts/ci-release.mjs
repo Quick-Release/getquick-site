@@ -19,6 +19,10 @@ const required = [
   "COMPOSER_AUTH",
 ];
 
+// The Frontend's own secrets: its deploy binds them when set and warns when
+// not (a site without a publication store has neither).
+const optional = ["FRONTEND_REFRESH_TOKEN", "PUBLICATION_EVENT_SECRET"];
+
 export function missingEnvironment(environment) {
   return required.filter((name) => !environment[name]);
 }
@@ -84,6 +88,7 @@ function main(arguments_) {
   console.log(`node ${process.version}; ${capture("git", ["--version"])}; cwd ${process.cwd()}`);
   console.log(`ref ${ref} → commit ${capture("git", ["rev-parse", `${ref}^{commit}`])}`);
   for (const name of required) console.log(`${name}: ${process.env[name] ? "set" : "MISSING"}`);
+  for (const name of optional) console.log(`${name}: ${process.env[name] ? "set" : "not set"}`);
   const missing = missingEnvironment(process.env);
   if (missing.length > 0) throw new Error(`Missing environment: ${missing.join(", ")}`);
 

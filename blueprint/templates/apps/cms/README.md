@@ -44,6 +44,23 @@ generated from `gq.ops.json`: it activates `wordpress.plugins`, then runs the
 site's own steps in `deploy/ploi/admin.d` (`10-theme.sh` activates
 `getquick-theme`).
 
+## Publication events
+
+`web/app/mu-plugins/publication-events.php` tells the Frontend when a page or
+post is published or updated, so it refreshes its public copy without a
+deploy. It signs each event with `PUBLICATION_EVENT_SECRET` (in the server's
+`.env`, from `pnpm ploi:events`) and sends it to `GETQUICK_FRONTEND_URL` at
+the end of the request; publishing never waits on it or fails because of it.
+Each entry records its last event and how it went (post meta
+`_gq_publication_event`). Without the key, outside production, nothing is
+sent. On the server:
+
+```sh
+wp gq-events check            # the Frontend accepts this Site's events
+wp gq-events status           # entries whose last event is pending or failed
+wp gq-events retry <post-id>  # send an entry's event again
+```
+
 ## Checks
 
 `pnpm cms:lint` (Pint) and `pnpm cms:test` (Pest) cover this site's own PHP.

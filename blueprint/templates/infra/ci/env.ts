@@ -20,5 +20,9 @@ export type Bindings = CiBindings & {
   GITHUB_REPOSITORY: string;
   ARTIFACTS_NAMESPACE: string;
   ARTIFACTS_REPO: string;
+  // The Frontend's refresh token and publication-event secret, when the site
+  // has a publication store; the release step passes them to its deploy.
+  FRONTEND_REFRESH_TOKEN?: string;
+  PUBLICATION_EVENT_SECRET?: string;
   MIRROR_WORKFLOW: Workflow<MirrorParams>;
 };

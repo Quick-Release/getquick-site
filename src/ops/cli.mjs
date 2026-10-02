@@ -463,7 +463,7 @@ ${CLOUDFLARE_WORKFLOW_USAGE.map((usage) => `  ${usage}`).join("\n")}
 Independent media:
 ${MEDIA_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
-Frontend (durable homepage):
+Frontend (published content):
 ${FRONTEND_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Cloudflare CI:

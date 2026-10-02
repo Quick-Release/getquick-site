@@ -1,7 +1,9 @@
 # ADR 0003: Serve published content from a durable store
 
 - Status: Accepted; amended by [ADR 0004](0004-serve-entries-from-the-store-with-a-cold-lookup.md)
-  (entries, and the cold lookup of an entry the store has never held)
+  (entries, and the cold lookup of an entry the store has never held) and
+  [ADR 0005](0005-refresh-publications-through-signed-cms-events.md) (CMS
+  publication events; CI releases bind the refresh token)
 - Date: 2026-10-02
 
 ## Context

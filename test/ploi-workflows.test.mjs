@@ -1,4 +1,4 @@
-// The Ploi workflows (`gq ploi provision`, `release` and `media`) at the run()
+// The Ploi workflows (`gq ploi provision`, `release`, `media` and `events`) at the run()
 // seam: a fixture site with Lombardi-shaped `ploi`, `releases`, `media` and
 // `domains` blocks, an in-memory Ploi and R2 behind a recording fetch, and a
 // recording exec standing in for git. Nothing here reaches the network.
@@ -520,6 +520,54 @@ test("ploi media --dry-run changes nothing, and needs the bucket's credentials",
   });
   assert.equal(missing.code, 1);
   assert.match(missing.stderr, /S3_UPLOADS_KEY \/ S3_UPLOADS_SECRET are missing/u);
+});
+
+// --- gq ploi events --------------------------------------------------------
+
+const EVENT_KEY = "fixture-event-signing-key-0123456789abcdef";
+
+test("ploi events sets only the CMS's event secret in the Ploi site's .env, never showing it", async () => {
+  const fixture = await site();
+  const { fetch, state } = fakeProviders();
+  const env = { PLOI_API_TOKEN: "ploi-secret", PUBLICATION_EVENT_SECRET: EVENT_KEY };
+
+  const result = await fixture.run(["ploi", "events"], { env, fetch });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(state.env, `${READY_ENV}PUBLICATION_EVENT_SECRET='${EVENT_KEY}'\n`);
+  assert.match(result.stdout, /~ PUBLICATION_EVENT_SECRET/u);
+  assert.ok(!result.stdout.includes(EVENT_KEY));
+
+  const again = await fixture.run(["ploi", "events"], { env, fetch });
+  assert.match(again.stdout, /already has this Site's PUBLICATION_EVENT_SECRET/u);
+  assert.equal(fetch.requests.filter(({ method }) => method === "PATCH").length, 1);
+});
+
+test("ploi events needs an event secret long enough for the Frontend, and --dry-run changes nothing", async () => {
+  const fixture = await site();
+  const { fetch, state } = fakeProviders();
+
+  const missing = await fixture.run(["ploi", "events"], {
+    env: { PLOI_API_TOKEN: "ploi-secret" },
+    fetch,
+  });
+  const short = await fixture.run(["ploi", "events"], {
+    env: { PLOI_API_TOKEN: "ploi-secret", PUBLICATION_EVENT_SECRET: "short" },
+    fetch,
+  });
+  const dryRun = await fixture.run(["ploi", "events", "--dry-run"], {
+    env: { PLOI_API_TOKEN: "ploi-secret", PUBLICATION_EVENT_SECRET: EVENT_KEY },
+    fetch,
+  });
+
+  assert.equal(missing.code, 1);
+  assert.match(missing.stderr, /PUBLICATION_EVENT_SECRET is missing/u);
+  assert.equal(short.code, 1);
+  assert.match(short.stderr, /at least 32 characters/u);
+  assert.ok(!short.stderr.includes("short'"));
+  assert.equal(dryRun.code, 0, dryRun.stderr);
+  assert.match(dryRun.stdout, /Dry run: nothing changed\./u);
+  assert.equal(state.env, READY_ENV);
 });
 
 test("the Ploi workflows reject options they don't take", async () => {

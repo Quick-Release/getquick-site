@@ -1,3 +1,4 @@
+import { runEvents } from "./events.mjs";
 import { runMedia } from "./media.mjs";
 import { runProvision } from "./provision.mjs";
 import { runRelease } from "./release.mjs";
@@ -12,6 +13,7 @@ const PLOI_WORKFLOWS = new Map([
     ["gq ploi release [--ref <ref>] [--git-dir <dir>]", ["ref", "gitDir"], runRelease],
   ],
   ["ploi media", ["gq ploi media [--dry-run]", ["dryRun"], runMedia]],
+  ["ploi events", ["gq ploi events [--dry-run]", ["dryRun"], runEvents]],
 ]);
 
 export const PLOI_WORKFLOW_USAGE = [...PLOI_WORKFLOWS.values()].map(([usage]) => usage);

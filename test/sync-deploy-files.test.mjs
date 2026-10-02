@@ -185,6 +185,8 @@ test("no secret reaches a generated file, and generation calls no provider", asy
     GITHUB_WEBHOOK_SECRET: "secret-webhook",
     COMPOSER_AUTH: '{"http-basic":{"secret-registry":{"password":"secret-password"}}}',
     SIGILLO_TOKEN: "secret-sigillo-token",
+    FRONTEND_REFRESH_TOKEN: "secret-frontend-refresh-token-0123456789",
+    PUBLICATION_EVENT_SECRET: "secret-publication-event-key-0123456789",
   };
   const fixture = await createFixtureSite({ ops: LOMBARDI });
 

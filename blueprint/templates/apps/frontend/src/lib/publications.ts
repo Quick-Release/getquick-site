@@ -1,6 +1,7 @@
 // The publication store: the Site's durable last-known-good public content, in
-// D1 (migrations/), bound to the Worker as PUBLICATION_DB. It knows rows,
-// formats and ordering; what is promoted, and when, is delivery.ts's call.
+// D1 (migrations/), bound to the Worker as PUBLICATION_DB, and the record of
+// the CMS events that refresh it. It knows rows, formats and ordering; what is
+// promoted, and when, is delivery.ts's call, and what an event does events.ts's.
 
 /** The part of D1's API the store uses, so tests can run the same SQL on SQLite. */
 export interface SqlStatement {
@@ -48,6 +49,39 @@ export interface RefreshAttempt {
   message?: string;
 }
 
+/** A CMS event about one WordPress entry, as the Frontend records it. */
+export interface PublicationEvent {
+  /** The event's identity, chosen by the CMS. */
+  id: string;
+  action: string;
+  /** The WordPress entry it is about (WPGraphQL's global id). */
+  nodeId: string;
+  uri: string;
+  previousUri: string | null;
+  /** When it happened in the CMS (ms since the epoch). */
+  occurredAt: number;
+}
+
+/**
+ * Where an event stands: not processed yet (or interrupted), refreshed, failed
+ * (a retry may process it again) or superseded by a newer refreshed event for
+ * the same entry.
+ */
+export type EventStatus = "received" | "refreshed" | "failed" | "superseded";
+
+export interface RecordedEvent extends PublicationEvent {
+  status: EventStatus;
+  attempts: number;
+  receivedAt: number;
+  processedAt: number | null;
+  reason: string | null;
+  message: string | null;
+}
+
+export type EventOutcome =
+  | { status: "refreshed" | "superseded" }
+  | { status: "failed"; reason: string; message: string };
+
 /** The store couldn't be read or written. Says nothing about the content. */
 export class StoreFailure extends Error {}
 
@@ -81,7 +115,55 @@ export interface PublicationStore {
   /** The keys stored under prefix, whatever their state. */
   keys(prefix: string): Promise<string[]>;
   recordAttempt(key: string, attempt: RefreshAttempt): Promise<void>;
+  /**
+   * Records a CMS event unless one with its id already is. Resolves to the
+   * recorded event, the earlier one for a duplicate.
+   */
+  receiveEvent(event: PublicationEvent): Promise<{ recorded: RecordedEvent; duplicate: boolean }>;
+  /**
+   * The id of an event about the same entry that happened after this one and
+   * was refreshed, null if there is none.
+   */
+  newerRefreshedEvent(event: PublicationEvent): Promise<string | null>;
+  /** Counts a processing attempt of the event. */
+  startEvent(id: string): Promise<void>;
+  /**
+   * Records how processing the event ended. A refreshed event supersedes the
+   * older ones about the same entry that weren't refreshed, so a retry skips
+   * them.
+   */
+  finishEvent(event: PublicationEvent, outcome: EventOutcome): Promise<void>;
 }
+
+interface EventRow {
+  id: string;
+  action: string;
+  node_id: string;
+  uri: string;
+  previous_uri: string | null;
+  occurred_at: number;
+  received_at: number;
+  status: EventStatus;
+  attempts: number;
+  processed_at: number | null;
+  reason: string | null;
+  message: string | null;
+}
+
+const eventOf = (row: EventRow): RecordedEvent => ({
+  id: row.id,
+  action: row.action,
+  nodeId: row.node_id,
+  uri: row.uri,
+  previousUri: row.previous_uri,
+  occurredAt: row.occurred_at,
+  receivedAt: row.received_at,
+  status: row.status,
+  attempts: row.attempts,
+  processedAt: row.processed_at,
+  reason: row.reason,
+  message: row.message,
+});
 
 async function guard<T>(action: string, work: () => Promise<T>): Promise<T> {
   try {
@@ -199,6 +281,90 @@ export function publicationStore(db: SqlDatabase): PublicationStore {
                message = excluded.message`,
           )
           .bind(key, Date.now(), attempt.outcome, attempt.reason ?? null, attempt.message ?? null)
+          .run(),
+      );
+    },
+
+    async receiveEvent(event) {
+      const { results } = await guard("record an event", () =>
+        db
+          .prepare(
+            `INSERT INTO publication_events
+               (id, action, node_id, uri, previous_uri, occurred_at, received_at, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'received')
+             ON CONFLICT (id) DO NOTHING
+             RETURNING id`,
+          )
+          .bind(
+            event.id,
+            event.action,
+            event.nodeId,
+            event.uri,
+            event.previousUri,
+            event.occurredAt,
+            Date.now(),
+          )
+          .all<{ id: string }>(),
+      );
+      const row = await guard("read an event", () =>
+        db
+          .prepare("SELECT * FROM publication_events WHERE id = ?")
+          .bind(event.id)
+          .first<EventRow>(),
+      );
+      if (!row) throw new StoreFailure(`The publication store lost the event ${event.id}`);
+      return { recorded: eventOf(row), duplicate: results.length === 0 };
+    },
+
+    async newerRefreshedEvent(event) {
+      const row = await guard("read the events", () =>
+        db
+          .prepare(
+            `SELECT id FROM publication_events
+             WHERE node_id = ?1 AND occurred_at > ?2 AND status = 'refreshed'
+             ORDER BY occurred_at DESC LIMIT 1`,
+          )
+          .bind(event.nodeId, event.occurredAt)
+          .first<{ id: string }>(),
+      );
+      return row?.id ?? null;
+    },
+
+    async startEvent(id) {
+      await guard("record an event", () =>
+        db
+          .prepare("UPDATE publication_events SET attempts = attempts + 1 WHERE id = ?")
+          .bind(id)
+          .run(),
+      );
+    },
+
+    async finishEvent(event, outcome) {
+      const failure = outcome.status === "failed" ? outcome : null;
+      await guard("record an event", () =>
+        db
+          .prepare(
+            `UPDATE publication_events
+             SET status = ?2, processed_at = ?3, reason = ?4, message = ?5
+             WHERE id = ?1`,
+          )
+          .bind(
+            event.id,
+            outcome.status,
+            Date.now(),
+            failure?.reason ?? null,
+            failure?.message ?? null,
+          )
+          .run(),
+      );
+      if (outcome.status !== "refreshed") return;
+      await guard("record an event", () =>
+        db
+          .prepare(
+            `UPDATE publication_events SET status = 'superseded'
+             WHERE node_id = ?1 AND occurred_at < ?2 AND status IN ('received', 'failed')`,
+          )
+          .bind(event.nodeId, event.occurredAt)
           .run(),
       );
     },

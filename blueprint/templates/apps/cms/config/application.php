@@ -177,6 +177,13 @@ if (env('GETQUICK_FRONTEND_URL')) {
     Config::define('GETQUICK_FRONTEND_URL', env('GETQUICK_FRONTEND_URL'));
 }
 
+// The key this CMS signs its publication events to the Frontend with
+// (web/app/mu-plugins/publication-events.php). Without it, publishing doesn't
+// refresh the Frontend; in production each publication records why.
+if (env('PUBLICATION_EVENT_SECRET')) {
+    Config::define('PUBLICATION_EVENT_SECRET', env('PUBLICATION_EVENT_SECRET'));
+}
+
 // Disable the plugin and theme file editor in the admin
 Config::define('DISALLOW_FILE_EDIT', true);
 

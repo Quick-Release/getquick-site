@@ -63,6 +63,16 @@ and the chrome, pages are a 503. `/gq/` is reserved for these endpoints.
 - Only public content is stored: reads are anonymous, and an entry WordPress
   returns password-protected or unpublished is missing.
 
+The CMS refreshes an entry when an editor publishes or updates it: its
+publication event, signed with `PUBLICATION_EVENT_SECRET`, arrives at
+`/gq/events` (`src/pages/gq/events.ts`), and `src/lib/events.ts` checks the
+signature, the Site and the action, records the event in the store
+(`publication_events`) and refreshes the entry's route, and the route it left
+if it moved. A duplicate isn't processed twice, an event older than one
+already refreshed for the same entry is superseded, and one whose refresh
+failed stays recorded as failed while the stored version is still served.
+Each action has its own handler there.
+
 `pnpm dev` has no store: it reads the CMS live, as before.
 
 ## Blocks
@@ -78,10 +88,11 @@ change it here; a shared renderer package is planned.
 `pnpm check` (`astro check`), `pnpm lint` (`vp lint`) and `pnpm test`
 (`vp test`) run from the workspace root, and in `pnpm verify`. `src/routes.test.ts`
 renders the pages through Astro's Container API against a stubbed CMS
-(`vitest.config.ts` gives Vitest Astro's Vite config); `src/homepage.test.ts`
-and `src/entries.test.ts` drive the durable homepage and entries through
-refreshes, outages, restarts, new and moved publications, with the store on
-SQLite (`src/test/sqlite-d1.ts`, the same migrations and SQL).
+(`vitest.config.ts` gives Vitest Astro's Vite config); `src/homepage.test.ts`,
+`src/entries.test.ts` and `src/events.test.ts` drive the durable homepage,
+entries and publication events through refreshes, outages, restarts, new and
+moved publications, refused, duplicate, delayed and failed events, with the
+store on SQLite (`src/test/sqlite-d1.ts`, the same migrations and SQL).
 
 ## Deploys
 

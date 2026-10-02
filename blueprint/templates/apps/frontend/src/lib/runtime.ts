@@ -6,6 +6,8 @@ export interface FrontendBindings {
   PUBLICATION_DB?: SqlDatabase;
   /** The trusted refresh's bearer token (a Worker secret). */
   FRONTEND_REFRESH_TOKEN?: string;
+  /** The key the CMS signs its publication events with (a Worker secret). */
+  PUBLICATION_EVENT_SECRET?: string;
 }
 
 // Imported once, so concurrent requests share one import of the module.
