@@ -646,6 +646,12 @@ their own toolchain pins. See [the migration research](docs/research/vite-plus-t
 `vp check` runs static checks only; `vp run check` also runs the tests.
 `vp run test` uses the existing `node:test` suite, not `vp test` (Vitest).
 
+Keep tests flat in `test/`, named `<module>-<subject>.test.mjs` (for example,
+`workspace-verify.test.mjs` or `sync-ownership.test.mjs`); a module-only name is
+fine for a whole-module suite. Shared helpers live in `test/support/` and baseline
+evidence in `test/fixtures/`. Test discovery selects only `test/*.test.mjs`, not
+the extracted test scripts inside fixtures.
+
 Tests call `run()` against a fixture site (a temporary Git repository with a
 `gq.ops.json`) with recording fakes for `fetch` and `exec`
 ([`test/support/fixture-site.mjs`](test/support/fixture-site.mjs)). They need

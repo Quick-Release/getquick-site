@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseEnv } from "../src/ops/env.mjs";
-import { requestJson } from "../src/ops/providers/http.mjs";
 
 test("parses common dotenv quoting, comments, and escapes", () => {
   assert.deepEqual(
@@ -19,14 +18,5 @@ export EXPORTED=yes
       EMPTY: "",
       EXPORTED: "yes",
     },
-  );
-});
-
-test("non-JSON HTTP errors preserve provider status context", async () => {
-  await assert.rejects(
-    requestJson("https://example.test", {
-      fetchImplementation: async () => new Response("bad gateway", { status: 502 }),
-    }),
-    /HTTP 502/,
   );
 });
