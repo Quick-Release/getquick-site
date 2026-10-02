@@ -3,11 +3,12 @@
 // release step, fully generated from gq.ops.json. Lombardi's manifest renders
 // Lombardi's own files (test/fixtures/lombardi, as of Lombardi b2061a9).
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createFixtureSite } from "./support/fixture-site.mjs";
+import { createFixtureSite, temporaryDirectory } from "./support/fixture-site.mjs";
 import { hash, newSite, readSite, snapshot } from "./support/new-site.mjs";
 
 const DEPLOY_PATHS = [
@@ -195,4 +196,46 @@ test("no secret reaches a generated file, and generation calls no provider", asy
   for (const [path, { content }] of Object.entries(await snapshot(fixture.root))) {
     assert.doesNotMatch(content ?? "", /secret-/u, path);
   }
+});
+
+test("scripts/ci.test.mjs run from a git hook leaves the hook's repository alone", async () => {
+  const fixture = await createFixtureSite({ ops: ACME });
+  assert.equal((await fixture.run(["sync"])).code, 0);
+
+  // A worktree's pre-push hook runs `pnpm verify` with git's repository
+  // variables pointing at the site's own repository.
+  const site = await temporaryDirectory();
+  const git = (...args) =>
+    execFileSync("git", ["-C", site, ...args], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH },
+    });
+  git("init", "-q", "-b", "main");
+  git("-c", "user.name=s", "-c", "user.email=s@s", "commit", "-q", "--allow-empty", "-m", "site");
+  const state = () => ({
+    refs: git("for-each-ref"),
+    config: git("config", "--local", "--list"),
+    head: git("rev-parse", "HEAD"),
+  });
+  const before = state();
+
+  // NODE_TEST_CONTEXT would make the nested runner report to this one.
+  const environment = { ...process.env };
+  delete environment.NODE_TEST_CONTEXT;
+  const result = spawnSync(
+    process.execPath,
+    ["--experimental-strip-types", "--no-warnings", "--test", "scripts/ci.test.mjs"],
+    {
+      cwd: fixture.root,
+      encoding: "utf8",
+      env: {
+        ...environment,
+        GIT_DIR: join(site, ".git"),
+        GIT_INDEX_FILE: join(site, ".git", "index"),
+      },
+    },
+  );
+
+  assert.deepEqual(state(), before);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
 });

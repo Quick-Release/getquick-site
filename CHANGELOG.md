@@ -3,6 +3,20 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## Unreleased
+
+### Fixed
+
+- `scripts/ci.test.mjs` no longer writes into the site's own repository when
+  a Git hook runs it (a worktree's `pre-push` → `pnpm verify`). Git exports
+  `GIT_DIR`, `GIT_INDEX_FILE` and the like to hooks, and the mirror test
+  passed them on to its throwaway repositories: each push set
+  `core.bare = true` on the site's repository and left empty commits and a
+  local `v1.0.0` tag behind. The test now drops every `GIT_*` variable before
+  running `git`. **Existing sites:** after syncing, check for a stray
+  `v1.0.0` tag (`git tag -d v1.0.0`), commits by `t <t@t>`, and
+  `core.bare = true` (`git config --unset core.bare`) left by earlier pushes.
+
 ## 0.13.0 — 2026-10-02
 
 ### Changed

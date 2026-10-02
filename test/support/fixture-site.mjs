@@ -35,7 +35,12 @@ export async function temporaryDirectory() {
 // `ops: null` leaves gq.ops.json out; `files` maps site-relative paths to contents.
 export async function createFixtureSite({ ops = FIXTURE_OPS, files = {} } = {}) {
   const root = await temporaryDirectory();
-  execFileSync("git", ["init", "--quiet", root]);
+  // Without git's GIT_DIR and the like (set when a git hook runs the tests),
+  // which would make this reinitialise the caller's repository instead.
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
+  );
+  execFileSync("git", ["init", "--quiet", root], { env });
   if (ops !== null) await writeSiteFile(root, "gq.ops.json", `${JSON.stringify(ops, null, 2)}\n`);
   for (const [path, content] of Object.entries(files)) await writeSiteFile(root, path, content);
 
