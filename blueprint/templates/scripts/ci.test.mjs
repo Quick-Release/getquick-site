@@ -62,12 +62,17 @@ test("the mirror script converges Artifacts on GitHub's refs", async () => {
   const { mirrorScript } = await import("../infra/ci/github.ts");
 
   const root = mkdtempSync(join(tmpdir(), "mirror-"));
+  // Run from a git hook (pre-push → pnpm verify), git's GIT_DIR, GIT_INDEX_FILE
+  // and the like would point these throwaway repositories at the site's own.
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
+  );
   const git = (...args) =>
     execFileSync("git", args, {
       cwd: root,
       encoding: "utf8",
       env: {
-        ...process.env,
+        ...environment,
         GIT_AUTHOR_NAME: "t",
         GIT_AUTHOR_EMAIL: "t@t",
         GIT_COMMITTER_NAME: "t",
@@ -80,7 +85,7 @@ test("the mirror script converges Artifacts on GitHub's refs", async () => {
   const mirror = (ref) =>
     execFileSync("sh", ["-c", mirrorScript], {
       env: {
-        ...process.env,
+        ...environment,
         REF: ref,
         GITHUB_REMOTE: github,
         GITHUB_AUTH: "unused",
