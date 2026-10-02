@@ -5,6 +5,13 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ## Unreleased
 
+## 0.13.5 — 2026-10-02
+
+### Fixed
+
+- Generated site formatting and lint hooks exclude imported agent skills so
+  commits preserve their exact upstream contents and lockfile hashes.
+
 ### Added
 
 - `gq skills update` installs and updates registered upstream agent skills in
