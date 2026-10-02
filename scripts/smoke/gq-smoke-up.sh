@@ -289,16 +289,63 @@ wait_for_registry() {
   printf '  %s✓%s the registry proxy accepts the %s login\n' "$GREEN" "$RESET" "$1"
 }
 
-# wait_for_release TAG: watches the CI Workflow until the human says the
-# tag's run finished, then checks Ploi deployed exactly the tagged commit.
+# release_tag N: the site's Nth release tag, oldest first, if it exists, so
+# a re-run checks an earlier attempt's release instead of cutting another.
+release_tag() { site git tag --list 'v*' --sort=v:refname | sed -n "${1}p"; }
+
+# origin_has_certificate: the Ploi server itself serves a valid certificate for
+# the CMS host (checked straight at the server, whatever the proxy does).
+origin_has_certificate() {
+  curl -sS -o /dev/null --max-time 15 --resolve "$ADMIN_HOST:443:$SERVER_IP" "https://$ADMIN_HOST/" 2>/dev/null
+}
+
+# ploi_deployed SHA: one of the site's recent Ploi deploy logs ends with the
+# deploy script's success line for SHA. The log listing truncates each log,
+# so every deploy's full log is fetched.
+ploi_deployed() {
+  local id
+  for id in $(site pnpm --silent ploi:log 2>/dev/null | node -e '
+    let text = ""; process.stdin.on("data", (chunk) => (text += chunk)).on("end", () => {
+      const start = text.indexOf("{");
+      if (start < 0) return;
+      for (const log of JSON.parse(text.slice(start)).data ?? []) if (log.type === "deploy") console.log(log.id);
+    });'); do
+    site pnpm --silent ops ploi api sites.get-log-site --path "log=$id" 2>/dev/null |
+      grep -q "GQ_SMOKE_DEPLOY_STATUS=success SHA=$1" && return 0
+  done
+  return 1
+}
+
+# ci_state: "busy" while a CI Workflow run is queued or running, "idle" when
+# the listing shows none, "unknown" when listing failed (keep waiting then).
+ci_state() {
+  local out
+  out=$(site pnpm --silent ci:runs 2>/dev/null) || { echo unknown; return; }
+  if grep -qE "Running|Queued|Waiting|Paused" <<<"$out"; then echo busy
+  elif grep -q "Instance ID" <<<"$out"; then echo idle
+  else echo unknown; fi
+}
+
+# wait_for_release TAG: waits for the push's CI runs to start (GitHub →
+# Artifacts mirror → CI takes a little while) and then to finish, then checks
+# Ploi deployed exactly the tagged commit.
 wait_for_release() {
-  local tag="$1" sha
+  local tag="$1" sha polls=0
   sha=$(site git rev-parse "$tag^{commit}")
   say "The push started CI for $tag ($sha). A tag run checks, then deploys the CMS and the Frontend."
-  note "It takes several minutes. Each refresh lists the CI Workflow runs."
+  note "It takes several minutes (checks, then the Ploi and Frontend deploys); polling every 20 seconds."
+  until [[ "$(ci_state)" == busy ]] || (( polls >= 9 )); do polls=$((polls + 1)); sleep 20; done
+  polls=0
+  while [[ "$(ci_state)" != idle ]]; do
+    polls=$((polls + 1))
+    if (( polls % 90 == 0 )); then
+      warn "CI is still running after $((polls / 3)) minutes."
+      confirm "Keep waiting?" || break
+    fi
+    sleep 20
+  done
   run pnpm --silent ci:runs
-  until confirm "Has the newest run finished (complete or errored)?"; do run pnpm --silent ci:runs; done
-  if site pnpm --silent ploi:log 2>/dev/null | grep -q "GQ_SMOKE_DEPLOY_STATUS=success SHA=$sha"; then
+  if ploi_deployed "$sha"; then
     printf '  %s✓%s Ploi deployed %s (%s)\n' "$GREEN" "$RESET" "$tag" "$sha"
   else
     warn "Ploi's recent deploy logs don't show GQ_SMOKE_DEPLOY_STATUS=success SHA=$sha."
@@ -501,17 +548,22 @@ pause
 
 # ── 10 ────────────────────────────────────────────────────────────────────
 stage "DNS for the CMS host"
-say "Ploi's Let's Encrypt certificate needs $ADMIN_HOST to resolve to the Ploi server."
 server_json=$(site pnpm --silent ops ploi server show --json 2>/dev/null || true)
 SERVER_IP=$(grep -oE '"ip": *"[0-9.]+"' <<<"$server_json" | grep -oE '[0-9.]{7,}' | head -n1 || true)
 [[ -n "$SERVER_IP" ]] || ask SERVER_IP "Couldn't read the server's IP; paste Ploi server $PLOI_SERVER_ID's IPv4:"
-open_url "https://dash.cloudflare.com/$CF_ACCOUNT_ID/$CF_ZONE_NAME/dns/records"
-step "Add record → Type A → Name: $PROJECT-cms → IPv4 address: $SERVER_IP"
-step "Proxy status: off (grey cloud, DNS only), so Let's Encrypt reaches the server → Save."
-until [[ "$(node -e "require('dns').promises.resolve4('$ADMIN_HOST').then(a => console.log(a.join(' ')), () => {})")" == *"$SERVER_IP"* ]]; do
-  warn "$ADMIN_HOST doesn't resolve to $SERVER_IP yet."
-  confirm "Check again?" || { warn "Continuing: ploi provision will skip the certificate until it does."; break; }
-done
+if origin_has_certificate; then
+  say "The server already has a valid certificate for $ADMIN_HOST, so its DNS record is in place."
+else
+  say "ploi provision only requests the Let's Encrypt certificate while $ADMIN_HOST resolves"
+  say "straight to the Ploi server, so the record starts DNS only; stage 11 turns the proxy on."
+  open_url "https://dash.cloudflare.com/$CF_ACCOUNT_ID/$CF_ZONE_NAME/dns/records"
+  step "Add record → Type A → Name: $PROJECT-cms → IPv4 address: $SERVER_IP"
+  step "Proxy status: off for now (grey cloud, DNS only) → Save."
+  until [[ "$(node -e "require('dns').promises.resolve4('$ADMIN_HOST').then(a => console.log(a.join(' ')), () => {})")" == *"$SERVER_IP"* ]]; do
+    warn "$ADMIN_HOST doesn't resolve to $SERVER_IP yet."
+    confirm "Check again?" || { warn "Continuing: ploi provision will skip the certificate until it does."; break; }
+  done
+fi
 pause
 
 # ── 11 ────────────────────────────────────────────────────────────────────
@@ -519,6 +571,24 @@ stage "Ploi site"
 say "Creates the system user, the site $ADMIN_HOST, the database, its .env, the deploy"
 say "script and the certificate on Lombardi's server. It shows the plan and asks first."
 run pnpm ploi:provision
+if origin_has_certificate; then
+  if curl -sSI "https://$ADMIN_HOST/" 2>/dev/null | grep -qi '^server: cloudflare'; then
+    say "$ADMIN_HOST is already behind Cloudflare's proxy."
+  else
+    say "The certificate is issued: put $ADMIN_HOST behind Cloudflare's proxy, as Lombardi's CMS is."
+    open_url "https://dash.cloudflare.com/$CF_ACCOUNT_ID/$CF_ZONE_NAME/dns/records"
+    step "Edit the A record $PROJECT-cms → Proxy status: on (orange cloud) → Save."
+    note "Ploi renews the certificate over HTTP through the proxy; the first renewal is due in about 60 days."
+    until curl -sSI "https://$ADMIN_HOST/" 2>/dev/null | grep -qi '^server: cloudflare'; do
+      warn "$ADMIN_HOST isn't answering through Cloudflare yet (DNS caches can take a few minutes)."
+      confirm "Check again?" || break
+    done
+  fi
+else
+  warn "No valid certificate on the server for $ADMIN_HOST yet: once it resolves to $SERVER_IP,"
+  warn "re-run pnpm ploi:provision (or this wizard) to request it, then turn the proxy on."
+  confirm "Continue without it?" || exit 1
+fi
 pause
 
 # ── 12 ────────────────────────────────────────────────────────────────────
@@ -557,8 +627,13 @@ pause
 stage "First release"
 say "pnpm push minor bumps the version, runs the checks, commits, tags and pushes."
 note "The first CMS deploy installs Bedrock only; WordPress is installed in the next stage."
-run pnpm push minor
-FIRST_TAG=$(site git describe --tags --abbrev=0)
+FIRST_TAG=$(release_tag 1)
+if [[ -n "$FIRST_TAG" ]]; then
+  say "$FIRST_TAG is already released (an earlier attempt); checking its CI run and deploy."
+else
+  run pnpm push minor
+  FIRST_TAG=$(release_tag 1)
+fi
 wait_for_release "$FIRST_TAG"
 pause
 
@@ -575,8 +650,13 @@ pause
 # ── 16 ────────────────────────────────────────────────────────────────────
 stage "Second release and confirm on the hosts"
 say "Now WordPress is installed, this release's deploy activates the theme and plugins (WPGraphQL among them)."
-run pnpm push fix
-SECOND_TAG=$(site git describe --tags --abbrev=0)
+SECOND_TAG=$(release_tag 2)
+if [[ -n "$SECOND_TAG" ]]; then
+  say "$SECOND_TAG is already released (an earlier attempt); checking its CI run and deploy."
+else
+  run pnpm push fix
+  SECOND_TAG=$(release_tag 2)
+fi
 wait_for_release "$SECOND_TAG"
 graphql=$(curl -sS -X POST "https://$ADMIN_HOST/wp/graphql" -H 'Content-Type: application/json' \
   -d '{"query":"{ generalSettings { title } nodeByUri(uri: \"/\") { ... on Page { title } } }"}' || true)
