@@ -23,7 +23,7 @@ const PROJECT_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
 // The plugins the CMS skeleton's composer.json installs, in the order its
 // deploy activates them.
 const CONTENT_PLUGINS = [
-  "getquick-design",
+  "gq-design",
   "gq-support",
   "wp-graphql",
   "wpgraphql-blocks",

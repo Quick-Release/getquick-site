@@ -13,7 +13,7 @@ import { runGq, temporaryDirectory } from "./support/fixture-site.mjs";
 import { newSite, readSite, snapshot } from "./support/new-site.mjs";
 
 const PLUGINS = [
-  "getquick-design",
+  "gq-design",
   "gq-support",
   "wp-graphql",
   "wpgraphql-blocks",
@@ -33,7 +33,9 @@ test("gq new writes a v1 manifest whose plugins are the ones the CMS skeleton in
     const installed = Object.keys(composer.require).some((name) => name.endsWith(`/${plugin}`));
     assert.ok(installed, plugin);
   }
-  assert.equal(composer.require["getquick/getquick-theme"] !== undefined, true);
+  assert.equal(composer.require["getquick/gq-design"], "^0.3.1");
+  assert.equal(composer.require["getquick/getquick-design"], undefined);
+  assert.equal(composer.require["getquick/getquick-theme"], "^0.5.0");
   // The deploy script activates exactly that list.
   assert.match(
     await readSite(site.root, "deploy/ploi/admin.sh"),

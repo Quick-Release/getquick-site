@@ -141,7 +141,7 @@ test("gq new writes a v1 manifest, the managed files and the lock, then runs git
     variant: "content",
     wordpress: {
       plugins: [
-        "getquick-design",
+        "gq-design",
         "gq-support",
         "wp-graphql",
         "wpgraphql-blocks",
