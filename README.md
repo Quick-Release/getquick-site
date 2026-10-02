@@ -669,6 +669,11 @@ Tests call `run()` against a fixture site (a temporary Git repository with a
 ([`test/support/fixture-site.mjs`](test/support/fixture-site.mjs)). They need
 no network, credentials, or provider accounts.
 
+The Frontend skeleton's own tests, including its rendered-route tests, run in
+a generated site: `scripts/smoke/frontend-check.sh` generates a disposable
+content site, installs its Frontend's npm dependencies (the only step that
+uses the network) and runs its tests, `astro check`, lint and format check.
+
 ## Releasing
 
 1. Bump `version` in `package.json`, add its section to `CHANGELOG.md`, and

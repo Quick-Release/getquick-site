@@ -8,7 +8,11 @@ interface Props {
 }
 
 const { title = "{{Project}}", description = "" } = Astro.props;
-const { menuItems, siteIcon, siteLogo } = await getSiteChrome(Astro.site?.origin);
+const chrome = await getSiteChrome(Astro.site?.origin);
+// A failed read leaves the menu, logo and icon out of this response only; it
+// doesn't mean the site has none, so the page itself is still served.
+const { menuItems, siteIcon, siteLogo } =
+  chrome.kind === "found" ? chrome.content : { menuItems: [], siteIcon: null, siteLogo: null };
 const canonical = Astro.site ? new URL(Astro.url.pathname, Astro.site) : Astro.url;
 ---
 

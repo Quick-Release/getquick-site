@@ -1,14 +1,17 @@
 ---
 import Layout from "../layouts/Layout.astro";
-import { formatDate, getEntryByUri } from "../lib/wordpress";
+import { formatDate, getEntryByUri, responseStatus } from "../lib/wordpress";
 import { blockPresetStyles } from "../lib/wp-block-styles";
 
 const uri = Astro.url.pathname.endsWith("/") ? Astro.url.pathname : `${Astro.url.pathname}/`;
-const entry = await getEntryByUri(uri);
+const delivery = await getEntryByUri(uri);
+// Only a confirmed missing entry is a 404; a CMS failure is a 503.
+Astro.response.status = responseStatus(delivery);
+const entry = delivery.kind === "found" ? delivery.content : null;
 const { vars, colorRules } = blockPresetStyles(entry?.spacingSizes ?? [], entry?.colors ?? []);
-if (!entry) Astro.response.status = 404;
 const isPost = Boolean(entry?.date);
-const title = entry?.title || "Page not found";
+const title =
+  entry?.title || (delivery.kind === "unavailable" ? "Temporarily unavailable" : "Page not found");
 ---
 
 <Layout title={title}>
@@ -29,10 +32,16 @@ const title = entry?.title || "Page not found";
         <div class="prose-wp" style={vars} set:html={entry.content}></div>
       </main>
     )
-  ) : (
+  ) : delivery.kind === "missing" ? (
     <main class="empty-state">
       <h1>Nothing here.</h1>
       <p>This page doesn't exist in WordPress yet.</p>
+      <a href="/">Back to the front page</a>
+    </main>
+  ) : (
+    <main class="empty-state">
+      <h1>Temporarily unavailable.</h1>
+      <p>This page can't be loaded right now. Please try again in a few minutes.</p>
       <a href="/">Back to the front page</a>
     </main>
   )}
