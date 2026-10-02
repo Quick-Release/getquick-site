@@ -205,7 +205,7 @@ finish() {
 # re-run: the gq commands are idempotent and the rest checks before acting.
 # Secrets only ever go to Sigillo; the state file holds public values only.
 
-TOTAL_STAGES=16
+TOTAL_STAGES=17
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/gq-smoke"
@@ -738,6 +738,33 @@ if check_hosts "$SMOKE_MARKER" >/dev/null; then
   note "Record it in docs/plans/getquick-blueprint-rollout.md, then tear down: scripts/smoke/gq-smoke-down.sh"
 else
   SKIPPED+=("the host checks for $SECOND_TAG failed; the gate hasn't passed")
+fi
+pause
+
+# ── 17 ────────────────────────────────────────────────────────────────────
+stage "Independent media"
+say "media:check:upload uploads a probe image through the CMS's REST API, proves it lands"
+say "in $PROJECT-media and is served from https://$MEDIA_HOST without the CMS, then deletes it."
+say "It signs in as a dedicated Author user with an application password, kept in Sigillo staging."
+if has_secret staging CMS_CHECK_USER && has_secret staging CMS_CHECK_APP_PASSWORD; then
+  say "CMS_CHECK_USER and CMS_CHECK_APP_PASSWORD are already in Sigillo staging; keeping them."
+else
+  open_url "https://$ADMIN_HOST/wp/wp-admin/user-new.php"
+  step "Username: media-check · Email: any address you own · Role: Author → Add New User."
+  step "Users → media-check → Application Passwords → New name: gq media check → Add, copy it."
+  ask_secret CMS_CHECK_APP_PASSWORD "Paste the application password (hidden):"
+  [[ -n "$CMS_CHECK_APP_PASSWORD" ]] || { warn "No application password; stopping."; exit 1; }
+  printf '%s' media-check | site pnpm --silent exec gq sigillo secrets staging set CMS_CHECK_USER >/dev/null
+  printf '%s' "$CMS_CHECK_APP_PASSWORD" | site pnpm --silent exec gq sigillo secrets staging set CMS_CHECK_APP_PASSWORD >/dev/null
+  CMS_CHECK_APP_PASSWORD=""
+  printf '  %s✓ stored%s CMS_CHECK_USER and CMS_CHECK_APP_PASSWORD in Sigillo (staging)\n' "$GREEN" "$RESET"
+fi
+if site pnpm media:check:upload; then
+  say "Independent media proven on $SECOND_TAG; keep the output above as the evidence."
+  note "For the outage half, upload an image in the CMS, stop the CMS in Ploi, and"
+  note "curl -I its https://$MEDIA_HOST URL: it still answers 200. Then start the CMS again."
+else
+  SKIPPED+=("pnpm media:check:upload reported the media prerequisite not ready")
 fi
 pause
 

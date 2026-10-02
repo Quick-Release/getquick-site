@@ -33,6 +33,12 @@ import {
 } from "../cloudflare/commands.mjs";
 import { CI_USAGE, ciCommandOptions, isCiCommand, runCiCommand } from "../ci/commands.mjs";
 import {
+  isMediaCommand,
+  MEDIA_USAGE,
+  mediaCommandOptions,
+  runMediaCommand,
+} from "../media/commands.mjs";
+import {
   isWorkspaceCommand,
   runWorkspaceCommand,
   WORKSPACE_USAGE,
@@ -153,6 +159,10 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
       io,
       interactive,
     });
+  }
+
+  if (isMediaCommand(parsed.command)) {
+    return runMediaCommand({ context, parsed, fetch, io });
   }
 
   if (provider === "context" && resource === "show") {
@@ -276,7 +286,7 @@ function parseArguments(argv) {
     "--git-dir",
   ]);
   const repeatedValueOptions = new Set(["--path", "--query"]);
-  const booleanOptions = new Set(["--all", "--dry-run", "--yes"]);
+  const booleanOptions = new Set(["--all", "--dry-run", "--yes", "--upload", "--local"]);
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -322,7 +332,8 @@ function validateCommand(parsed) {
           ploiWorkflowOptions(parsed.command) ??
           dbCommandOptions(parsed.command) ??
           cloudflareWorkflowOptions(parsed.command) ??
-          ciCommandOptions(parsed.command),
+          ciCommandOptions(parsed.command) ??
+          mediaCommandOptions(parsed.command),
       };
   if (!allowedOptions) throw new Error(`Unknown command: ${command}. Run gq --help.`);
 
@@ -435,6 +446,9 @@ Cloudflare:
   gq cloudflare zone show [--zone <id>]
   gq cloudflare dns list [--zone <id>] [--name <hostname>] [--type <type>]
 ${CLOUDFLARE_WORKFLOW_USAGE.map((usage) => `  ${usage}`).join("\n")}
+
+Independent media:
+${MEDIA_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Cloudflare CI:
 ${CI_USAGE.map((usage) => `  ${usage}`).join("\n")}

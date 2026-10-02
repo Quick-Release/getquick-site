@@ -261,6 +261,8 @@ gq cloudflare releases [--dry-run]
 gq cloudflare media [--dry-run]
 gq cloudflare ci [--dry-run]
 
+gq media check [--upload | --local] [--json]
+
 gq ci deploy
 gq ci runs
 gq github setup [--dry-run]
@@ -508,10 +510,10 @@ The runners are shared; what they check is the site's.
   `{ "<app path>": ["<file>", …] }`),
   installed dependencies, a leftover Artifacts push URL (with
   `gq.ops.json` `artifacts`), the apps' `.env` files, Sigillo's project and
-  login (with `sigillo`) and the DDEV project named in
-  `apps/cms/.ddev/config.yaml`. A missing tool, required file or
-  `node_modules`, or a Node below the minimum fails it (exit 1); drift from a
-  pin only warns.
+  login (with `sigillo`), local media (`gq media check --local`) and the DDEV
+  project named in `apps/cms/.ddev/config.yaml`. A missing tool, required
+  file or `node_modules`, a Node below the minimum, or R2 credentials in
+  `apps/cms/.env` fails it (exit 1); drift from a pin only warns.
 
 ## Local CMS (DDEV)
 
@@ -614,6 +616,47 @@ these commands deploy and connect it:
   host, and drops the Artifacts push URL older setups added to `origin`. As
   the helper, `get` answers that host only with a read-only git token that
   expires in an hour; nothing is stored.
+
+## Independent media
+
+A content site's WordPress uploads live on R2 (Human Made S3 Uploads), on a
+public custom domain of their own, so a CMS outage doesn't also take down
+the images its published pages reference. `cloudflare media` creates the
+bucket, its domain and its key; `ploi media` points the CMS's `.env` at it;
+the next CMS release activates `s3-uploads`. `gq media check` says whether
+that holds, and what to do when it doesn't (exit 1 when not ready):
+
+```sh
+pnpm media:check          # gq sigillo run staging -- gq media check
+pnpm media:check:upload   # … gq media check --upload
+pnpm media:check:local    # gq media check --local
+```
+
+- The production check, through `gq sigillo run staging`, reads
+  `gq.ops.json` `media`, `cloudflare.accountId`, `domains` and
+  `wordpress.plugins`, the Ploi site's `.env` (`PLOI_API_TOKEN`; values are
+  compared, never shown), the bucket through `S3_UPLOADS_KEY`/`SECRET`, the
+  media domain, and the Frontend's rendered homepage. The media domain must
+  be neither the CMS's host nor the Frontend's, and the homepage must not
+  reference uploads on a CMS (`/app/uploads/`, `/wp-content/uploads/`).
+  Passing these makes the site **configured**, not yet **ready**.
+- `--upload` proves the upload path: signed in as `CMS_CHECK_USER` with the
+  application password `CMS_CHECK_APP_PASSWORD` (a dedicated Author user;
+  both in Sigillo `staging`), it uploads a 1×1 PNG through the CMS's REST
+  media endpoint, requires WordPress to hand out a URL on the media domain,
+  reads the object back from the bucket, fetches it from the media domain
+  without the CMS and compares the bytes, then deletes the attachment (and
+  reports an object it left behind). Only then is the site **ready**.
+- `--local` checks this machine, offline and without secrets: the local CMS
+  keeps uploads on disk unless `apps/cms/.env` holds R2 credentials, which
+  would write to the live bucket. Local readiness says nothing about the
+  production prerequisite. `gq doctor` runs the same check.
+- `--json` prints `{ scope, status, ready, checks: [{ name, status, detail,
+action }] }`; `status` is `ready`, `configured` or `not-ready`.
+
+Neither the checks nor the commands they point to reset the CMS, overwrite
+site-owned files or touch other `.env` lines. Availability of R2 itself is
+outside the guarantee.
 
 ## Programmatic use
 
