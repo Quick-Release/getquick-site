@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GETQUICK — WordPress Frontend architecture review</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "strict" });
+    </script>
+    <style>
+      body {
+        margin: 0;
+        background: #fafaf9;
+        color: #0f172a;
+        font-family: system-ui, sans-serif;
+      }
+      main {
+        max-width: 1100px;
+        margin: auto;
+        padding: 48px 24px;
+      }
+      article {
+        margin: 32px 0;
+        padding: 28px;
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+      }
+      h1,
+      h2,
+      h3 {
+        line-height: 1.15;
+      }
+      h1,
+      h2 {
+        font-family: Georgia, serif;
+      }
+      h1 {
+        font-size: 42px;
+      }
+      h2 {
+        font-size: 28px;
+      }
+      p,
+      li {
+        line-height: 1.6;
+      }
+      code {
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+      .badge {
+        display: inline-block;
+        padding: 5px 10px;
+        border-radius: 30px;
+        font-size: 12px;
+        background: #f1f5f9;
+      }
+      .strong {
+        background: #d1fae5;
+        color: #065f46;
+      }
+      .explore {
+        background: #fef3c7;
+        color: #92400e;
+      }
+      .diagram-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin: 22px 0;
+      }
+      .diagram {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 18px;
+        min-height: 240px;
+        background: #fafaf9;
+      }
+      .diagram h3 {
+        font: 12px system-ui;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        margin-top: 0;
+      }
+      .box {
+        padding: 12px;
+        border: 1px solid #94a3b8;
+        background: white;
+        border-radius: 6px;
+        text-align: center;
+        margin: 10px 0;
+      }
+      .leak {
+        border-color: #dc2626;
+        background: #fff1f2;
+        color: #991b1b;
+      }
+      .deep {
+        border: 4px solid #0f172a;
+        background: linear-gradient(135deg, #0f172a, #1e293b);
+        color: white;
+        padding: 16px;
+        border-radius: 8px;
+      }
+      .deep .box {
+        background: #ffffff12;
+        color: #e2e8f0;
+        border-color: #ffffff35;
+        font-size: 13px;
+      }
+      .arrow {
+        text-align: center;
+        color: #64748b;
+        font-size: 22px;
+      }
+      .seam {
+        border-top: 2px dashed #64748b;
+        margin: 12px 0;
+        padding-top: 10px;
+        text-align: center;
+        font-size: 12px;
+      }
+      .files {
+        padding: 10px;
+        background: #f8fafc;
+        line-height: 1.7;
+      }
+      .wins {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        list-style: none;
+        padding: 0;
+      }
+      .wins li {
+        background: #ecfdf5;
+        padding: 6px 10px;
+        border-radius: 5px;
+        font-size: 13px;
+      }
+      .note {
+        border-left: 4px solid #d97706;
+        background: #fffbeb;
+        padding: 12px;
+        font-size: 13px;
+      }
+      .evidence {
+        font-size: 13px;
+        color: #475569;
+      }
+      .facts {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+      .fact {
+        padding: 16px;
+        background: #f1f5f9;
+        border-radius: 8px;
+      }
+      .mermaid {
+        background: transparent;
+        white-space: pre-wrap;
+      }
+      .top {
+        background: #0f172a;
+        color: #fff;
+        padding: 28px;
+        border-radius: 12px;
+      }
+      .top a {
+        color: #6ee7b7;
+      }
+      a {
+        color: #047857;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 13px;
+      }
+      td,
+      th {
+        text-align: left;
+        border-bottom: 1px solid #e2e8f0;
+        padding: 10px;
+        vertical-align: top;
+      }
+      @media (max-width: 760px) {
+        .diagram-grid,
+        .facts {
+          grid-template-columns: 1fr;
+        }
+        h1 {
+          font-size: 32px;
+        }
+        article {
+          padding: 18px;
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900">
+    <main class="max-w-6xl mx-auto px-6 py-12 space-y-10">
+      <header>
+        <div class="text-xs uppercase tracking-widest text-emerald-700">
+          gq-site · architecture review · 2 October 2026
+        </div>
+        <h1>WordPress-ready Frontends.<br />Less site-by-site repair.</h1>
+        <div class="flex flex-wrap gap-2">
+          <span class="badge">Scope: content variant / Astro app skeleton</span
+          ><span class="badge">Solid box: module</span><span class="badge">Dashed line: seam</span
+          ><span class="badge">Red: lost behaviour</span
+          ><span class="badge">Dark: deep module</span>
+        </div>
+        <nav class="evidence mt-4" aria-label="Portable work artifacts">
+          <a href="../plans/wordpress-published-content/README.md">Resume this work</a> ·
+          <a href="../plans/wordpress-published-content/spec.md">Spec snapshot</a> ·
+          <a href="https://github.com/Quick-Release/gq-site/issues/38">Live spec #38</a>
+        </nav>
+      </header>
+      <section class="facts" aria-label="Review constraints">
+        <div class="fact">
+          <strong>Keep the accepted architecture</strong>
+          <div class="evidence">
+            Bedrock CMS + WPGraphQL → Astro SSR → Cloudflare Workers. This is not a proposal to
+            replace WordPress or the hosting implementation.
+          </div>
+        </div>
+        <div class="fact">
+          <strong>Keep site ownership</strong>
+          <div class="evidence">
+            App skeletons are create-once, then site-owned. Shared runtime fixes belong in versioned
+            packages, not forced overwrites (ADRs 0001 / 0002).
+          </div>
+        </div>
+        <div class="fact">
+          <strong>Choose the support promise</strong>
+          <div class="evidence">
+            The current implementation assumes GETQUICK theme/plugins, not arbitrary WordPress.
+            Archives, search, previews and plugin-specific behaviour need an explicit support
+            decision.
+          </div>
+        </div>
+      </section>
+      <section id="candidates" aria-label="Deepening candidates">
+        <article id="delivery">
+          <h2>1. Make CMS delivery failures explicit</h2>
+          <div>
+            <span class="badge strong">Strong</span>
+            <span class="badge">Remote but owned · HTTP + test adapters</span>
+          </div>
+          <div class="files">
+            <code
+              >blueprint/templates/apps/frontend/src/lib/wordpress.ts:211–303, 340–352<br />blueprint/templates/apps/frontend/src/pages/[...slug].astro:6–11<br />blueprint/templates/apps/frontend/src/pages/index.astro:6–12<br />blueprint/templates/apps/frontend/src/layouts/Layout.astro:11</code
+            >
+          </div>
+          <div class="diagram-grid">
+            <div class="diagram">
+              <h3>Before · missing and broken look alike</h3>
+              <pre class="mermaid">
+flowchart TB
+ C[Published content query] --> X[Catch every failure]
+ E[Timeout or invalid schema] --> X
+ X --> N[null entry]
+ N --> R[Public 404]
+ C --> L[Then request menu and logo]
+ classDef leak fill:#fff1f2,stroke:#dc2626,color:#991b1b;
+ class X,N,R leak;</pre>
+            </div>
+            <div class="diagram">
+              <h3>After · one CMS delivery module</h3>
+              <div class="box">Frontend request</div>
+              <div class="seam">One delivery seam</div>
+              <div class="deep">
+                CMS delivery module
+                <div class="box">
+                  Published content + site identity<br />Required-schema validation<br />Declared
+                  fallbacks + bounded transport
+                </div>
+              </div>
+              <div class="box">
+                Found → render · Missing → 404<br />Unavailable → 503 + diagnostic
+              </div>
+            </div>
+          </div>
+          <p>
+            <strong>Problem:</strong> CMS outages, GraphQL errors and genuinely missing content
+            collapse into the same result; pages and layout separately orchestrate CMS requests.
+          </p>
+          <p>
+            <strong>Solution:</strong> Deepen CMS delivery so transport policy, required
+            capabilities, fallbacks and failure meaning live together, preserving the intentional
+            no-CMS development state without hiding production failures.
+          </p>
+          <ul class="wins">
+            <li>Locality: one failure policy</li>
+            <li>Leverage: content and chrome together</li>
+            <li>Tests distinguish missing from unavailable</li>
+          </ul>
+          <div class="evidence">
+            <strong>Evidence:</strong> <code>getEntryByUri</code> returns <code>null</code> on HTTP
+            503; the route turns it into 404. Homepage access to absent
+            <code>designTokens</code> also discards otherwise valid content. GraphQL errors are
+            always thrown; the block retry only handles HTTP 5xx and only for entries, not home.
+            Existing tests explicitly lock timeout → null, so that contract would need an
+            intentional change.
+          </div>
+          <div class="note">
+            Do not silently treat required GETQUICK schema fields as optional. First decide which
+            capabilities must fail readiness and which may degrade. Start with request-scoped
+            reuse/concurrency; cross-request caching needs freshness requirements and measurements.
+          </div>
+          <div class="evidence mt-3">
+            <strong>Deletion test:</strong> merely extracting <code>fetch</code> adds indirection;
+            concentrating failure and capability decisions removes repeated knowledge from routes,
+            layout and later readiness checks.
+          </div>
+        </article>
+        <article id="blocks">
+          <h2>2. Deepen WordPress block presentation</h2>
+          <div>
+            <span class="badge strong">Strong</span>
+            <span class="badge">In-process · CMS fixtures at the seam</span>
+          </div>
+          <div class="files">
+            <code
+              >blueprint/templates/apps/frontend/src/lib/wp-block-renderer.ts:8, 15–20, 40,
+              162–182<br />blueprint/templates/apps/frontend/src/lib/wordpress.ts:245–253,
+              290–299<br />blueprint/templates/apps/frontend/src/lib/wp-container-layout.ts<br />blueprint/templates/apps/frontend/src/lib/wp-block-styles.ts<br />blueprint/templates/apps/frontend/src/styles/global.css<br />blueprint/templates/apps/frontend/src/pages/{index,[...slug]}.astro</code
+            >
+          </div>
+          <div class="diagram-grid">
+            <div class="diagram">
+              <h3>Before · one hero changes every block</h3>
+              <div class="box">No Video Hero → CMS content HTML</div>
+              <div class="arrow">↕</div>
+              <div class="box leak">Video Hero → rebuild entire block tree</div>
+              <div class="box leak">dynamicContent retained, never rendered</div>
+              <div class="box">
+                Layout rules + CSS + presets + page flags<br />Must stay in agreement across files
+              </div>
+            </div>
+            <div class="diagram">
+              <h3>After · content and styles travel together</h3>
+              <div class="box">CMS content + structured blocks + design data</div>
+              <div class="seam">One presentation seam</div>
+              <div class="deep">
+                WordPress presentation module
+                <div class="box">
+                  Preserve authoritative CMS HTML<br />Only rebuild blocks that need it<br />Own
+                  child semantics, presets and required styles
+                </div>
+              </div>
+              <div class="box">
+                Astro renders supported content<br />Site-owned visual choices remain outside
+              </div>
+            </div>
+          </div>
+          <p>
+            <strong>Problem:</strong> adding a Video Hero changes unrelated block rendering, while
+            required WordPress layout knowledge is spread across HTML reconstruction, CSS, preset
+            generation and page branches.
+          </p>
+          <p>
+            <strong>Solution:</strong> establish one supported block-presentation implementation
+            that preserves server-rendered output, limits custom reconstruction, and keeps required
+            styles with the behaviour they implement.
+          </p>
+          <ul class="wins">
+            <li>Locality: HTML and CSS agree</li>
+            <li>Leverage: same blocks on every page</li>
+            <li>Tests cover mixed block trees</li>
+          </ul>
+          <div class="evidence">
+            <strong>Evidence:</strong> a block with empty <code>htmlContent</code> and complete
+            <code>dynamicContent</code> renders as an empty string. The four-name rendered-children
+            list is a heuristic, not a general reconstruction rule. Presets export only
+            colors/spacing; typography, gradients and global layout settings are outside the current
+            implementation. Existing tests cover Video Hero, URL safety and constrained GETQUICK
+            containers, not full CMS/browser parity.
+          </div>
+          <div class="note">
+            Do not rebuild all Gutenberg blocks in TypeScript or merge the CSS into one giant file.
+            Internal seams can stay. Define a supported block set and test real CMS fixtures,
+            especially mixed dynamic content, containers and hero pages.
+          </div>
+          <div class="evidence mt-3">
+            <strong>Deletion test:</strong> the helpers earn their keep; deleting them moves layout
+            complexity back into callers. Deepen their shared ownership and test surface, not their
+            file count.
+          </div>
+        </article>
+        <article id="site-behaviour">
+          <h2>3. Carry WordPress site behaviour to the Frontend</h2>
+          <div>
+            <span class="badge explore">Worth exploring</span>
+            <span class="badge">Remote but owned + in-process presentation</span>
+          </div>
+          <div class="files">
+            <code
+              >blueprint/templates/apps/frontend/src/layouts/Layout.astro:10–38<br />blueprint/templates/apps/frontend/src/lib/wordpress.ts:90–187,
+              295, 308–345, 359–365<br />blueprint/templates/apps/frontend/src/pages/index.astro<br />blueprint/templates/apps/frontend/src/pages/[...slug].astro<br />blueprint/templates/apps/cms/web/app/mu-plugins/content-api.php:15–27</code
+            >
+          </div>
+          <div class="diagram-grid">
+            <div class="diagram">
+              <h3>Before · editorial decisions stop halfway</h3>
+              <pre class="mermaid">
+flowchart TB
+ W[CMS menu tree] --> T[Frontend builds children]
+ T --> R[Layout renders roots only]
+ S[CMS site title and locale] --> H[Generated name and English defaults]
+ P[Published posts] --> D[Direct post URLs only]
+ A[Saved CMS-origin body link] --> B[CMS public 404]
+ classDef leak fill:#fff1f2,stroke:#dc2626,color:#991b1b;
+ class R,H,B leak;</pre>
+            </div>
+            <div class="diagram">
+              <h3>After · supported editorial choices survive</h3>
+              <div class="deep">
+                WordPress site behaviour module
+                <div class="box">
+                  Site identity and locale<br />Complete navigation tree<br />Published route
+                  classification
+                </div>
+              </div>
+              <div class="seam">Site-owned Astro presentation</div>
+              <div class="box">Correct identity, nested links and public destinations</div>
+              <div class="box">If selected: reading modes + paginated archives</div>
+            </div>
+          </div>
+          <p>
+            <strong>Problem:</strong> the Frontend drops nested menu children, splits site identity,
+            and normalizes CMS-origin menu links but not identical links saved in body content.
+          </p>
+          <p>
+            <strong>Solution:</strong> deepen the existing document/navigation slice and localize
+            public-link policy across navigation and content; separately decide whether the
+            Blueprint also promises reading modes and archives.
+          </p>
+          <ul class="wins">
+            <li>Locality: editorial rules stay together</li>
+            <li>Leverage: identity across every route</li>
+            <li>Tests verify visible child links</li>
+          </ul>
+          <div class="evidence">
+            <strong>Confirmed gaps:</strong> <code>buildMenuTree</code> has children and a test,
+            while <code>Layout.astro</code> renders roots only. Saved absolute CMS-origin body
+            anchors pass through unchanged and can lead anonymous readers to the CMS's intentional
+            404; whether the editor creates those links requires CMS verification. Logo
+            fallback/header/title suffix use the generated name. The menu request caps at 100
+            without pagination. Language and date locale are fixed to English.
+          </div>
+          <div class="note">
+            Archives, search, custom post types, draft previews and SEO-plugin support are scope
+            decisions, not proven regressions. The homepage tests intentionally require a static
+            front page and exclude a recent-post listing. Fix lost menu children and known
+            CMS-origin public anchors first. Exclude media, dashboard and external URLs from
+            rewriting. Locale configuration needs a support decision too; avoid promising “all
+            WordPress features.”
+          </div>
+          <div class="evidence mt-3">
+            <strong>Deletion test:</strong> deleting a pass-through route helper gains nothing;
+            centralizing route/identity knowledge prevents the same editorial decisions being
+            reimplemented in home, entries, navigation and metadata.
+          </div>
+        </article>
+        <article id="runtime">
+          <h2>4. Share the WordPress runtime, not copied fixes</h2>
+          <div>
+            <span class="badge strong">Strong</span>
+            <span class="badge">Versioned module · in-process + HTTP seam</span>
+          </div>
+          <div class="files">
+            <code
+              >blueprint/ownership.json: Frontend createOnce entries<br />blueprint/templates/apps/frontend/src/lib/*.ts<br />blueprint/templates/apps/frontend/src/styles/global.css<br />blueprint/templates/apps/frontend/package.json<br />blueprint/templates/apps/frontend/README.md:
+              Blocks<br />docs/adr/0001-the-getquick-site-blueprint.md<br />docs/adr/0002-generate-sites-from-a-versioned-manifest.md<br />docs/plans/getquick-blueprint-rollout.md:
+              Compatible platform releases</code
+            >
+          </div>
+          <div class="diagram-grid">
+            <div class="diagram">
+              <h3>Before · create once, repair N times</h3>
+              <pre class="mermaid">
+flowchart TB
+ B[Blueprint WordPress implementation] --> A[Site A copy]
+ B --> C[Site B copy]
+ B --> D[Site C copy]
+ F[Renderer fix] --> B
+ F -.manual port.-> A
+ F -.manual port.-> C
+ F -.manual port.-> D</pre>
+              <div class="evidence">gq sync correctly leaves existing apps alone.</div>
+            </div>
+            <div class="diagram">
+              <h3>After · reusable behaviour, owned design</h3>
+              <div class="box">
+                Versioned WordPress runtime package<br />Compatible with GETQUICK CMS packages
+              </div>
+              <div class="arrow">↓ tested dependency upgrades ↓</div>
+              <div class="box">Site A · Site B · Site C</div>
+              <div class="seam">Each site's owned presentation seam</div>
+              <div class="box">Layouts · branding · route extensions<br />Remain site-owned</div>
+            </div>
+          </div>
+          <p>
+            <strong>Problem:</strong> WordPress delivery/rendering fixes in the Blueprint reach new
+            sites only; every existing site keeps its own implementation.
+          </p>
+          <p>
+            <strong>Solution:</strong> after settling the delivery/presentation contracts, move
+            genuinely common behaviour and required styles into versioned shared modules while
+            keeping the App skeleton thin and site-owned.
+          </p>
+          <ul class="wins">
+            <li>Leverage: one fix across sites</li>
+            <li>Locality: compatibility tested together</li>
+            <li>Tests protect dependency upgrades</li>
+          </ul>
+          <div class="note">
+            <strong>ADR alignment, not a conflict:</strong> ADR 0001 and the rollout plan already
+            call for shared renderer/block-contract packages. Reclassifying whole Astro apps as
+            fully generated would contradict ADR 0002; this recommendation explicitly avoids that.
+          </div>
+          <div class="evidence mt-3">
+            <strong>Deletion test:</strong> moving unchanged files to npm is distribution work, not
+            depth by itself. The gain comes when callers no longer need CMS transport, block
+            semantics and required-style knowledge. Extract proven common behaviour; do not package
+            client branding or arbitrary future customizations.
+          </div>
+        </article>
+        <article id="readiness">
+          <h2>5. Prove a new site can render its CMS</h2>
+          <div>
+            <span class="badge strong">Strong</span>
+            <span class="badge">Local-substitutable + remote-owned acceptance</span>
+          </div>
+          <div class="files">
+            <code
+              >test/sync/new.test.mjs<br />package.json: scripts.check / scripts.test<br />vite.config.ts:4–9,
+              14, 21<br />blueprint/templates/apps/frontend/package.json: scripts<br />src/cms/ddev.mjs:
+              startup ready state<br />blueprint/templates/deploy/ploi/admin.sh: installed-site
+              activation<br />blueprint/templates/apps/cms/tests/Feature/ExampleTest.php<br />scripts/smoke/gq-smoke-up.sh:
+              check_hosts and stages 15–16</code
+            >
+          </div>
+          <div class="diagram-grid">
+            <div class="diagram">
+              <h3>Before · several weaker green lights</h3>
+              <div class="box">gq new: generated filenames and strings</div>
+              <div class="box">DDEV ready: process + environment ready</div>
+              <div class="box">Frontend build script: astro check</div>
+              <div class="box">Hosted smoke: CMS title → Frontend title</div>
+              <div class="box leak">No repeated proof of rendered block fidelity</div>
+            </div>
+            <div class="diagram">
+              <h3>After · one acceptance module</h3>
+              <div class="box">Generate disposable site</div>
+              <div class="seam">Rendered-site acceptance seam</div>
+              <div class="deep">
+                New-site acceptance module
+                <div class="box">
+                  Resolve dependencies + runtime build<br />Known CMS responses → Astro routes<br />Content,
+                  styles, navigation, status assertions
+                </div>
+              </div>
+              <div class="box">
+                Separate real-CMS gate<br />Installed plugins/theme + required GraphQL fields
+              </div>
+            </div>
+          </div>
+          <p>
+            <strong>Problem:</strong> Blueprint checks validate generation and CLI behaviour but do
+            not execute the embedded Frontend tests or prove rendered pages match a supported CMS.
+          </p>
+          <p>
+            <strong>Solution:</strong> deepen generated-site acceptance into a reusable scenario
+            module, with fast deterministic route checks plus a separate real-CMS compatibility gate
+            and explicit readiness diagnostics.
+          </p>
+          <ul class="wins">
+            <li>Locality: setup and proof together</li>
+            <li>Leverage: every Blueprint change checked</li>
+            <li>Tests cross real rendering seams</li>
+          </ul>
+          <div class="evidence">
+            <strong>Evidence:</strong> root checks ran 355 Node tests; all passed. The separate 22
+            Frontend library tests also passed in an isolated TypeScript harness. The first direct
+            attempt could not resolve <code>astro/tsconfigs/strict</code>, because the Blueprint
+            repo does not install the generated app's Astro dependency. The CMS example test asserts
+            <code>true</code>; the existing hosted smoke verifies titles, not a published block-rich
+            page. The Frontend's <code>build</code> script runs only <code>astro check</code>;
+            deployment relies on Alchemy for the actual artifact build.
+          </div>
+          <div class="evidence mt-3">
+            <strong>Readiness gap:</strong> local startup reports <code>ready</code> after
+            DDEV/environment wiring, without WordPress installation or manifest-plugin/theme
+            activation. Hosted activation happens only on a deploy after browser installation. An
+            explicit post-install preparation/check path should distinguish runtime startup from a
+            CMS ready for the Frontend; do not run production migration extensions locally.
+          </div>
+          <div class="note">
+            The documented phase-2 smoke deployment passed; this is stronger recurring coverage, not
+            a claim deployment is broken. <code>gq new</code> must remain offline and secret-free.
+            Install/activate/seed only in explicit post-generation or disposable-test steps; never
+            silently reset an existing site's CMS.
+          </div>
+          <div class="evidence mt-3">
+            <strong>Deletion test:</strong> isolated fixture helpers alone are shallow. A module
+            that owns generation, scenario setup, runtime execution and observable assertions
+            concentrates the complexity now scattered across string tests, startup reporting and
+            manual smoke steps.
+          </div>
+        </article>
+      </section>
+      <section aria-label="Evidence and limits">
+        <h2>Verification &amp; limits</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Evidence</th>
+              <th>Result</th>
+              <th>What it establishes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>pnpm check &amp;&amp; pnpm lint &amp;&amp; pnpm format:check</code></td>
+              <td>PASS · 355 repository tests</td>
+              <td>
+                Repository baseline; templates are intentionally excluded from root lint/format.
+              </td>
+            </tr>
+            <tr>
+              <td>Copied Frontend library tests, isolated in OS temp directory</td>
+              <td>PASS · 22 existing tests</td>
+              <td>
+                Library behaviour under the installed Vite+ toolchain, not a generated Astro build
+                or browser test.
+              </td>
+            </tr>
+            <tr>
+              <td>Three temp-only behavioural probes</td>
+              <td>PASS · observed shortcomings reproduced</td>
+              <td>
+                Dynamic HTML dropped; CMS 503 equals missing entry; absent design tokens discard
+                valid homepage data. These assertions describe current behaviour, not fixes.
+              </td>
+            </tr>
+            <tr>
+              <td>Live CMS / private Composer package implementation</td>
+              <td>Not inspected or provisioned</td>
+              <td>
+                Field availability and theme/menu defaults require a real-CMS compatibility test. No
+                claim those packages are currently broken.
+              </td>
+            </tr>
+            <tr>
+              <td>Repository changes</td>
+              <td>None</td>
+              <td>Report and probe artifacts live outside the repository.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+      <section id="top-recommendation" class="top">
+        <div class="text-xs uppercase tracking-widest text-emerald-300">Top recommendation</div>
+        <h2>Start with CMS delivery, protected by rendered-site tests.</h2>
+        <p>
+          Stop turning temporary CMS failures into 404s before extending WordPress support; then
+          deepen block presentation and extract the proven runtime without overwriting site-owned
+          apps.
+        </p>
+        <a href="#delivery">Explore candidate 1 →</a>
+      </section>
+      <section id="selected-direction" class="mt-8">
+        <h2>Selected direction: durable published-content delivery</h2>
+        <table>
+          <tbody>
+            <tr>
+              <th>Normal serving</th>
+              <td>Read cached published content. WordPress publication events refresh it.</td>
+            </tr>
+            <tr>
+              <th>Outage</th>
+              <td>
+                Keep last-known-good content until the CMS recovers; no age limit. Never replace a
+                good copy with failed or empty refresh output.
+              </td>
+            </tr>
+            <tr>
+              <th>Withdrawal</th>
+              <td>
+                Accepted unpublish/delete events stop serving that content immediately. An
+                unreachable CMS plus a lost event cannot reveal a withdrawal.
+              </td>
+            </tr>
+            <tr>
+              <th>Reconciliation</th>
+              <td>
+                Periodic checks target a five-minute missed-event recovery window when the CMS is
+                healthy.
+              </td>
+            </tr>
+            <tr>
+              <th>Refresh coverage</th>
+              <td>Published pages/posts and shared menus, logo, identity and design presets.</td>
+            </tr>
+            <tr>
+              <th>Editor experience</th>
+              <td>Publishing remains available; refresh failures retry and report the delay.</td>
+            </tr>
+            <tr>
+              <th>Media</th>
+              <td>
+                Require independent WordPress upload hosting through the existing R2 media path.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="note mt-4">
+          Feasibility: the inspected Frontend declares no content-storage binding or event receiver.
+          CMS event authentication, retry execution and secret plumbing need additions; private
+          GETQUICK plugin capabilities remain unverified. Production disables WP-Cron, so retries
+          must not assume traffic-driven scheduling. Existing CI signing/delivery patterns offer
+          implementation precedent, not an existing publication mechanism.
+        </div>
+        <p class="evidence">
+          This choice expands the candidate from error handling into an event-refreshed
+          published-content module. Cache/storage design, consistency, compatibility and rollout
+          still need design work. New-site support must preserve offline generation and site-owned
+          apps.
+        </p>
+      </section>
+      <footer class="evidence mt-8">
+        Review and exploration only · No repository implementation changes.
+      </footer>
+    </main>
+  </body>
+</html>
