@@ -1,5 +1,6 @@
 node_modules/
 coverage/
+.vite/
 .env
 *.log
 .DS_Store

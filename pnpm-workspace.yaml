@@ -1,0 +1,12 @@
+# This package is the workspace; blueprint templates and fixtures are not packages.
+packages:
+  - "."
+
+overrides:
+  vite: npm:@voidzero-dev/vite-plus-core@1.0.0
+  vitest: 5.0.1
+
+# The core alias uses the Vite+ release number rather than Vite's upstream version.
+peerDependencyRules:
+  allowedVersions:
+    vite: 1.0.0

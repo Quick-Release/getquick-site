@@ -625,11 +625,26 @@ with its `pid` once it has started.
 
 ## Development
 
+Use Node 24.21.0 (the CI version) and the pnpm version pinned in `package.json`.
+The published CLI still supports Node 22.12.0+; Vite+ 1.0's development tooling
+requires Node `^22.18.0 || ^24.11.0 || >=26.0.0`.
+
 ```sh
-pnpm install
-pnpm check   # Prettier, ESLint, node:test
-pnpm schema  # regenerate schema/gq.ops.schema.json after changing src/manifest/schema.mjs
+pnpm install --frozen-lockfile
+pnpm exec vp run check   # Vite+ formatting/linting, then node:test
+pnpm exec vp run format  # format with Vite+ (Oxfmt)
+pnpm exec vp run lint    # lint with Vite+ (Oxlint)
+pnpm schema             # regenerate schema/gq.ops.schema.json after changing src/manifest/schema.mjs
 ```
+
+The existing `pnpm check`, `pnpm format`, `pnpm format:check`, `pnpm lint`
+and `pnpm test` scripts remain available. Formatting and linting are configured
+in `vite.config.ts`; generated schema, upstream skills, and extracted blueprint
+and Lombardi fixtures are excluded from formatting. The extracted templates keep
+their own toolchain pins. See [the migration research](docs/research/vite-plus-tooling-migration.md).
+
+`vp check` runs static checks only; `vp run check` also runs the tests.
+`vp run test` uses the existing `node:test` suite, not `vp test` (Vitest).
 
 Tests call `run()` against a fixture site (a temporary Git repository with a
 `gq.ops.json`) with recording fakes for `fetch` and `exec`
