@@ -65,6 +65,20 @@ Ploi.
 A site's public website, rendered from the CMS's content and deployed to
 Cloudflare Workers.
 
+### Published content
+
+**Missing content**:
+Content the CMS confirms isn't published: it answered, with valid data, and
+has nothing at that URI. The Frontend answers 404.
+_Avoid_: not found (for a CMS failure)
+
+**Unavailable content**:
+Content the Frontend couldn't read: the CMS timed out, couldn't be reached,
+answered with an HTTP or GraphQL error, or answered without the fields the
+Frontend requires. It says nothing about whether the content exists; the
+Frontend answers 503, never 404.
+_Avoid_: missing content, empty (for a failed read)
+
 ### Hosting
 
 **Staging domain**:

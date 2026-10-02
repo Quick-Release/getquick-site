@@ -282,6 +282,11 @@
       "app": "apps/frontend"
     },
     {
+      "path": "apps/frontend/src/routes.test.ts",
+      "template": "templates/apps/frontend/src/routes.test.ts",
+      "app": "apps/frontend"
+    },
+    {
       "path": "apps/frontend/src/styles/global.css",
       "template": "templates/apps/frontend/src/styles/global.css",
       "app": "apps/frontend"
@@ -294,6 +299,11 @@
     {
       "path": "apps/frontend/vite.config.ts",
       "template": "templates/apps/frontend/vite.config.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/vitest.config.ts",
+      "template": "templates/apps/frontend/vitest.config.ts",
       "app": "apps/frontend"
     },
     {

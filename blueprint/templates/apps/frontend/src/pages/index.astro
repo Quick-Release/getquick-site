@@ -1,28 +1,39 @@
 ---
 import Layout from "../layouts/Layout.astro";
-import { getHomeContent } from "../lib/wordpress";
+import { getHomeContent, responseStatus } from "../lib/wordpress";
 import { blockPresetStyles } from "../lib/wp-block-styles";
 
-const { connected, settings, page, spacingSizes, colors } = await getHomeContent();
-const { vars, colorRules } = blockPresetStyles(spacingSizes, colors);
-const siteTitle = page?.title || settings?.title || "{{Project}}";
-const isVideoHeroPage = page?.hasVideoHero ?? false;
+const home = await getHomeContent();
+// Local development without a CMS keeps a friendly placeholder. Anywhere else
+// a front page WordPress couldn't deliver is a 503, not a page that looks served.
+const placeholder = home.kind === "unavailable" && import.meta.env.DEV;
+Astro.response.status = placeholder ? 200 : responseStatus(home);
+const content = home.kind === "found" ? home.content : null;
+const { vars, colorRules } = blockPresetStyles(content?.spacingSizes ?? [], content?.colors ?? []);
+const siteTitle = content?.page.title || content?.settings.title || "{{Project}}";
+const isVideoHeroPage = content?.page.hasVideoHero ?? false;
 ---
 
-<Layout title={siteTitle} description={settings?.description}>
-  {page?.content ? (
+<Layout title={siteTitle} description={content?.settings.description}>
+  {content?.page.content ? (
     <>
       <style is:global set:html={colorRules} />
-      <main class={isVideoHeroPage ? "prose-wp prose-wp--video-hero" : "prose-wp"} style={vars} set:html={page.content}></main>
+      <main class={isVideoHeroPage ? "prose-wp prose-wp--video-hero" : "prose-wp"} style={vars} set:html={content.page.content}></main>
     </>
+  ) : home.kind !== "unavailable" ? (
+    <main class="empty-state">
+      <h1>The front page is almost ready.</h1>
+      <p>Set a page as the front page in WordPress (Settings → Reading) and publish its blocks to show them here.</p>
+    </main>
+  ) : placeholder ? (
+    <main class="empty-state">
+      <h1>Content is on its way.</h1>
+      <p>The front page appears here once the CMS is reachable.</p>
+    </main>
   ) : (
     <main class="empty-state">
-      <h1>{connected ? "The front page is almost ready." : "Content is on its way."}</h1>
-      <p>
-        {connected
-          ? "Set a page as the front page in WordPress (Settings → Reading) and publish its blocks to show them here."
-          : "The front page appears here once the CMS is reachable."}
-      </p>
+      <h1>Temporarily unavailable.</h1>
+      <p>The front page can't be loaded right now. Please try again in a few minutes.</p>
     </main>
   )}
 </Layout>

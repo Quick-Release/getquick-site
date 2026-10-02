@@ -14,6 +14,7 @@
     "src/**/*",
     "astro.config.mjs",
     "alchemy.run.ts",
-    "vite.config.ts"
+    "vite.config.ts",
+    "vitest.config.ts"
   ]
 }

@@ -1,4 +1,4 @@
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { getEntryByUri, getHomeContent, getSiteChrome } from "./wordpress";
 
 test("home content comes from the page marked as the WordPress front page", async () => {
@@ -33,14 +33,17 @@ test("home content comes from the page marked as the WordPress front page", asyn
   vi.stubGlobal("fetch", fetchMock);
 
   expect(await getHomeContent()).toMatchObject({
-    connected: true,
-    settings: { title: "Acme", description: "Description" },
-    page: {
-      title: "Home",
-      content: '<div class="wp-block-group"><h1>Welcome</h1></div>',
+    kind: "found",
+    content: {
+      settings: { title: "Acme", description: "Description" },
+      page: {
+        title: "Home",
+        content: '<div class="wp-block-group"><h1>Welcome</h1></div>',
+      },
+      blocksOmitted: false,
+      spacingSizes: [{ slug: "md", size: "2rem" }],
+      colors: [{ slug: "accent", color: "#e7472e" }],
     },
-    spacingSizes: [{ slug: "md", size: "2rem" }],
-    colors: [{ slug: "accent", color: "#e7472e" }],
   });
   expect(fetchMock).toHaveBeenCalledOnce();
 });
@@ -85,20 +88,21 @@ test("renders a homepage Video Hero from its structured GraphQL attributes", asy
   vi.stubGlobal("fetch", fetchMock);
 
   const result = await getHomeContent();
+  if (result.kind !== "found") throw new Error(`expected the front page, got ${result.kind}`);
 
-  expect(result.page?.hasVideoHero).toBe(true);
-  expect(result.page?.content).toContain("youtube-nocookie.com/embed/abcdefghijk");
-  expect(result.page?.content).toContain("playlist=abcdefghijk");
-  expect(result.page?.content).toContain("<h1>Welcome</h1>");
-  expect(result.page?.content).not.toContain("Saved block HTML");
+  expect(result.content.page.hasVideoHero).toBe(true);
+  expect(result.content.page.content).toContain("youtube-nocookie.com/embed/abcdefghijk");
+  expect(result.content.page.content).toContain("playlist=abcdefghijk");
+  expect(result.content.page.content).toContain("<h1>Welcome</h1>");
+  expect(result.content.page.content).not.toContain("Saved block HTML");
 });
 
-test("does not use a page unless WordPress marks it as the front page", async () => {
+test("the front page is missing unless WordPress marks a page as the front page", async () => {
   const fetchMock = vi.fn(async () => ({
     ok: true,
     json: async () => ({
       data: {
-        generalSettings: null,
+        generalSettings: { title: "Acme", description: "" },
         nodeByUri: {
           __typename: "Page",
           isFrontPage: false,
@@ -111,10 +115,17 @@ test("does not use a page unless WordPress marks it as the front page", async ()
   }));
   vi.stubGlobal("fetch", fetchMock);
 
-  expect(await getHomeContent()).toMatchObject({ connected: true, page: null });
+  expect(await getHomeContent()).toEqual({ kind: "missing" });
 });
 
-afterEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 test("page content includes the CMS spacing presets, including numeric and overridden slugs", async () => {
   const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
@@ -153,14 +164,18 @@ test("page content includes the CMS spacing presets, including numeric and overr
   vi.stubGlobal("fetch", fetchMock);
 
   expect(await getEntryByUri("/sample-page/")).toMatchObject({
-    title: "Sample Page",
-    date: "",
-    excerpt: "",
-    spacingSizes: [
-      { slug: "20", size: "0.44rem" },
-      { slug: "md", size: "2rem" },
-    ],
-    colors: [{ slug: "accent", color: "#2563eb" }],
+    kind: "found",
+    content: {
+      title: "Sample Page",
+      date: "",
+      excerpt: "",
+      blocksOmitted: false,
+      spacingSizes: [
+        { slug: "20", size: "0.44rem" },
+        { slug: "md", size: "2rem" },
+      ],
+      colors: [{ slug: "accent", color: "#2563eb" }],
+    },
   });
   expect(fetchMock).toHaveBeenCalledOnce();
 });
@@ -193,21 +208,102 @@ test("an entry whose blocks WordPress fails to return still loads, without them"
   vi.stubGlobal("fetch", fetchMock);
 
   expect(await getEntryByUri("/about/")).toMatchObject({
-    title: "About",
-    content: "<p>Content</p>",
-    hasVideoHero: false,
+    kind: "found",
+    content: {
+      title: "About",
+      content: "<p>Content</p>",
+      hasVideoHero: false,
+      blocksOmitted: true,
+    },
   });
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
-test("an entry request that times out is not retried", async () => {
+test("an entry request that times out is unavailable, and isn't retried", async () => {
   const fetchMock = vi.fn(async () => {
     throw new DOMException("The operation timed out.", "TimeoutError");
   });
   vi.stubGlobal("fetch", fetchMock);
 
-  expect(await getEntryByUri("/about/")).toBeNull();
+  expect(await getEntryByUri("/about/")).toMatchObject({
+    kind: "unavailable",
+    failure: { reason: "timeout" },
+  });
   expect(fetchMock).toHaveBeenCalledOnce();
+});
+
+test("HTTP errors, GraphQL errors, missing required fields and absent content stay distinct", async () => {
+  const answers: Record<string, unknown> = {
+    "/http/": { ok: false, status: 404 },
+    "/graphql/": { ok: true, json: async () => ({ errors: [{ message: "Syntax Error" }] }) },
+    "/schema/": {
+      ok: true,
+      json: async () => ({ data: { postBy: null, pageBy: { id: "1" }, designTokens: null } }),
+    },
+    "/absent/": {
+      ok: true,
+      json: async () => ({
+        data: { postBy: null, pageBy: null, designTokens: { colors: [], spacingSizes: [] } },
+      }),
+    },
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init: RequestInit) => {
+      const { variables } = JSON.parse(init.body as string) as { variables: { uri: string } };
+      return answers[variables.uri];
+    }),
+  );
+
+  expect(await getEntryByUri("/http/")).toEqual({
+    kind: "unavailable",
+    failure: { reason: "http", httpStatus: 404, message: "WordPress responded with HTTP 404" },
+  });
+  expect(await getEntryByUri("/graphql/")).toEqual({
+    kind: "unavailable",
+    failure: { reason: "graphql", message: "Syntax Error" },
+  });
+  const schema = await getEntryByUri("/schema/");
+  expect(schema).toMatchObject({ kind: "unavailable", failure: { reason: "schema" } });
+  if (schema.kind === "unavailable") {
+    expect(schema.failure.message).toContain("pageBy.title");
+    expect(schema.failure.message).toContain("designTokens");
+  }
+  expect(await getEntryByUri("/absent/")).toEqual({ kind: "missing" });
+});
+
+test("the front page's blocks are recovered like an entry's, and a failed recovery stays unavailable", async () => {
+  const frontPage = {
+    data: {
+      generalSettings: { title: "Acme", description: "" },
+      nodeByUri: { __typename: "Page", isFrontPage: true, title: "Home", content: "<p>Hi</p>" },
+      designTokens: { colors: [], spacingSizes: [] },
+    },
+  };
+  let retry: () => unknown = () => ({ ok: true, json: async () => frontPage });
+  const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+    const request = JSON.parse(init.body as string) as {
+      query: string;
+      variables?: { withBlocks?: boolean };
+    };
+    expect(request.query).toContain("query HomePage($withBlocks: Boolean = true)");
+    return request.variables?.withBlocks === false ? retry() : { ok: false, status: 502 };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  expect(await getHomeContent()).toMatchObject({
+    kind: "found",
+    content: { page: { content: "<p>Hi</p>" }, blocksOmitted: true },
+  });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+
+  retry = () => {
+    throw new DOMException("The operation timed out.", "TimeoutError");
+  };
+  expect(await getHomeContent()).toMatchObject({
+    kind: "unavailable",
+    failure: { reason: "timeout", message: expect.stringContaining("HTTP 502; without blocks") },
+  });
 });
 
 test("site chrome includes the WordPress favicon, logo and primary menu", async () => {
@@ -265,33 +361,55 @@ test("site chrome includes the WordPress favicon, logo and primary menu", async 
   vi.stubGlobal("fetch", fetchMock);
 
   expect(await getSiteChrome("https://{{project}}.example")).toEqual({
-    siteIcon: { sourceUrl: "https://media.example/favicon.png", altText: "" },
-    siteLogo: { sourceUrl: "https://media.example/logo.svg", altText: "Acme" },
-    menuItems: [
-      {
-        id: "a",
-        label: "Projetos",
-        href: "/work/",
-        target: null,
-        children: [
-          { id: "b", label: "Casa", href: "/work/house/?x=1#top", target: null, children: [] },
-        ],
-      },
-      {
-        id: "c",
-        label: "Instagram",
-        href: "https://instagram.com/{{project}}",
-        target: "_blank",
-        children: [],
-      },
-    ],
+    kind: "found",
+    content: {
+      siteIcon: { sourceUrl: "https://media.example/favicon.png", altText: "" },
+      siteLogo: { sourceUrl: "https://media.example/logo.svg", altText: "Acme" },
+      menuItems: [
+        {
+          id: "a",
+          label: "Projetos",
+          href: "/work/",
+          target: null,
+          children: [
+            { id: "b", label: "Casa", href: "/work/house/?x=1#top", target: null, children: [] },
+          ],
+        },
+        {
+          id: "c",
+          label: "Instagram",
+          href: "https://instagram.com/{{project}}",
+          target: "_blank",
+          children: [],
+        },
+      ],
+    },
   });
 });
 
-test("site chrome falls back to the default favicon, no logo and an empty menu when WordPress is unavailable", async () => {
+test("a site chrome read that fails is unavailable, not an empty menu", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => ({ ok: false, status: 503 })),
   );
-  expect(await getSiteChrome()).toEqual({ menuItems: [], siteIcon: null, siteLogo: null });
+  expect(await getSiteChrome()).toMatchObject({
+    kind: "unavailable",
+    failure: { reason: "http", httpStatus: 503 },
+  });
+});
+
+test("a site chrome answer without its menu is invalid schema, not an empty menu", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        data: { generalSettings: { siteIcon: null, siteLogo: null }, menuItems: null },
+      }),
+    })),
+  );
+  expect(await getSiteChrome()).toMatchObject({
+    kind: "unavailable",
+    failure: { reason: "schema" },
+  });
 });

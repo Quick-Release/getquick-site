@@ -3,6 +3,37 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## Unreleased
+
+### Fixed
+
+- New content sites' Frontends no longer present a CMS failure as a missing
+  page. `src/lib/wordpress.ts` returns `found`, `missing` (WordPress confirms
+  nothing is published there) or `unavailable` with the reason (`timeout`,
+  `network`, `http`, `graphql` or `schema`), and logs each unavailable read.
+  A missing entry is a 404; a timeout, HTTP or GraphQL error (even next to
+  partial data) or an answer without the required GETQUICK fields is a 503.
+  Outside `astro dev`, an unreadable front page is a 503 instead of the
+  "Content is on its way" placeholder, which local development without a CMS
+  keeps; a site with no front page set is a 404 that still says how to set
+  one. A failed menu/logo/icon read is `unavailable` rather than an empty menu,
+  and the page is still served without them.
+- The front page retries without blocks after a CMS 5xx, like entries do; a
+  timeout isn't retried, and a failed retry is unavailable, never missing.
+
+### Added
+
+- New Frontends test their routes: `src/routes.test.ts` renders the home and
+  entry pages through Astro's Container API (`vitest.config.ts`) against a
+  stubbed CMS and checks their content and HTTP status.
+  `scripts/smoke/frontend-check.sh` runs a disposable generated site's
+  Frontend tests, `astro check`, lint and format check.
+- **Existing sites:** the Frontend is site-owned, so syncing doesn't change
+  it. To adopt, copy `src/lib/wordpress.ts`, its test, `src/routes.test.ts`,
+  the two pages, `src/layouts/Layout.astro` and `vitest.config.ts` from a
+  newly generated site (and add `vitest.config.ts` to `tsconfig.json`),
+  keeping the site's own changes.
+
 ## 0.13.3 — 2026-10-02
 
 ### Fixed
