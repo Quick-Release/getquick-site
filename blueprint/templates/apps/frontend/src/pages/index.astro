@@ -1,20 +1,25 @@
 ---
 import Layout from "../layouts/Layout.astro";
-import { getHomeContent, responseStatus } from "../lib/wordpress";
+import { publishedHome } from "../lib/delivery";
+import { responseStatus } from "../lib/wordpress";
 import { blockPresetStyles } from "../lib/wp-block-styles";
 
-const home = await getHomeContent();
+// Served from the publication store, last-known-good and without an age
+// limit; a visit never reads the CMS. A Site that hasn't been refreshed yet,
+// or whose store can't be read, is a 503.
+const home = await publishedHome(Astro.site?.origin);
 // Local development without a CMS keeps a friendly placeholder. Anywhere else
-// a front page WordPress couldn't deliver is a 503, not a page that looks served.
+// a front page that can't be served is a 503, not a page that looks served.
 const placeholder = home.kind === "unavailable" && import.meta.env.DEV;
 Astro.response.status = placeholder ? 200 : responseStatus(home);
-const content = home.kind === "found" ? home.content : null;
+const content = home.kind === "found" ? home.content.home : null;
+const chrome = home.kind === "found" ? home.content.chrome : home.kind === "missing" ? home.chrome : null;
 const { vars, colorRules } = blockPresetStyles(content?.spacingSizes ?? [], content?.colors ?? []);
 const siteTitle = content?.page.title || content?.settings.title || "{{Project}}";
 const isVideoHeroPage = content?.page.hasVideoHero ?? false;
 ---
 
-<Layout title={siteTitle} description={content?.settings.description}>
+<Layout title={siteTitle} description={content?.settings.description} chrome={chrome}>
   {content?.page.content ? (
     <>
       <style is:global set:html={colorRules} />

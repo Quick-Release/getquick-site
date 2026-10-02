@@ -86,7 +86,7 @@ export interface Unavailable {
 export type Delivery<T> = Found<T> | Missing | Unavailable;
 
 /** Found is 200, confirmed missing is 404, and a CMS failure is 503, never 404. */
-export function responseStatus(delivery: Delivery<unknown>) {
+export function responseStatus(delivery: { kind: Delivery<unknown>["kind"] }) {
   if (delivery.kind === "found") return 200;
   return delivery.kind === "missing" ? 404 : 503;
 }

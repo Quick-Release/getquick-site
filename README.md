@@ -263,6 +263,8 @@ gq cloudflare ci [--dry-run]
 
 gq media check [--upload | --local] [--json]
 
+gq frontend refresh [--url <frontend origin>] [--json]
+
 gq ci deploy
 gq ci runs
 gq github setup [--dry-run]
@@ -658,6 +660,46 @@ Neither the checks nor the commands they point to reset the CMS, overwrite
 site-owned files or touch other `.env` lines. Availability of R2 itself is
 outside the guarantee.
 
+## Durable homepage
+
+A new content site's Frontend serves its homepage, with the menu, logo, site
+identity and design presets it needs, from its publication store: a D1
+database of its own, declared in `infra/frontend.run.ts` and bound to the
+Worker as `PUBLICATION_DB`
+([ADR 0003](docs/adr/0003-serve-published-content-from-a-durable-store.md)).
+Visitors never make the Frontend read the CMS, so the homepage stays up
+through a CMS outage of any length and through Worker restarts and redeploys.
+A refresh fills and updates the store:
+
+```sh
+pnpm frontend:refresh     # gq sigillo run staging -- gq frontend refresh
+```
+
+- `gq frontend refresh` posts to `https://<domains.frontend>/gq/refresh`
+  (or `--url <origin>`; plain HTTP only to localhost) with
+  `FRONTEND_REFRESH_TOKEN` from Sigillo `staging` as a bearer token. The
+  Frontend reads the front page and the chrome from the CMS, anonymously, and
+  promotes each complete, valid read; a failed one (timeout, network, HTTP,
+  GraphQL, missing required data, or a front page without its blocks) keeps
+  what was stored, and the report says why. It exits 1 unless everything was
+  refreshed and the homepage is ready.
+- `FRONTEND_REFRESH_TOKEN` is the site's own secret (32 characters or more,
+  such as `openssl rand -hex 32`), not a Cloudflare token.
+  `pnpm deploy:frontend` binds it to the Worker; deployed without it, the
+  Frontend refuses every refresh and keeps serving what it holds. Cloudflare
+  CI releases don't pass it yet.
+- Until a refresh has stored the front page and its chrome, the homepage is a
+  503, never a placeholder or a 404. A front page WordPress confirms isn't
+  set is stored as missing and is a 404.
+- Existing sites: `infra/frontend.run.ts` only creates the store when
+  `apps/frontend/migrations` exists, so a site-owned Frontend that hasn't
+  adopted the files deploys as before.
+
+`scripts/smoke/frontend-runtime.sh` proves it on a disposable generated site
+without Cloudflare: Alchemy's Astro build, served in workerd (Wrangler's local
+mode) with a local D1 store, against a stub CMS taken down, a Worker restart
+and a rebuilt redeploy.
+
 ## Programmatic use
 
 The CLI is a thin shell over `run()`, which resolves to an exit code:
@@ -716,6 +758,9 @@ The Frontend skeleton's own tests, including its rendered-route tests, run in
 a generated site: `scripts/smoke/frontend-check.sh` generates a disposable
 content site, installs its Frontend's npm dependencies (the only step that
 uses the network) and runs its tests, `astro check`, lint and format check.
+`scripts/smoke/frontend-runtime.sh` is the durable homepage's runtime proof
+(see [Durable homepage](#durable-homepage)); it also installs the CI Worker's
+dependencies, for Wrangler's local workerd runtime.
 
 ## Releasing
 

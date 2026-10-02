@@ -110,6 +110,10 @@ function reportProvisioning(io, { project, directory }) {
   io.out("  # Once the CMS is released and WordPress installed, prove its uploads are");
   io.out("  # hosted independently of it (needs a CMS check user, see gq media check):");
   io.out(scriptLine("media:check:upload"));
+  io.out("  # Add FRONTEND_REFRESH_TOKEN to Sigillo staging, deploy the Frontend, then");
+  io.out("  # store its homepage: until then the homepage is a 503 (gq frontend refresh):");
+  io.out(scriptLine("deploy:frontend"));
+  io.out(scriptLine("frontend:refresh"));
 }
 
 function scriptLine(script) {

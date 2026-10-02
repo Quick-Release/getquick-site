@@ -245,6 +245,7 @@ const GQ_SCRIPTS = {
   "media:check": "gq sigillo run staging -- gq media check",
   "media:check:upload": "gq sigillo run staging -- gq media check --upload",
   "media:check:local": "gq media check --local",
+  "frontend:refresh": "gq sigillo run staging -- gq frontend refresh",
   "git:artifacts": "gq git artifacts",
   "ci:deploy": "gq sigillo run staging -- gq ci deploy",
   "ci:runs": "gq sigillo run staging -- gq ci runs",

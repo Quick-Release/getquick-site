@@ -79,6 +79,25 @@ Frontend requires. It says nothing about whether the content exists; the
 Frontend answers 503, never 404.
 _Avoid_: missing content, empty (for a failed read)
 
+**Publication store**:
+A content site's durable copy of its published content and shared chrome, in
+the Frontend's own D1 database, which visitors are served from
+([ADR 0003](docs/adr/0003-serve-published-content-from-a-durable-store.md)).
+It outlives CMS outages, Worker restarts and redeploys.
+_Avoid_: cache (it isn't evicted), KV
+
+**Last-known-good content**:
+What the publication store holds: the most recent complete, valid read of a
+publication. It has no age limit; only a newer read replaces it.
+_Avoid_: stale content (as a fault)
+
+**Refresh**:
+Reading published content from the CMS and promoting each complete, valid
+read into the publication store; a failed read keeps what is stored. Only a
+trusted caller may refresh: `gq frontend refresh` with the Site's refresh
+token. A Site no refresh has filled is not ready, and its homepage is a 503.
+_Avoid_: rebuild, revalidate, purge
+
 ### Hosting
 
 **Staging domain**:

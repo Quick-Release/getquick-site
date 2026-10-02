@@ -39,6 +39,12 @@ import {
   runMediaCommand,
 } from "../media/commands.mjs";
 import {
+  FRONTEND_USAGE,
+  frontendCommandOptions,
+  isFrontendCommand,
+  runFrontendCommand,
+} from "../frontend/commands.mjs";
+import {
   isWorkspaceCommand,
   runWorkspaceCommand,
   WORKSPACE_USAGE,
@@ -165,6 +171,10 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
     return runMediaCommand({ context, parsed, fetch, io });
   }
 
+  if (isFrontendCommand(parsed.command)) {
+    return runFrontendCommand({ context, parsed, fetch, io });
+  }
+
   if (provider === "context" && resource === "show") {
     printValue(io, contextSummary(context), parsed);
     return;
@@ -284,6 +294,7 @@ function parseArguments(argv) {
     "--max-pages",
     "--ref",
     "--git-dir",
+    "--url",
   ]);
   const repeatedValueOptions = new Set(["--path", "--query"]);
   const booleanOptions = new Set(["--all", "--dry-run", "--yes", "--upload", "--local"]);
@@ -333,7 +344,8 @@ function validateCommand(parsed) {
           dbCommandOptions(parsed.command) ??
           cloudflareWorkflowOptions(parsed.command) ??
           ciCommandOptions(parsed.command) ??
-          mediaCommandOptions(parsed.command),
+          mediaCommandOptions(parsed.command) ??
+          frontendCommandOptions(parsed.command),
       };
   if (!allowedOptions) throw new Error(`Unknown command: ${command}. Run gq --help.`);
 
@@ -449,6 +461,9 @@ ${CLOUDFLARE_WORKFLOW_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Independent media:
 ${MEDIA_USAGE.map((usage) => `  ${usage}`).join("\n")}
+
+Frontend (durable homepage):
+${FRONTEND_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Cloudflare CI:
 ${CI_USAGE.map((usage) => `  ${usage}`).join("\n")}

@@ -5,21 +5,15 @@ import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import Entry from "./pages/[...slug].astro";
 import Home from "./pages/index.astro";
-
-type Answer = { ok: false; status: number } | { ok: true; json: () => Promise<unknown> };
-type Handler = (variables: Record<string, unknown>) => Answer | Promise<Answer>;
-
-const tokens = { colors: [], spacingSizes: [] };
-
-const chrome = {
-  generalSettings: {
-    siteIcon: null,
-    siteLogo: { node: { sourceUrl: "https://media.example/logo.svg", altText: "Acme" } },
-  },
-  menuItems: {
-    nodes: [{ id: "a", parentId: null, label: "About us", url: "/about/", target: null }],
-  },
-};
+import {
+  data,
+  httpError,
+  queries,
+  stubWordPress,
+  timeout,
+  tokens,
+  type Answer,
+} from "./test/wordpress-stub";
 
 const about = {
   id: "64",
@@ -35,44 +29,6 @@ const frontPage = {
   title: "Home",
   content: "<h1>Welcome to Acme</h1>",
 };
-
-function data(value: unknown): Answer {
-  return { ok: true, json: async () => ({ data: value }) };
-}
-
-function httpError(status: number): Answer {
-  return { ok: false, status };
-}
-
-function timeout(): never {
-  throw new DOMException("The operation timed out.", "TimeoutError");
-}
-
-// WordPress, answering each query by name. The site chrome is fine unless a
-// test says otherwise; any other query fails the test.
-function stubWordPress(handlers: { home?: Handler; entry?: Handler; chrome?: Handler }) {
-  const answer = { chrome: () => data(chrome), ...handlers };
-  const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
-    const request = JSON.parse(init.body as string) as {
-      query: string;
-      variables?: Record<string, unknown>;
-    };
-    const name = /query (\w+)/.exec(request.query)?.[1];
-    const handler = {
-      HomePage: answer.home,
-      EntryByUri: answer.entry,
-      SiteChrome: answer.chrome,
-    }[name ?? ""];
-    if (!handler) throw new Error(`Unexpected query ${name}`);
-    return handler(request.variables ?? {});
-  });
-  vi.stubGlobal("fetch", fetchMock);
-  return fetchMock;
-}
-
-function queries(fetchMock: ReturnType<typeof stubWordPress>, name: string) {
-  return fetchMock.mock.calls.filter(([, init]) => (init.body as string).includes(`query ${name}`));
-}
 
 async function render(path: string) {
   const container = await AstroContainer.create();
@@ -241,7 +197,32 @@ test("an optional featured image left empty doesn't fail an entry", async () => 
   expect(html).not.toContain("featured-image");
 });
 
-test("the front page renders WordPress's front page", async () => {
+// The front page's CMS failures, refresh and outages are in homepage.test.ts:
+// a built Frontend serves it from the publication store only.
+test("a built Frontend without a publication store is a 503 for the front page, and reads no CMS", async () => {
+  const fetchMock = stubWordPress({
+    home: () =>
+      data({
+        generalSettings: { title: "Acme", description: "" },
+        nodeByUri: frontPage,
+        designTokens: tokens,
+      }),
+  });
+
+  const { status, html } = await render("/");
+
+  expect(status).toBe(503);
+  expect(html).toContain("Temporarily unavailable.");
+  expect(html).not.toContain("Welcome to Acme");
+  expect(html).not.toContain("Content is on its way.");
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(consoleError).toHaveBeenCalledWith(
+    expect.stringContaining("front page can't be served (not-ready)"),
+  );
+});
+
+test("local development renders WordPress's front page live", async () => {
+  vi.stubEnv("DEV", true);
   stubWordPress({
     home: () =>
       data({
@@ -259,30 +240,6 @@ test("the front page renders WordPress's front page", async () => {
   expect(html).toMatch(/<a href="\/about\/"[^>]*>About us<\/a>/);
 });
 
-test("a front page WordPress can't deliver in production is a 503, not the development placeholder", async () => {
-  stubWordPress({ home: timeout });
-
-  const { status, html } = await render("/");
-
-  expect(status).toBe(503);
-  expect(html).toContain("Temporarily unavailable.");
-  expect(html).not.toContain("Content is on its way.");
-  expect(consoleError).toHaveBeenCalledWith(
-    expect.stringContaining("front page is unavailable (timeout)"),
-  );
-});
-
-test("a front page with invalid required schema is a 503", async () => {
-  stubWordPress({
-    home: () => data({ generalSettings: null, nodeByUri: frontPage, designTokens: tokens }),
-  });
-
-  const { status, html } = await render("/");
-
-  expect(status).toBe(503);
-  expect(html).not.toContain("Welcome to Acme");
-});
-
 test("local development without a CMS still shows the friendly placeholder", async () => {
   vi.stubEnv("DEV", true);
   stubWordPress({
@@ -296,7 +253,8 @@ test("local development without a CMS still shows the friendly placeholder", asy
   expect(html).toContain("Content is on its way.");
 });
 
-test("a site with no front page set is a 404 that says how to set one", async () => {
+test("local development with no front page set is a 404 that says how to set one", async () => {
+  vi.stubEnv("DEV", true);
   stubWordPress({
     home: () =>
       data({
@@ -310,32 +268,4 @@ test("a site with no front page set is a 404 that says how to set one", async ()
 
   expect(status).toBe(404);
   expect(html).toContain("The front page is almost ready.");
-});
-
-test("a front page whose blocks WordPress fails to return still renders, without them", async () => {
-  const fetchMock = stubWordPress({
-    home: ({ withBlocks }) =>
-      withBlocks === false
-        ? data({
-            generalSettings: { title: "Acme", description: "" },
-            nodeByUri: frontPage,
-            designTokens: tokens,
-          })
-        : httpError(502),
-  });
-
-  const { status, html } = await render("/");
-
-  expect(status).toBe(200);
-  expect(html).toContain("<h1>Welcome to Acme</h1>");
-  expect(queries(fetchMock, "HomePage")).toHaveLength(2);
-});
-
-test("a front page whose recovery without blocks fails too is a 503", async () => {
-  stubWordPress({ home: () => httpError(502) });
-
-  const { status, html } = await render("/");
-
-  expect(status).toBe(503);
-  expect(html).not.toContain("almost ready");
 });
