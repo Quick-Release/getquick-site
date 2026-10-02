@@ -22,6 +22,12 @@
  *   and its ordering still holds. `wp gq-events retry-due` does this; the
  *   server's cron runs it every minute (`gq ploi events` adds the crontab).
  *   WP-Cron isn't used: production disables it, and it only runs on visits.
+ * - asks the Frontend, after each run's retries, to reconcile: to compare what
+ *   it serves with what WordPress publishes and refresh what differs, so a
+ *   change whose own event was never recorded or sent (a hook that didn't
+ *   fire, a change made outside the editor) still reaches visitors within
+ *   minutes (ADR 0009). The run's outcome is kept in RECONCILIATION_OPTION;
+ *   `wp gq-events reconcile` asks for one at once.
  * - reports what is delayed: to editors on the entry's screen, in the page and
  *   post lists and on the Dashboard; to operators in Site Health and with
  *   `wp gq-events delays`. Neither shows a secret or an event's body.
@@ -62,6 +68,15 @@ const SCHEDULER_STALE = 300;
 
 /** The command the server's cron runs every minute. */
 const COMMAND = 'wp gq-events retry-due --quiet';
+
+/** The last reconciliation the Frontend was asked for: when, how it went, and when it last matched WordPress. */
+const RECONCILIATION_OPTION = 'gq_reconciliation';
+
+/** Seconds the Frontend has to answer a reconciliation: it reads WordPress, within its own budget. */
+const RECONCILE_TIMEOUT = 60;
+
+/** Without a reconciliation that matched WordPress for this long, missed changes may go unnoticed. */
+const RECONCILIATION_STALE = 600;
 
 /** The shared settings, as editors are told about them. */
 const SETTING_NAMES = [
@@ -171,6 +186,92 @@ function assess(array $delivery): array
     return ['state' => 'retrying', 'due' => (int) ($delivery['attemptedAt'] ?? 0) + $delay];
 }
 
+/**
+ * Asks the Frontend to reconcile with WordPress (a signed `reconcile` event)
+ * and records how it went: `reconciled` (it matches WordPress now), `behind`
+ * (it caught up partly, the rest at the next run), `busy` (another run was
+ * under way) or `failed`, with the reason and a message that never holds the
+ * key. Resolves to the record, or null where events aren't configured outside
+ * production (local development without a Frontend store), or the
+ * `gq_events_reconcile` filter turns it off.
+ */
+function reconcile(): ?array
+{
+    $configured = \GetQuick\Site\PublicationEvents\endpoint() !== ''
+        && \GetQuick\Site\PublicationEvents\secret() !== '';
+    if (
+        (! $configured && wp_get_environment_type() !== 'production')
+        || ! apply_filters('gq_events_reconcile', true)
+    ) {
+        return null;
+    }
+    $outcome = \GetQuick\Site\PublicationEvents\send([
+        'site' => \GetQuick\Site\PublicationEvents\SITE,
+        'id' => wp_generate_uuid4(),
+        'action' => 'reconcile',
+        'occurredAt' => (int) floor(microtime(true) * 1000),
+    ], RECONCILE_TIMEOUT);
+    $status = ($outcome['status'] ?? '') === 'refreshed'
+        ? ((string) ($outcome['frontendStatus'] ?? '') ?: 'reconciled')
+        : 'failed';
+    $record = [
+        'ranAt' => now(),
+        'status' => $status,
+        'reconciledAt' => $status === 'reconciled' ? now() : (reconciliation()['reconciledAt'] ?? null),
+        'reason' => (string) ($outcome['reason'] ?? ''),
+        'message' => (string) ($outcome['message'] ?? ''),
+    ];
+    update_option(RECONCILIATION_OPTION, $record, false);
+    if ($status === 'failed') {
+        error_log(sprintf('Reconciliation: the Frontend didn\'t reconcile (%s): %s', $record['reason'], $record['message']));
+    }
+
+    return $record;
+}
+
+/**
+ * The last reconciliation, and whether it is stale: events are configured and
+ * reconciliation on, but the Frontend hasn't matched WordPress within
+ * RECONCILIATION_STALE.
+ */
+function reconciliation(): array
+{
+    wp_cache_delete(RECONCILIATION_OPTION, 'options');
+    $record = get_option(RECONCILIATION_OPTION);
+    $record = is_array($record) ? $record : [];
+    $reconciled_at = isset($record['reconciledAt']) ? (int) $record['reconciledAt'] : null;
+    $expected = available()
+        && \GetQuick\Site\PublicationEvents\endpoint() !== ''
+        && \GetQuick\Site\PublicationEvents\secret() !== ''
+        && apply_filters('gq_events_reconcile', true);
+
+    return [
+        'ranAt' => isset($record['ranAt']) ? (int) $record['ranAt'] : null,
+        'status' => (string) ($record['status'] ?? ''),
+        'reconciledAt' => $reconciled_at,
+        'reason' => (string) ($record['reason'] ?? ''),
+        'message' => (string) ($record['message'] ?? ''),
+        'stale' => $expected && ($reconciled_at === null || now() - $reconciled_at > RECONCILIATION_STALE),
+    ];
+}
+
+/** The last reconciliation in one line, for operators. */
+function reconciliation_text(array $reconciliation): string
+{
+    if ($reconciliation['ranAt'] === null) {
+        return 'The public website hasn\'t been reconciled with WordPress yet.';
+    }
+    $matched = $reconciliation['reconciledAt'] !== null ? gmdate('c', $reconciliation['reconciledAt']) : 'never';
+
+    return sprintf(
+        'Reconciliation last ran at %1$s: %2$s%3$s. The public website last matched WordPress at %4$s.',
+        gmdate('c', $reconciliation['ranAt']),
+        $reconciliation['status'],
+        $reconciliation['status'] === 'failed' ? " ({$reconciliation['reason']}: {$reconciliation['message']})" : '',
+        $matched,
+    );
+}
+
 /** Takes the run lock unless a run that started less than LOCK_SECONDS ago holds it. */
 function lock(): bool
 {
@@ -203,10 +304,12 @@ function unlock(): void
 }
 
 /**
- * Sends every delivery that is due, oldest first, and records the run.
- * Resolves to what it did: `['ran' => false]` when another run holds the
- * lock, else the deliveries it sent (subject, label, event id and outcome)
- * and how many due ones it left for the next run.
+ * Sends every delivery that is due, oldest first, then asks the Frontend to
+ * reconcile, and records the run. Resolves to what it did: `['ran' =>
+ * false]` when another run holds the lock, else the deliveries it sent
+ * (subject, label, event id and outcome), how many due ones it left for the
+ * next run, and the reconciliation's record (null where events aren't
+ * configured outside production).
  */
 function run_due(): array
 {
@@ -215,6 +318,7 @@ function run_due(): array
     }
     $sent = [];
     $deferred = 0;
+    $reconciliation = null;
     try {
         $due = [];
         foreach (deliveries() as $delivery) {
@@ -242,6 +346,8 @@ function run_due(): array
                 'attempts' => (int) ($outcome['attempts'] ?? 0),
             ];
         }
+        // After the retries, so a delivered event isn't also found as a change.
+        $reconciliation = reconcile();
     } finally {
         unlock();
     }
@@ -252,9 +358,10 @@ function run_due(): array
         'refreshed' => $refreshed,
         'failed' => count($sent) - $refreshed,
         'deferred' => $deferred,
+        'reconciliation' => $reconciliation['status'] ?? null,
     ], false);
 
-    return ['ran' => true, 'sent' => $sent, 'deferred' => $deferred];
+    return ['ran' => true, 'sent' => $sent, 'deferred' => $deferred, 'reconciliation' => $reconciliation];
 }
 
 /** The scheduler's last run, and whether it is running (a run within SCHEDULER_STALE). */
@@ -416,7 +523,23 @@ function cli_commands(): void
             count($run['sent']) - $refreshed,
             $run['deferred'],
         ));
-    }, ['shortdesc' => 'Sends every event the Frontend hasn\'t confirmed that is due for a retry.'] + $format);
+        if ($run['reconciliation'] !== null) {
+            \WP_CLI::log(reconciliation_text(reconciliation()));
+        }
+    }, ['shortdesc' => 'Sends every event the Frontend hasn\'t confirmed that is due for a retry, then asks the Frontend to reconcile with WordPress.'] + $format);
+
+    \WP_CLI::add_command('gq-events reconcile', static function (): void {
+        $record = reconcile();
+        if ($record === null) {
+            \WP_CLI::error('Events aren\'t configured here: GETQUICK_FRONTEND_URL and PUBLICATION_EVENT_SECRET are required.');
+        }
+        match ($record['status']) {
+            'reconciled' => \WP_CLI::success('The public website matches WordPress.'),
+            'behind' => \WP_CLI::success('The public website caught up partly; the rest follows at the next run.'),
+            'busy' => \WP_CLI::success('Another reconciliation is under way on the public website.'),
+            default => \WP_CLI::error("The public website couldn't reconcile ({$record['reason']}): {$record['message']}"),
+        };
+    }, ['shortdesc' => 'Asks the Frontend to compare what it serves with what WordPress publishes, and refresh what differs.']);
 
     \WP_CLI::add_command('gq-events delays', static function (array $args, array $assoc): void {
         $rows = array_map(static fn(array $row): array => [
@@ -438,6 +561,12 @@ function cli_commands(): void
             \WP_CLI::warning("The retry scheduler isn't running (last run: {$last}). Its cron runs `" . COMMAND . '` every minute.');
         } elseif (($assoc['format'] ?? 'table') !== 'json') {
             \WP_CLI::log("The retry scheduler last ran at {$last}.");
+        }
+        $reconciliation = reconciliation();
+        if ($reconciliation['stale']) {
+            \WP_CLI::warning(reconciliation_text($reconciliation));
+        } elseif (($assoc['format'] ?? 'table') !== 'json' && $reconciliation['ranAt'] !== null) {
+            \WP_CLI::log(reconciliation_text($reconciliation));
         }
     }, [
         'shortdesc' => 'Lists the deliveries the Frontend hasn\'t confirmed, or recovered within a day, and the retry scheduler\'s last run.',
@@ -591,6 +720,7 @@ function site_health(): array
 {
     $rows = delays();
     $scheduler = scheduler();
+    $reconciliation = reconciliation();
     $behind = array_filter($rows, static fn(array $row): bool => in_array($row['state'], ['retrying', 'failed'], true));
     $failed = array_filter($rows, static fn(array $row): bool => $row['state'] === 'failed');
     $configured = \GetQuick\Site\PublicationEvents\endpoint() !== '' && \GetQuick\Site\PublicationEvents\secret() !== '';
@@ -601,6 +731,9 @@ function site_health(): array
     if ($behind !== []) {
         $status = 'recommended';
         $label = 'The public website is behind on some changes';
+    } elseif ($reconciliation['stale']) {
+        $status = 'recommended';
+        $label = 'The public website hasn\'t been reconciled with WordPress recently';
     }
     if ($failed !== [] || ($production && $configured && ! $scheduler['running'])) {
         $status = 'critical';
@@ -630,7 +763,8 @@ function site_health(): array
                 'The retry scheduler last ran: %1$s. The server\'s cron should run `%2$s` every minute (gq ploi events adds it).',
                 $last,
                 COMMAND,
-            )) . '</p>',
+            )) . '</p>'
+            . '<p>' . esc_html('Each run also asks the public website to reconcile with WordPress, which catches a change whose own delivery was lost. ' . reconciliation_text($reconciliation)) . '</p>',
         'actions' => '',
         'test' => 'gq_public_delivery',
     ];

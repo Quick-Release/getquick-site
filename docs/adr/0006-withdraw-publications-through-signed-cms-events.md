@@ -1,6 +1,8 @@
 # ADR 0006: Withdraw publications through signed CMS events
 
-- Status: Accepted
+- Status: Accepted; amended by [ADR 0009](0009-reconcile-missed-changes-on-the-cms-scheduler.md)
+  (reconciliation lifts a withdrawal only for a modification WordPress made
+  after it)
 - Date: 2026-10-02
 
 ## Context

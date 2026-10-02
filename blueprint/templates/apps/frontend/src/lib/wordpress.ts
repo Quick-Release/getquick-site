@@ -47,6 +47,17 @@ export interface HomeContent extends DesignPresets {
 export interface EntryContent extends WordPressPost, DesignPresets {
   /** WordPress failed on the blocks, so this is the entry without them. */
   blocksOmitted: boolean;
+  /** When WordPress last modified it (ms, the CMS's clock), if it said. */
+  modifiedAt: number | null;
+}
+
+/** A published page or post as WordPress lists it: its id, URI and last modification. */
+export interface PublishedEntry {
+  /** WPGraphQL's global id, when WordPress gives it. */
+  id: string | null;
+  uri: string;
+  /** When WordPress last modified it (ms, the CMS's clock), if it said. */
+  modifiedAt: number | null;
 }
 
 export interface SiteChrome {
@@ -132,6 +143,9 @@ const pageEntry = z.object({
   // restricted: WordPress lists it to anonymous readers, without its content.
   status: z.string().nullable(),
   isRestricted: z.boolean().nullable(),
+  // When it was last modified (GMT, without a zone). Only reconciliation
+  // uses it, so a WordPress that leaves it out is still served.
+  modifiedGmt: z.string().nullable().optional(),
   featuredImage: imageEdge,
   // Left out when read without blocks.
   blocks: z.unknown().optional(),
@@ -157,7 +171,13 @@ const menuItem = z.object({
 const publishedRoutesData = z.object({
   contentNodes: z.object({
     pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
-    nodes: z.array(z.object({ uri: z.string().nullable() })),
+    nodes: z.array(
+      z.object({
+        uri: z.string().nullable(),
+        id: z.string().nullable().optional(),
+        modifiedGmt: z.string().nullable().optional(),
+      }),
+    ),
   }),
 });
 
@@ -253,6 +273,7 @@ const entryQuery = /* GraphQL */ `
       date
       status
       isRestricted
+      modifiedGmt
       featuredImage {
         node {
           sourceUrl
@@ -269,6 +290,7 @@ const entryQuery = /* GraphQL */ `
       uri
       status
       isRestricted
+      modifiedGmt
       featuredImage {
         node {
           sourceUrl
@@ -296,7 +318,8 @@ const designQuery = /* GraphQL */ `
 `;
 
 // Anonymous readers only get what is published: no drafts, private entries or
-// revisions.
+// revisions. The id and the modification time let reconciliation tell which
+// entries changed without reading each one.
 const publishedRoutesQuery = /* GraphQL */ `
   query PublishedRoutes($after: String) {
     contentNodes(first: 100, after: $after, where: { contentTypes: [PAGE, POST] }) {
@@ -306,6 +329,8 @@ const publishedRoutesQuery = /* GraphQL */ `
       }
       nodes {
         uri
+        id
+        modifiedGmt
       }
     }
   }
@@ -316,6 +341,16 @@ function endpoint() {
     import.meta.env.PUBLIC_WORDPRESS_GRAPHQL_URL?.trim() ||
     "https://{{project}}-admin.ddev.site/wp/graphql"
   );
+}
+
+/**
+ * WPGraphQL's GMT time ("2026-10-02T09:00:00", without a zone) in ms, or null
+ * when it is absent or not a time.
+ */
+export function cmsTime(value: string | null | undefined) {
+  if (!value) return null;
+  const time = Date.parse(/(Z|[+-]\d\d:?\d\d)$/.test(value) ? value : `${value}Z`);
+  return Number.isNaN(time) ? null : time;
 }
 
 function normalizeImage(edge: z.infer<typeof imageEdge>): WordPressImage | null {
@@ -518,6 +553,7 @@ export async function getEntryByUri(uri: string): Promise<Delivery<EntryContent>
         content: containsVideoHero ? renderWordPressBlocks(blocks) : normalized.content,
         hasVideoHero: containsVideoHero,
         blocksOmitted,
+        modifiedAt: cmsTime(post.modifiedGmt),
         spacingSizes: data.designTokens.spacingSizes,
         colors: data.designTokens.colors,
       },
@@ -537,12 +573,15 @@ export async function getDesignPresets(): Promise<Found<DesignPresets> | Unavail
 }
 
 /**
- * The URI of every published page and post, read page by page. Any failed
- * page fails the list: an incomplete list says nothing about what isn't in it.
+ * Every published page and post (its id, URI and last modification), read
+ * page by page, and how many requests that took. Any failed page fails the
+ * list: an incomplete list says nothing about what isn't in it.
  */
-export async function getPublishedRoutes(): Promise<Found<string[]> | Unavailable> {
-  return deliver("the published routes", async (): Promise<Found<string[]>> => {
-    const uris: string[] = [];
+export async function getPublishedEntries(): Promise<
+  Found<{ entries: PublishedEntry[]; requests: number }> | Unavailable
+> {
+  return deliver("the published routes", async () => {
+    const entries: PublishedEntry[] = [];
     let after: string | null = null;
     for (let page = 0; page < 1000; page += 1) {
       const { contentNodes }: z.infer<typeof publishedRoutesData> = await query(
@@ -550,8 +589,13 @@ export async function getPublishedRoutes(): Promise<Found<string[]> | Unavailabl
         publishedRoutesQuery,
         { after },
       );
-      for (const node of contentNodes.nodes) if (node.uri) uris.push(node.uri);
-      if (!contentNodes.pageInfo.hasNextPage) return { kind: "found", content: uris };
+      for (const node of contentNodes.nodes) {
+        if (!node.uri) continue;
+        entries.push({ id: node.id ?? null, uri: node.uri, modifiedAt: cmsTime(node.modifiedGmt) });
+      }
+      if (!contentNodes.pageInfo.hasNextPage) {
+        return { kind: "found" as const, content: { entries, requests: page + 1 } };
+      }
       if (!contentNodes.pageInfo.endCursor) {
         throw new CmsFailureError({
           reason: "schema",
@@ -565,6 +609,13 @@ export async function getPublishedRoutes(): Promise<Found<string[]> | Unavailabl
       message: "WordPress listed more than 100,000 published routes",
     });
   });
+}
+
+/** The URI of every published page and post. */
+export async function getPublishedRoutes(): Promise<Found<string[]> | Unavailable> {
+  const listed = await getPublishedEntries();
+  if (listed.kind !== "found") return listed;
+  return { kind: "found", content: listed.content.entries.map((entry) => entry.uri) };
 }
 
 /**

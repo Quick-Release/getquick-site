@@ -343,3 +343,42 @@ exhausted attempts and an overlapping run. With the local
 `ddev/ddev-webserver` Docker image present (`GQ_SMOKE_CRON_IMAGE` picks
 another), a real cron daemon runs the exact crontab `gq ploi events` installs
 and delivers a missed publication.
+
+### Reconciliation
+
+A change no event was ever recorded for still reaches visitors within a minute or
+two while the CMS is healthy
+([ADR 0009](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0009-reconcile-missed-changes-on-the-cms-scheduler.md)).
+Such a change comes from a hook that didn't fire, a plugin or script writing
+the database, or a request that died first. After its retries, each
+`retry-due` run sends the Frontend a signed `reconcile` event. The Frontend
+compares its store with what WordPress publishes and refreshes what differs,
+by the same rules as events:
+
+- **Shared rows:** the front page with the title and tagline, the chrome, and
+  the design presets, compared by content.
+- **Entries:** WordPress's list of published pages and posts, compared by id,
+  URI and modification time. A new, changed, moved, removed or republished
+  entry is refreshed.
+- **Re-reads:** two stored entries are re-read each run, so a change that kept
+  its modification time is caught too, later.
+
+A failed read keeps what is stored. Only WordPress confirming an entry missing
+makes it a 404. A withdrawal in force is lifted only by a modification made
+after it.
+
+- No new crontab or secret: the existing crontab and the event key do it.
+  `wp gq-events reconcile` runs one at once.
+- A run makes at most 40 CMS requests (Workers' Free plan allows 50
+  subrequests). With more changes than that, the run reports `behind` and the
+  next minute continues.
+- `wp gq-events delays` shows the last run, Site Health warns after ten
+  minutes without a match, and `gq frontend events check` prints the
+  Frontend's own record of its last run.
+
+`scripts/smoke/cms-events.sh` makes changes with WordPress's hooks removed (an
+update, a new page, an unpublished page, the tagline). It checks that the
+next `retry-due` brings them to visitors, that a failed run changes nothing
+and is reported, and, with the real cron, that a change appears within five
+minutes. `scripts/smoke/frontend-runtime.sh` reconciles in workerd, including
+60 changes over several runs within the request budget.

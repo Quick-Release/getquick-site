@@ -34,9 +34,15 @@
 //   while it can't), one whose request was interrupted, and the withdrawal
 //   of a page deleted while the Frontend was down; it stops after the last
 //   attempt, which editors, `wp gq-events delays` and Site Health report, and
-//   an overlapping run sends nothing. Last, with the local
+//   an overlapping run sends nothing. Reconciliation (ADR 0009): changes
+//   made with WordPress's hooks removed, so no event is ever recorded (a new
+//   page, an update, an unpublished page, the tagline), reach visitors at the
+//   scheduler's next run, which asks the Frontend to reconcile; with the CMS
+//   unreadable a reconciliation fails, keeps every page and is reported, and
+//   Site Health says so once it is stale. Last, with the local
 //   ddev/ddev-webserver Docker image present, a real cron daemon runs the
-//   crontab `gq ploi events` installs.
+//   crontab `gq ploi events` installs: it retries a missed publication, and
+//   brings a change no event was recorded for to visitors within five minutes.
 //
 // The Frontend reads published content from a stub WordPress that this proof
 // keeps in step with what it publishes, since the GETQUICK GraphQL schema
@@ -108,6 +114,12 @@ function setUpWordPress() {
   writeFileSync(
     join(wordpress, "wp-content/mu-plugins/proof-clock.php"),
     `<?php add_filter('gq_events_now', static fn(int $now): int => $now + (int) get_option('proof_clock_offset', 0));\n`,
+  );
+  // The retry checks see retries alone: the scheduler asks the Frontend to
+  // reconcile only once this proof turns it on.
+  writeFileSync(
+    join(wordpress, "wp-content/mu-plugins/proof-reconcile.php"),
+    `<?php add_filter('gq_events_reconcile', static fn(): bool => (bool) get_option('proof_reconcile', 0));\n`,
   );
 }
 
@@ -890,6 +902,105 @@ try {
   );
   await clock(0);
 
+  // --- Reconciliation: changes no event was ever recorded for ---
+  // WordPress's own hooks are removed for each change, as when a hook doesn't
+  // fire or a change is made outside the editor, so the CMS has nothing to
+  // send or retry: the scheduler's run asks the Frontend to reconcile.
+  await wpOrFail(["option", "update", "proof_reconcile", "1"]);
+  const withoutHooks = (php) =>
+    wpOrFail(
+      [
+        "eval",
+        `foreach (['wp_after_insert_post', 'before_delete_post', 'updated_option', 'added_option'] as $hook) { remove_all_actions($hook); }
+         ${php}`,
+      ],
+      cmsEnv,
+    );
+  const before = await recorded(pricing);
+  cms.entries.get("/pricing/").content = "Prices nobody announced.";
+  await withoutHooks(
+    `wp_update_post(['ID' => ${pricing}, 'post_content' => 'Prices nobody announced.']);`,
+  );
+  const careers = await withoutHooks(
+    "echo wp_insert_post(['post_type' => 'page', 'post_status' => 'publish', 'post_title' => 'Careers', 'post_name' => 'careers', 'post_content' => 'We are hiring.']);",
+  );
+  cms.entries.set("/careers/", {
+    id: nodeId(careers),
+    title: "Careers",
+    content: "We are hiring.",
+  });
+  const faq = await publishPage("faq", "Questions.");
+  check("a page to unpublish quietly is served", (await visit(port, "/faq/")).status === 200);
+  await withoutHooks(`wp_update_post(['ID' => ${faq}, 'post_status' => 'draft']);`);
+  cms.entries.delete("/faq/");
+  cms.tagline = "Quietly better things";
+  await withoutHooks("update_option('blogdescription', 'Quietly better things');");
+  const unannounced = [await recorded(pricing), await recorded(careers), await recorded(faq)];
+
+  const reconciledRun = await retryDue();
+  const reconciliation = async () =>
+    JSON.parse(await wpOrFail(["option", "get", "gq_reconciliation", "--format=json"]));
+  const afterRun = await reconciliation();
+  await cms.stop();
+  const caughtUp = await Promise.all(
+    ["/pricing/", "/careers/", "/faq/", "/"].map((path) => visit(port, path)),
+  );
+  check(
+    "changes no event was recorded for reach visitors at the scheduler's next run, which reconciles",
+    reconciledRun.code === 0 &&
+      unannounced[0]?.event?.id === before?.event?.id &&
+      unannounced[1] === null &&
+      unannounced[2]?.event?.action === "publish" &&
+      afterRun.status === "reconciled" &&
+      caughtUp[0].html.includes("Prices nobody announced.") &&
+      caughtUp[1].status === 200 &&
+      caughtUp[1].html.includes("We are hiring.") &&
+      caughtUp[2].status === 404 &&
+      caughtUp[3].html.includes('<meta name="description" content="Quietly better things">'),
+    `${reconciledRun.stdout}${reconciledRun.stderr} ${JSON.stringify(afterRun)} ${caughtUp.map(({ status }) => status)}`,
+  );
+
+  // The CMS the Frontend reads is down: the reconciliation fails, is reported,
+  // and every page keeps its last good version.
+  const failedReconcile = await wp(["gq-events", "reconcile"], cmsEnv);
+  const failedRecord = await reconciliation();
+  const keptPages = await Promise.all(
+    ["/pricing/", "/careers/", "/"].map((path) => visit(port, path)),
+  );
+  await clock(11 * 60);
+  const staleHealth = JSON.parse(
+    await wpOrFail(
+      ["eval", "echo wp_json_encode(GetQuick\\Site\\DeliveryRetries\\site_health());"],
+      cmsEnv,
+    ),
+  );
+  const staleDelays = await wp(["gq-events", "delays"], cmsEnv);
+  check(
+    "with the CMS unreadable a reconciliation fails without changing a page, and is reported once stale",
+    failedReconcile.code !== 0 &&
+      /couldn't reconcile \(refresh\): network: WordPress couldn't be reached/u.test(
+        failedReconcile.stderr,
+      ) &&
+      failedRecord.status === "failed" &&
+      failedRecord.reconciledAt === afterRun.reconciledAt &&
+      keptPages.every(({ status }) => status === 200) &&
+      keptPages[0].html.includes("Prices nobody announced.") &&
+      staleHealth.status !== "good" &&
+      staleHealth.description.includes("last matched WordPress") &&
+      !JSON.stringify(staleHealth).includes(eventKey) &&
+      /Reconciliation last ran at .*: failed/u.test(staleDelays.stderr),
+    `${failedReconcile.stdout}${failedReconcile.stderr} ${JSON.stringify(failedRecord)} ${JSON.stringify(staleHealth)}`,
+  );
+  await cms.start();
+  await clock(0);
+  const manual = await wp(["gq-events", "reconcile"], cmsEnv);
+  check(
+    "wp gq-events reconcile reconciles at once once the CMS is back",
+    manual.code === 0 && /matches WordPress/u.test(manual.stdout),
+    manual.stdout + manual.stderr,
+  );
+  await wpOrFail(["option", "update", "proof_reconcile", "0"]);
+
   // The real scheduler: a cron daemon (Debian's, in the local DDEV web server
   // image, with WP-CLI in /usr/local/bin as on Ploi) runs the exact crontab
   // line `gq ploi events` installs, as an unprivileged user with cron's own
@@ -913,6 +1024,13 @@ try {
     await wpOrFail(["post", "update", pricing, "--post_content=Prices by cron."]);
     const missed = await recorded(pricing);
     worker = await local.start(port);
+    // A change no event is recorded for, left to the cron's reconciliation.
+    await wpOrFail(["option", "update", "proof_reconcile", "1"]);
+    const changedAt = Date.now();
+    const press = await withoutHooks(
+      "echo wp_insert_post(['post_type' => 'page', 'post_status' => 'publish', 'post_title' => 'Press', 'post_name' => 'press', 'post_content' => 'Press kit.']);",
+    );
+    cms.entries.set("/press/", { id: nodeId(press), title: "Press", content: "Press kit." });
     spawnSync("chmod", ["-R", "a+rwX", wordpress]);
     const container = `gq-cron-proof-${process.pid}`;
     const started = spawnSync("docker", [
@@ -941,10 +1059,22 @@ try {
     try {
       check("the cron container starts", started.status === 0, String(started.stderr));
       let byCron = missed;
-      for (let waited = 0; waited < 200 && byCron?.delivery?.status !== "refreshed"; waited += 5) {
+      let reconciledByCron = null;
+      const caughtUpByCron = () =>
+        byCron?.delivery?.status === "refreshed" &&
+        reconciledByCron?.status === "reconciled" &&
+        reconciledByCron.reconciledAt * 1000 >= changedAt - 1000;
+      for (let waited = 0; waited < 300 && !caughtUpByCron(); waited += 5) {
         await new Promise((done) => setTimeout(done, 5000));
         byCron = await recorded(pricing);
+        reconciledByCron = JSON.parse(
+          (await wp(["option", "get", "gq_reconciliation", "--format=json"])).stdout || "null",
+        );
       }
+      const tookByCron = Date.now() - changedAt;
+      await cms.stop();
+      const pressPage = await visit(port, "/press/");
+      await cms.start();
       const scheduled = JSON.parse(
         await wpOrFail(["option", "get", "gq_events_scheduler", "--format=json"]),
       );
@@ -959,6 +1089,14 @@ try {
         `${JSON.stringify(missed?.delivery)} → ${JSON.stringify(byCron?.delivery)}\n${
           spawnSync("docker", ["logs", container]).stderr
         }`,
+      );
+      check(
+        `and its reconciliation brings a change no event was recorded for to visitors within five minutes (${Math.round(tookByCron / 1000)}s), without visits`,
+        caughtUpByCron() &&
+          tookByCron <= 5 * 60_000 &&
+          pressPage.status === 200 &&
+          pressPage.html.includes("Press kit."),
+        `${JSON.stringify(reconciledByCron)} HTTP ${pressPage.status}`,
       );
     } finally {
       spawnSync("docker", ["rm", "--force", container], { stdio: "ignore" });

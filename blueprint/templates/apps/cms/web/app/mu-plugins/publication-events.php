@@ -214,11 +214,12 @@ function queue(?array $add = null, ?int $post_id = null): array
 }
 
 /**
- * Signs and posts an event. Resolves to the delivery outcome: refreshed, or
- * failed with a reason (not-configured, network, rejected, refresh) and a
- * message safe to show (never the secret).
+ * Signs and posts an event, waiting up to $timeout seconds (TIMEOUT unless
+ * given). Resolves to the delivery outcome: refreshed, or failed with a reason
+ * (not-configured, network, rejected, refresh) and a message safe to show
+ * (never the secret).
  */
-function send(array $event): array
+function send(array $event, ?int $timeout = null): array
 {
     $endpoint = endpoint();
     $secret = secret();
@@ -233,7 +234,7 @@ function send(array $event): array
     $body = (string) wp_json_encode($event);
     $timestamp = (string) time();
     $response = wp_remote_post($endpoint, [
-        'timeout' => (int) apply_filters('gq_publication_events_timeout', TIMEOUT),
+        'timeout' => $timeout ?? (int) apply_filters('gq_publication_events_timeout', TIMEOUT),
         'redirection' => 0,
         'headers' => [
             'Content-Type' => 'application/json',
@@ -270,6 +271,9 @@ function send(array $event): array
  */
 function refresh_failure(array $answer): ?string
 {
+    if (isset($answer['failure']['reason'], $answer['failure']['message']) && is_string($answer['failure']['message'])) {
+        return "{$answer['failure']['reason']}: {$answer['failure']['message']}";
+    }
     foreach ($answer as $value) {
         if (! is_array($value)) {
             continue;

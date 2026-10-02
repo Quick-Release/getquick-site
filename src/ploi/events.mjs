@@ -7,8 +7,9 @@
 //   shows the value.
 // - the crontab that retries the events the Frontend didn't confirm
 //   (`wp gq-events retry-due`, every minute, as the site's system user;
-//   ADR 0008). Production disables WP-Cron, which would only run on visits
-//   anyway, so this is the CMS's only background scheduler.
+//   ADR 0008), then asks the Frontend to reconcile with WordPress (ADR 0009).
+//   Production disables WP-Cron, which would only run on visits anyway, so
+//   this is the CMS's only background scheduler.
 //
 // Idempotent.
 //

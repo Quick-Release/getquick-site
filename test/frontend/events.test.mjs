@@ -81,3 +81,52 @@ test("--url checks another Frontend, but never over plain HTTP to another host",
   assert.equal(remote.code, 1);
   assert.equal(remote.fetch.requests.length, 0);
 });
+
+test("the check says how the Frontend's last reconciliation with WordPress went", async () => {
+  const now = Date.now();
+  const fresh = await check([], {
+    respond: () =>
+      json({
+        status: "checked",
+        site: "fixture",
+        reconciliation: {
+          running: false,
+          startedAt: now - 30_000,
+          finishedAt: now - 29_000,
+          reconciledAt: now - 30_000,
+          outcome: "reconciled",
+        },
+      }),
+  });
+  const failing = await check([], {
+    respond: () =>
+      json({
+        status: "checked",
+        site: "fixture",
+        reconciliation: {
+          running: false,
+          startedAt: now - 30_000,
+          finishedAt: now - 29_000,
+          reconciledAt: now - 3_600_000,
+          outcome: "failed",
+          reason: "network",
+          message: "WordPress couldn't be reached",
+        },
+      }),
+  });
+  const never = await check([], {
+    respond: () => json({ status: "checked", site: "fixture", reconciliation: null }),
+  });
+
+  assert.equal(fresh.code, 0);
+  assert.match(
+    fresh.stdout,
+    /✓ It last reconciled with WordPress at .*: reconciled; it last matched/u,
+  );
+  assert.equal(failing.code, 0);
+  assert.match(
+    failing.stdout,
+    /✗ It last reconciled with WordPress at .*: failed \(network: WordPress couldn't be reached\)/u,
+  );
+  assert.match(never.stdout, /✗ It hasn't reconciled with WordPress yet/u);
+});

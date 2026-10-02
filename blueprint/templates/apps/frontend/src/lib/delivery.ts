@@ -39,7 +39,7 @@ import {
 export type HomePublication = Omit<HomeContent, "blocksOmitted" | "nodeId">;
 
 /** A published page or post as stored, with the design presets it was read with. */
-export type EntryPublication = Omit<EntryContent, "blocksOmitted">;
+export type EntryPublication = Omit<EntryContent, "blocksOmitted" | "modifiedAt">;
 
 export interface HomePage {
   home: HomePublication;
@@ -325,7 +325,7 @@ async function lookUpEntry(
   const promoted = await promoteEntry(store, route, read, readStartedAt);
   if (promoted.outcome.outcome === "withdrawn") return { kind: "missing", chrome };
   await supersedeMoved(store, promoted.found ? [promoted.found] : [], readStartedAt);
-  const { blocksOmitted: _, ...entry } = read.content;
+  const { blocksOmitted: _, modifiedAt: __, ...entry } = read.content;
   return { kind: "found", content: { entry, chrome } };
 }
 
@@ -337,7 +337,7 @@ async function liveEntry(route: string, siteOrigin?: string): Promise<EntryDeliv
   const liveChrome = chrome.kind === "found" ? chrome.content : null;
   if (read.kind === "unavailable") return read;
   if (read.kind === "missing") return { kind: "missing", chrome: liveChrome };
-  const { blocksOmitted: _, ...entry } = read.content;
+  const { blocksOmitted: _, modifiedAt: __, ...entry } = read.content;
   return { kind: "found", content: { entry, chrome: liveChrome ?? emptyChrome } };
 }
 
@@ -522,6 +522,86 @@ export async function refreshShared(
   return report;
 }
 
+/** What reconciliation did with a shared row: refreshed it (or failed to), or found it unchanged. */
+export type SharedOutcome = RecordOutcome | { outcome: "unchanged" };
+
+export interface SharedReconciliation {
+  home: SharedOutcome;
+  chrome: SharedOutcome;
+  design: SharedOutcome;
+}
+
+/**
+ * Reconciles the shared rows with WordPress: reads the front page (with the
+ * site's title and tagline), the chrome and the design presets, compares each
+ * read with what is stored, and promotes the ones that differ, by the same
+ * rules as any refresh. A failed read keeps what is stored. Comparing what
+ * WordPress returns, rather than asking it what changed, catches a change to
+ * any shared setting, whatever saved it.
+ */
+export async function reconcileShared(
+  store: PublicationStore,
+  siteOrigin?: string,
+): Promise<SharedReconciliation> {
+  const readStartedAt = Date.now();
+  const [home, chrome, design] = await Promise.all([
+    getHomeContent(),
+    getSiteChrome(siteOrigin),
+    getDesignPresets(),
+  ]);
+  const unchanged = async <T>(
+    key: string,
+    parse: (body: unknown) => T | undefined,
+    read: { state: "published"; content: unknown } | { state: "missing" } | null,
+  ) => {
+    if (!read) return false;
+    try {
+      const stored = await store.read(key, parse);
+      if (!stored || stored.state !== read.state) return false;
+      return (
+        stored.state !== "published" ||
+        ("content" in read && canonicalJson(stored.content) === canonicalJson(read.content))
+      );
+    } catch (error) {
+      if (!(error instanceof StoreFailure)) throw error;
+      return false;
+    }
+  };
+
+  let homeRead: { state: "published"; content: HomePublication } | { state: "missing" } | null =
+    null;
+  if (home.kind === "missing") homeRead = { state: "missing" };
+  if (home.kind === "found" && !home.content.blocksOmitted) {
+    const { blocksOmitted: _, nodeId: __, ...content } = home.content;
+    homeRead = { state: "published", content };
+  }
+  const sharedRead = (read: typeof chrome | typeof design) =>
+    read.kind === "found" ? ({ state: "published", content: read.content } as const) : null;
+
+  return {
+    home: (await unchanged(HOME, parseHome, homeRead))
+      ? { outcome: "unchanged" }
+      : await promoteHome(store, home, readStartedAt),
+    chrome: (await unchanged(CHROME, parseChrome, sharedRead(chrome)))
+      ? { outcome: "unchanged" }
+      : await promoteShared(store, CHROME, chrome, readStartedAt),
+    design: (await unchanged(DESIGN, parseDesign, sharedRead(design)))
+      ? { outcome: "unchanged" }
+      : await promoteShared(store, DESIGN, design, readStartedAt),
+  };
+}
+
+/** JSON with its object keys sorted, so two equal values compare equal. */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, item: unknown) =>
+    item && typeof item === "object" && !Array.isArray(item)
+      ? Object.fromEntries(
+          Object.entries(item as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1)),
+        )
+      : item,
+  );
+}
+
 /** Promotes a read of a shared row: the chrome, or the design presets. */
 function promoteShared(
   store: PublicationStore,
@@ -644,7 +724,7 @@ async function promoteEntry(
       ),
     };
   }
-  const { blocksOmitted, ...entry } = read.content;
+  const { blocksOmitted, modifiedAt, ...entry } = read.content;
   if (blocksOmitted) {
     return {
       outcome: await promote(route, () => ({
@@ -665,6 +745,7 @@ async function promoteEntry(
     state: "published",
     content: entry,
     nodeId: entry.id,
+    modifiedAt,
   }));
   if (outcome.outcome === "kept" || outcome.outcome === "withdrawn") return { outcome };
   const found = { nodeId: entry.id, route: canonical };
@@ -704,7 +785,8 @@ async function supersedeMoved(
   return { moved, failed };
 }
 
-async function eachLimited<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>) {
+/** Runs work on each item, at most `limit` at a time; resolves to the results in order. */
+export async function eachLimited<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>) {
   const results: R[] = [];
   let next = 0;
   const worker = async () => {

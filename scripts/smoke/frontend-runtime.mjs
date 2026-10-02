@@ -16,7 +16,11 @@
 //   event secret accepts this Site's signed events and refuses another key's;
 //   a signed withdrawal is a 404 at once with the CMS down, through a Worker
 //   restart, a delayed older publication and a refresh from a CMS that still
-//   returns the entry, until a later republication.
+//   returns the entry, until a later republication; a signed reconcile event
+//   (what the CMS's cron sends every minute) brings a lost publication, update,
+//   removal and menu change to visitors, fails and keeps every page while the
+//   CMS is down, and catches up with 60 lost publications over a few runs, each
+//   making no more than 40 CMS requests (Workers' Free plan allows 50).
 //
 // Nothing reaches Cloudflare: no account, token or remote resource is used.
 //
@@ -326,6 +330,76 @@ try {
       back.status === 200 &&
       servedEntry(back.html, "We launched again.", "Contact"),
     `${JSON.stringify(republished.body)} HTTP ${back.status}`,
+  );
+
+  // Reconciliation: changes WordPress made whose events never arrived, caught
+  // up by the signed reconcile event the CMS's cron sends every minute.
+  const reconcile = () =>
+    deliverEvent(port, eventKey, {
+      site: "acme",
+      id: randomUUID(),
+      action: "reconcile",
+      occurredAt: Date.now(),
+    });
+  await cms.start();
+  cms.entries.set("/events/", { id: "page-90", title: "Events", content: "Join us." });
+  cms.entries.get("/contact/").content = "Write to us, or call.";
+  cms.entries.delete("/about-us/");
+  cms.menuLabel = "Visit";
+  const reconciled = await reconcile();
+  await cms.stop();
+  const lost = await Promise.all(
+    ["/events/", "/contact/", "/about-us/", "/"].map((path) => visit(port, path)),
+  );
+  check(
+    "a signed reconcile event brings a lost publication, update, removal and menu change to visitors",
+    reconciled.status === 200 &&
+      reconciled.body?.status === "reconciled" &&
+      lost[0].status === 200 &&
+      servedEntry(lost[0].html, "Join us.", "Visit") &&
+      lost[1].html.includes("Write to us, or call.") &&
+      lost[2].status === 404 &&
+      served(lost[3].html, cms.heading, "Visit"),
+    `${JSON.stringify(reconciled.body)} ${lost.map(({ status }) => status)}`,
+  );
+
+  const unreachable = await reconcile();
+  const keptPages = await Promise.all(
+    ["/", "/contact/", "/events/"].map((path) => visit(port, path)),
+  );
+  check(
+    "with the CMS down a reconciliation fails and keeps every page",
+    unreachable.status === 503 &&
+      unreachable.body?.status === "failed" &&
+      keptPages.every(({ status }) => status === 200),
+    `${JSON.stringify(unreachable.body)} ${keptPages.map(({ status }) => status)}`,
+  );
+
+  await cms.start();
+  for (let index = 0; index < 60; index += 1) {
+    cms.entries.set(`/story-${index}/`, {
+      id: `page-${200 + index}`,
+      title: `Story ${index}`,
+      content: `Story ${index}.`,
+    });
+  }
+  const runs = [];
+  for (let run = 0; run < 6 && runs.at(-1)?.status !== "reconciled"; run += 1) {
+    const before = cms.requests;
+    const answer = await reconcile();
+    runs.push({ status: answer.body?.status, requests: cms.requests - before });
+  }
+  await cms.stop();
+  const stories = await Promise.all(
+    Array.from({ length: 60 }, (_, index) => visit(port, `/story-${index}/`)),
+  );
+  check(
+    "60 lost publications are caught up over a few runs, each within 40 CMS requests",
+    runs.at(-1)?.status === "reconciled" &&
+      runs.length > 1 &&
+      runs.every(({ requests }) => requests <= 40) &&
+      stories.every(({ status }) => status === 200),
+    JSON.stringify(runs),
   );
 } catch (error) {
   console.error(error.message);
