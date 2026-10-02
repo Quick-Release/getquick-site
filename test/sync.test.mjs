@@ -71,7 +71,7 @@ const MANAGED_PATHS = [
 // Frontend skeletons.
 const SHARED_PATHS = [".gitignore", "AGENTS.md", "package.json"];
 const CREATED_PATHS = [
-  "CONTEXT.md",
+  "GLOSSARY.md",
   "README.md",
   "VERSION",
   "apps/cms/.ddev/commands/host/db-sync",

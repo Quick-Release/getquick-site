@@ -23,4 +23,4 @@ What was decided, and why the alternatives were rejected.
 Record a decision here when it would be expensive to reverse or when a
 future contributor would otherwise re-litigate it — not for routine
 implementation choices already covered by [`AGENTS.md`](../../AGENTS.md) or
-[`CONTEXT.md`](../../CONTEXT.md).
+[`GLOSSARY.md`](../../GLOSSARY.md).

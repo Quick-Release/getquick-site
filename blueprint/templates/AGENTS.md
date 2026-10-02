@@ -16,7 +16,7 @@ records what `gq` last wrote.
   the pin, then run `gq sync` (`gq sync --check` reports what is pending).
 - Site guidance goes in `AGENTS.md` outside this section, and site ignore
   rules in `.gitignore` outside its section; both survive every sync.
-- Create-once files, such as `CONTEXT.md` and `README.md`, are the site's
+- Create-once files, such as `GLOSSARY.md` and `README.md`, are the site's
   once written: `gq sync` never rewrites or restores them unless asked to
   with `gq sync --recreate <path>`.
 - Anything the manifest doesn't list is site-owned and never touched.
@@ -67,6 +67,6 @@ Use `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `won
 
 ### Domain docs
 
-Use the single-context layout with root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
+Use the single-context layout with root `GLOSSARY.md` and `docs/adr/`. See `docs/agents/domain.md`.
 
 <!-- END gq -->

@@ -180,7 +180,7 @@ A site shares four more kinds of file with the blueprint:
   back after its siblings, in the file's indentation. One the blueprint
   retires is removed, unless the site changed it, in which case it is the
   site's.
-- **Create-once files.** `gq.ops.json`, the glossary (`CONTEXT.md`),
+- **Create-once files.** `gq.ops.json`, the glossary (`GLOSSARY.md`),
   `README.md`, `VERSION`, the workspace config (`pnpm-workspace.yaml`), the
   deploy extension directory's README (`deploy/ploi/admin.d/README.md`) and
   the app skeletons are written when absent, and recorded in the lock as

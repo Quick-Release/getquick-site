@@ -65,7 +65,7 @@
   ],
   "createOnce": [
     { "path": "gq.ops.json" },
-    { "path": "CONTEXT.md", "template": "templates/CONTEXT.md" },
+    { "path": "GLOSSARY.md", "template": "templates/GLOSSARY.md" },
     { "path": "README.md", "template": "templates/README.md" },
     { "path": "VERSION", "template": "templates/VERSION" },
     {

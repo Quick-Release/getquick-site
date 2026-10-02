@@ -11,11 +11,11 @@ the IDs of its Sigillo, Ploi, Cloudflare and GitHub resources.
 `gq.lock.json`, from `gq.ops.json` and the installed `@getquick/site`.
 `gq sync --check` reports what is pending without writing anything. Edit the
 site's own guidance in `AGENTS.md` and its own ignore rules in `.gitignore`
-outside their generated sections; this README and `CONTEXT.md` are the
+outside their generated sections; this README and `GLOSSARY.md` are the
 site's to change.
 
 ## Docs
 
-- [`CONTEXT.md`](CONTEXT.md): the site's glossary.
+- [`GLOSSARY.md`](GLOSSARY.md): the site's glossary.
 - [`docs/`](docs/): ADRs, research, plans and agent reference docs.
 - [`AGENTS.md`](AGENTS.md): guidance for coding agents.

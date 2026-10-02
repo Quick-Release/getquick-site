@@ -3,6 +3,19 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## Unreleased
+
+### Changed
+
+- The site glossary is `GLOSSARY.md`, not `CONTEXT.md`: `gq new` writes
+  `GLOSSARY.md`, and the generated `AGENTS.md` section, `docs/agents/domain.md`
+  and the README and `docs/adr/README.md` templates point at it. `gq` doesn't
+  rename the file in an existing site, since a create-once file is the
+  site's; `gq sync` would instead write a fresh `GLOSSARY.md` next to it. Run
+  `git mv CONTEXT.md GLOSSARY.md` before syncing to this version, and update
+  the site's own links to the old name; the lock then records `GLOSSARY.md`
+  as created and drops `CONTEXT.md`.
+
 ## 0.12.0 — 2026-10-02
 
 ### Added
