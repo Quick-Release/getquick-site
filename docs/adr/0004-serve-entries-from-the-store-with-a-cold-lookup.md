@@ -1,6 +1,7 @@
 # ADR 0004: Serve entries from the store, with a cold lookup
 
-- Status: Accepted
+- Status: Accepted (design presets amended by
+  [ADR 0007](0007-refresh-shared-settings-through-settings-events.md))
 - Date: 2026-10-02
 
 ## Context

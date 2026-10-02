@@ -64,6 +64,20 @@ wp gq-events status           # entries whose last event is pending or failed
 wp gq-events retry <post-id>  # send an entry's event again
 ```
 
+`web/app/mu-plugins/settings-events.php` does the same for the shared
+settings, so a change reaches every page without republishing them: the menus
+(a menu shown at a theme location, or the locations), the logo (`site_logo`),
+the site's identity (`blogname`, `blogdescription`, `site_icon`) and the
+design presets (the theme's global styles, or the active theme). It sends one
+event per setting at the end of the request, with the publication events' key
+and endpoint, and records each setting's last event and how it went (option
+`gq_settings_event_<setting>`).
+
+```sh
+wp gq-events settings status           # each setting's last event
+wp gq-events settings retry <setting>  # menus, logo, identity or design
+```
+
 ## Checks
 
 `pnpm cms:lint` (Pint) and `pnpm cms:test` (Pest) cover this site's own PHP.

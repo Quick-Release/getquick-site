@@ -129,6 +129,15 @@ the CMS. While the withdrawal is in force, no read promotes the entry again.
 Only a publication that happened after it lifts it.
 _Avoid_: purge, invalidation, delete (for an unpublish)
 
+**Shared setting**:
+Site-wide data every page is served with: the menus, the logo, the site's
+identity (title, tagline, icon) and the design presets. A change to one sends
+a settings event, a publication event naming the setting instead of an entry,
+which refreshes only the shared rows it is part of, so it reaches every page
+without republishing them
+([ADR 0007](docs/adr/0007-refresh-shared-settings-through-settings-events.md)).
+_Avoid_: options, theme settings (for the WordPress mechanisms behind them)
+
 **Cold lookup**:
 A visit's read of an entry the publication store has never held, the only CMS
 read a visit makes: a published entry is stored and served, a confirmed

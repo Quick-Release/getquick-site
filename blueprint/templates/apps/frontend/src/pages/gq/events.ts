@@ -1,6 +1,7 @@
 // The CMS's publication events: WordPress posts here, signed with the Site's
-// PUBLICATION_EVENT_SECRET, when a page or post is published or updated, and
-// the Frontend refreshes it from WordPress (src/lib/events.ts). 200 when the
+// PUBLICATION_EVENT_SECRET, when a page or post is published or updated, or a
+// shared setting changes, and the Frontend refreshes it from WordPress
+// (src/lib/events.ts). 200 when the
 // event was refreshed, superseded by a newer one or already processed; 503
 // when its refresh kept the stored versions (it is recorded as failed, for a
 // retry); 4xx, changing nothing, when it is refused.
@@ -16,8 +17,8 @@ function answer(status: number, body: unknown, headers: Record<string, string> =
   });
 }
 
-export const POST: APIRoute = async ({ request }) => {
-  const { status, body } = await receiveEvent(request);
+export const POST: APIRoute = async ({ request, site }) => {
+  const { status, body } = await receiveEvent(request, { siteOrigin: site?.origin });
   return answer(status, body);
 };
 

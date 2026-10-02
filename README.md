@@ -765,6 +765,34 @@ publication-events plugin against that Worker: drafts, publications, updates,
 renames, the Frontend down, failed refreshes, another key, a missing one, and
 unpublishing, password-protecting, trashing and deleting.
 
+### Shared settings
+
+Changing the menus, the logo, the site's identity (title, tagline, icon) or
+the design presets reaches every page without republishing any
+([ADR 0007](docs/adr/0007-refresh-shared-settings-through-settings-events.md)).
+The CMS skeleton's `web/app/mu-plugins/settings-events.php` sends a signed
+`settings` event, through the publication events' endpoint, key and records,
+when WordPress saves one: a menu shown at the primary location or the
+locations themselves, `site_logo`, `blogname`, `blogdescription`, `site_icon`,
+the theme's global styles (where GQ Design saves the palette) or the active
+theme. The Frontend re-reads only the shared rows every page is served with
+(the chrome, the shared design presets, and the front page for the title and
+tagline), never each entry.
+
+- Each setting's events are ordered on their own: a duplicate isn't processed
+  twice, and one older than an event already refreshed for that setting is
+  superseded. A failed read keeps the stored menus, branding and design, and
+  the event stays recorded as failed for a retry.
+- `wp gq-events settings status` lists each setting's last event and how it
+  went; `wp gq-events settings retry <setting>` sends it again.
+- A whole-Site refresh stores the shared design presets too; a Site last
+  refreshed before them serves each page with the presets it was read with.
+
+`scripts/smoke/cms-events.sh` changes each setting through WordPress's own
+APIs (a primary menu, `site_logo`, the tagline and icon, a palette saved
+through the global-styles REST route) and checks the homepage and an entry
+through an outage, a failed settings refresh and its retry.
+
 ## Programmatic use
 
 The CLI is a thin shell over `run()`, which resolves to an exit code:

@@ -631,6 +631,31 @@ test("a withdrawn front page is a 404 until a later republication", async () => 
   expect(republished.html).toContain("Back again");
 });
 
+test("a settings event for the site's identity doesn't restore a withdrawn front page", async () => {
+  await prepare();
+  wordpress();
+  await deliver(withdrawal("/"));
+  await later();
+  heading = "Still cached";
+  wordpress();
+
+  const { status, body } = await deliver({
+    site: SITE,
+    id: randomUUID(),
+    action: "settings",
+    occurredAt: Date.now(),
+    setting: "identity",
+  });
+  const home = await visit("/");
+  const entry = await visit("/about/");
+
+  expect(status).toBe(200);
+  expect(body.home).toEqual({ outcome: "withdrawn" });
+  expect(home.status).toBe(404);
+  expect(home.html).not.toContain("Still cached");
+  expect(entry.status).toBe(200);
+});
+
 const now = () => Math.floor(Date.now() / 1000);
 
 test.each<[string, () => Promise<{ status: number; body: Record<string, unknown> }>, number]>([

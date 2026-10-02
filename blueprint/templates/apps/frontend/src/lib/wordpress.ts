@@ -144,6 +144,8 @@ const entryData = z.object({
   designTokens,
 });
 
+const designData = z.object({ designTokens });
+
 const menuItem = z.object({
   id: z.string(),
   parentId: z.string().nullable(),
@@ -272,6 +274,22 @@ const entryQuery = /* GraphQL */ `
           sourceUrl
           altText
         }
+      }
+    }
+  }
+`;
+
+// The design presets alone, for a change to them that reaches every page.
+const designQuery = /* GraphQL */ `
+  query DesignPresets {
+    designTokens {
+      spacingSizes {
+        slug
+        size
+      }
+      colors {
+        slug
+        color
       }
     }
   }
@@ -503,6 +521,17 @@ export async function getEntryByUri(uri: string): Promise<Delivery<EntryContent>
         spacingSizes: data.designTokens.spacingSizes,
         colors: data.designTokens.colors,
       },
+    };
+  });
+}
+
+/** The design presets every page shares (GQ Design's spacing sizes and colors). */
+export async function getDesignPresets(): Promise<Found<DesignPresets> | Unavailable> {
+  return deliver("the design presets", async (): Promise<Found<DesignPresets>> => {
+    const { designTokens } = await query(designData, designQuery);
+    return {
+      kind: "found",
+      content: { spacingSizes: designTokens.spacingSizes, colors: designTokens.colors },
     };
   });
 }
