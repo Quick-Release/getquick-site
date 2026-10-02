@@ -1,6 +1,7 @@
 # ADR 0005: Refresh publications through signed CMS events
 
-- Status: Accepted
+- Status: Accepted; amended by [ADR 0006](0006-withdraw-publications-through-signed-cms-events.md)
+  (withdraw events; a password-protected entry is withdrawn, not refreshed)
 - Date: 2026-10-02
 
 ## Context

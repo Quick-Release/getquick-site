@@ -9,10 +9,21 @@
 // before it is processed (publications.ts), so a duplicate is recognised, an
 // event older than one already refreshed for the same entry is superseded
 // rather than processed, and one whose refresh failed stays on record, failed,
-// for a retry. Each action has its own handler: later slices add withdrawals
-// and shared settings beside "publish".
+// for a retry. Each action has its own handler: "publish", "withdraw" (a
+// later slice adds shared settings beside them).
+//
+// A withdrawal is the one event that changes what is served without reading
+// the CMS: the event's signature and the entry's identity are the authority,
+// so it holds while WordPress is unreachable, and only a publication that
+// happened after it can make the entry public again.
 import { z } from "astro/zod";
-import { refreshEntries, refreshHome, routeOf, type RecordOutcome } from "./delivery";
+import {
+  refreshEntries,
+  refreshHome,
+  routeOf,
+  withdrawEntry,
+  type RecordOutcome,
+} from "./delivery";
 import {
   publicationStore,
   StoreFailure,
@@ -68,6 +79,21 @@ const publishEvent = z
 type PublishEvent = z.infer<typeof publishEvent>;
 
 /**
+ * A page or post stopped being public (unpublished, made private or
+ * password-protected, trashed or deleted). `uri` is the one it had while it
+ * was published.
+ */
+const withdrawEvent = z
+  .object({
+    ...envelope,
+    action: z.literal("withdraw"),
+    entry: z.object({ id: z.string().min(1).max(200), uri: path }).strict(),
+  })
+  .strict();
+
+type WithdrawEvent = z.infer<typeof withdrawEvent>;
+
+/**
  * An action's handler: its event's shape, and what processing one does. A
  * parsed event is ready to run against the store, or invalid.
  */
@@ -94,6 +120,7 @@ const handlers: Record<string, Handler> = {
     body: { status: "checked", site: SITE },
   })),
   publish: handler(publishEvent, handlePublish),
+  withdraw: handler(withdrawEvent, handleWithdraw),
 };
 
 /** The event key when the Worker has one bound, and it is strong enough. */
@@ -240,6 +267,9 @@ async function handlePublish(store: PublicationStore, event: PublishEvent): Prom
   }
 
   await store.startEvent(event.id);
+  // A republication: it lifts the entry's withdrawal if that happened before.
+  const lifted = await store.liftWithdrawal(recorded);
+  if (lifted) console.info(`Events: ${event.id} lifts the withdrawal ${lifted}`);
   const routes = [
     ...new Set([recorded.uri, recorded.previousUri].filter((uri) => uri !== null).map(routeOf)),
   ];
@@ -280,4 +310,34 @@ async function handlePublish(store: PublicationStore, event: PublishEvent): Prom
       moved,
     },
   };
+}
+
+/**
+ * A withdrawal: the entry stops being served at once, from what the event
+ * says alone (withdrawEntry), unless a publication or withdrawal of it that
+ * happened later was already accepted. It needs no CMS read, so it can't fail
+ * on one; a store failure leaves it unrecorded or received, for the CMS to
+ * deliver again.
+ */
+async function handleWithdraw(store: PublicationStore, event: WithdrawEvent): Promise<EventAnswer> {
+  const withdrawal: PublicationEvent = {
+    id: event.id,
+    action: event.action,
+    nodeId: event.entry.id,
+    uri: event.entry.uri,
+    previousUri: null,
+    occurredAt: event.occurredAt,
+  };
+  const { recorded, duplicate } = await store.receiveEvent(withdrawal);
+  if (duplicate && (recorded.status === "refreshed" || recorded.status === "superseded")) {
+    console.info(`Events: ${event.id} is a duplicate of a ${recorded.status} event`);
+    return { status: 200, body: { event: event.id, status: recorded.status, duplicate: true } };
+  }
+
+  await store.startEvent(event.id);
+  const report = await withdrawEntry(store, recorded);
+  await store.finishEvent(recorded, {
+    status: report.status === "withdrawn" ? "refreshed" : "superseded",
+  });
+  return { status: 200, body: { event: event.id, ...report } };
 }

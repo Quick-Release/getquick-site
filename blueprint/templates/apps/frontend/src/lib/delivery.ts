@@ -4,11 +4,14 @@
 // publication store (publications.ts). A refresh reads the CMS (wordpress.ts)
 // and promotes only what it read completely and validly; a visit reads it
 // only to look up an entry the store has never held. Last-known-good content
-// has no age limit: it is served until a refresh replaces it.
+// has no age limit: it is served until a refresh replaces it, or the CMS
+// withdraws it (withdrawEntry): then it is a 404, and no read promotes it
+// again until a later publication lifts the withdrawal.
 import { z } from "astro/zod";
 import {
   publicationStore,
   StoreFailure,
+  type PublicationEvent,
   type PublicationStore,
   type Promotion,
   type StoredPublication,
@@ -30,7 +33,7 @@ import {
 } from "./wordpress";
 
 /** The front page as stored: what WordPress delivered, without read details. */
-export type HomePublication = Omit<HomeContent, "blocksOmitted">;
+export type HomePublication = Omit<HomeContent, "blocksOmitted" | "nodeId">;
 
 /** A published page or post as stored, with the design presets it was read with. */
 export type EntryPublication = Omit<EntryContent, "blocksOmitted">;
@@ -186,7 +189,9 @@ export async function publishedHome(siteOrigin?: string): Promise<HomeDelivery> 
   if (home?.state === "unusable") return notServed("the front page", "not-ready", home.message);
   if (chrome?.state === "unusable") return notServed("the front page", "not-ready", chrome.message);
   const storedChrome = chrome?.state === "published" ? chrome.content : null;
-  if (home?.state === "missing") return { kind: "missing", chrome: storedChrome };
+  if (home?.state === "missing" || home?.state === "withdrawn") {
+    return { kind: "missing", chrome: storedChrome };
+  }
   if (home?.state !== "published" || !storedChrome) {
     return notServed(
       "the front page",
@@ -202,7 +207,7 @@ async function liveHome(siteOrigin?: string): Promise<HomeDelivery> {
   const liveChrome = chrome.kind === "found" ? chrome.content : null;
   if (home.kind === "unavailable") return home;
   if (home.kind === "missing") return { kind: "missing", chrome: liveChrome };
-  const { blocksOmitted: _, ...content } = home.content;
+  const { blocksOmitted: _, nodeId: __, ...content } = home.content;
   return { kind: "found", content: { home: content, chrome: liveChrome ?? emptyChrome } };
 }
 
@@ -250,6 +255,7 @@ export async function publishedEntry(path: string, siteOrigin?: string): Promise
     case "unusable":
       return notServed(subject, "not-ready", entry.message);
     case "missing":
+    case "withdrawn":
       return { kind: "missing", chrome: chrome.content };
     case "moved":
       return { kind: "moved", uri: entry.uri };
@@ -263,7 +269,8 @@ export async function publishedEntry(path: string, siteOrigin?: string): Promise
  * one read a visit makes. Published and complete, it is promoted and served.
  * Confirmed missing is a 404 and stores nothing, since anyone can make up a
  * URL. A CMS failure is a 503: an empty store says nothing about whether the
- * entry exists. An entry WordPress keeps at another URI redirects there.
+ * entry exists. An entry WordPress keeps at another URI redirects there. One
+ * whose withdrawal is in force is a 404, whatever WordPress still returns.
  */
 async function lookUpEntry(
   store: PublicationStore,
@@ -278,6 +285,7 @@ async function lookUpEntry(
   if (canonical !== route) return { kind: "moved", uri: canonical };
 
   const promoted = await promoteEntry(store, route, read, readStartedAt);
+  if (promoted.outcome.outcome === "withdrawn") return { kind: "missing", chrome };
   await supersedeMoved(store, promoted.found ? [promoted.found] : [], readStartedAt);
   const { blocksOmitted: _, ...entry } = read.content;
   return { kind: "found", content: { entry, chrome } };
@@ -325,10 +333,12 @@ interface RefreshFailure {
 
 /**
  * What a refresh did with one row. `uri` is where a moved row now points, or
- * where WordPress keeps an entry requested at another route.
+ * where WordPress keeps an entry requested at another route. "withdrawn": the
+ * read found an entry whose withdrawal is in force, so nothing was promoted.
  */
 export type RecordOutcome =
   | { outcome: "promoted" | "superseded"; state: "published" | "missing" | "moved"; uri?: string }
+  | { outcome: "withdrawn" }
   | { outcome: "kept"; failure: RefreshFailure };
 
 /** Whether WordPress listed every published route, and how many. */
@@ -415,7 +425,9 @@ export async function refreshSite(
     ]);
     ready =
       usable(storedHome) !== null &&
-      (storedHome?.state === "missing" || usable(storedChrome)?.state === "published");
+      (storedHome?.state === "missing" ||
+        storedHome?.state === "withdrawn" ||
+        usable(storedChrome)?.state === "published");
   } catch (error) {
     if (!(error instanceof StoreFailure)) throw error;
   }
@@ -447,14 +459,14 @@ function promoteHome(store: PublicationStore, home: Delivery<HomeContent>, readS
   return promoteRead(store, HOME, "the front page", readStartedAt, parseHome, () => {
     if (home.kind === "unavailable") return home.failure;
     if (home.kind === "missing") return { state: "missing" };
-    const { blocksOmitted, ...content } = home.content;
+    const { blocksOmitted, nodeId, ...content } = home.content;
     if (blocksOmitted) {
       return {
         reason: "partial",
         message: "WordPress could only return the front page without its blocks",
       };
     }
-    return { state: "published", content };
+    return { state: "published", content, ...(nodeId ? { nodeId } : {}) };
   });
 }
 
@@ -555,14 +567,16 @@ async function promoteEntry(
   const canonical = routeOf(entry.uri);
   const moved = { state: "moved" as const, uri: canonical, nodeId: entry.id };
   if (canonical === "/") {
-    return { outcome: await promote(route, () => moved), found: { nodeId: entry.id, route: "/" } };
+    const outcome = await promote(route, () => moved);
+    if (outcome.outcome === "withdrawn") return { outcome };
+    return { outcome, found: { nodeId: entry.id, route: "/" } };
   }
   const outcome = await promote(canonical, () => ({
     state: "published",
     content: entry,
     nodeId: entry.id,
   }));
-  if (outcome.outcome === "kept") return { outcome };
+  if (outcome.outcome === "kept" || outcome.outcome === "withdrawn") return { outcome };
   const found = { nodeId: entry.id, route: canonical };
   if (canonical === route) return { outcome, found };
   if (!recordAlias) return { outcome: { ...outcome, uri: canonical }, found };
@@ -644,9 +658,11 @@ async function promoteRead<T>(
     try {
       const promoted = await store.promote(key, result, readStartedAt);
       outcome =
-        result.state === "moved"
-          ? { outcome: promoted, state: "moved", uri: result.uri }
-          : { outcome: promoted, state: result.state };
+        promoted === "withdrawn"
+          ? { outcome: "withdrawn" }
+          : result.state === "moved"
+            ? { outcome: promoted, state: "moved", uri: result.uri }
+            : { outcome: promoted, state: result.state };
     } catch (error) {
       if (!(error instanceof StoreFailure)) throw error;
       outcome = { outcome: "kept", failure: { reason: "store", message: error.message } };
@@ -657,6 +673,8 @@ async function promoteRead<T>(
     console.error(
       `Refresh: ${subject} kept its last stored version (${outcome.failure.reason}): ${outcome.failure.message}`,
     );
+  } else if (outcome.outcome === "withdrawn") {
+    console.info(`Refresh: ${subject} isn't promoted: its entry is withdrawn`);
   } else {
     console.info(
       `Refresh: ${subject} ${outcome.outcome} (${outcome.state}${outcome.uri ? ` to ${outcome.uri}` : ""})`,
@@ -667,13 +685,50 @@ async function promoteRead<T>(
       key,
       outcome.outcome === "kept"
         ? { outcome: "kept", reason: outcome.failure.reason, message: outcome.failure.message }
-        : { outcome: outcome.outcome },
+        : outcome.outcome === "withdrawn"
+          ? { outcome: "superseded", reason: "withdrawn" }
+          : { outcome: outcome.outcome },
     );
   } catch (error) {
     if (!(error instanceof StoreFailure)) throw error;
     console.error(`Refresh: ${subject}'s outcome couldn't be recorded: ${error.message}`);
   }
   return outcome;
+}
+
+export interface WithdrawalReport {
+  status: "withdrawn" | "superseded";
+  /** The routes now withdrawn (`/` for the front page). */
+  withdrawn: string[];
+  /** The later event that already won, when it is known. */
+  by?: string;
+}
+
+/**
+ * Withdraws a page or post the CMS unpublished, made private or
+ * password-protected, trashed or deleted, without reading the CMS: every
+ * route the store holds it at (served or redirecting) and the URI it was
+ * withdrawn at become a 404 at once, and stay one through outages, restarts,
+ * fallbacks, delayed or duplicate events and older in-flight reads, since no
+ * read promotes it again while the withdrawal is in force. A route holding
+ * another entry is left alone. A publication that happened later wins over
+ * it, before or after.
+ */
+export async function withdrawEntry(
+  store: PublicationStore,
+  event: PublicationEvent,
+): Promise<WithdrawalReport> {
+  const route = routeOf(event.uri);
+  const outcome = await store.withdraw(event, route === "/" ? HOME : entryKey(route), Date.now());
+  if (outcome.status === "superseded") {
+    console.info(
+      `Withdrawal: ${event.id} for ${route} is superseded${outcome.by ? ` by the later ${outcome.by}` : ""}`,
+    );
+    return { status: "superseded", withdrawn: [], ...(outcome.by ? { by: outcome.by } : {}) };
+  }
+  const withdrawn = outcome.keys.map((key) => (key === HOME ? "/" : key.slice(ENTRY.length)));
+  console.info(`Withdrawal: ${event.id} withdrew ${withdrawn.join(", ") || "nothing stored"}`);
+  return { status: "withdrawn", withdrawn };
 }
 
 /** The refresh's credential when the Worker has one bound, and it is strong enough. */

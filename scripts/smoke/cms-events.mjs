@@ -15,7 +15,11 @@
 //   recovers it once the Frontend is back; a refresh that fails on the
 //   Frontend, another key and a missing key in production are recorded as
 //   failures and change nothing served; `wp gq-events check` proves the
-//   runtime secret on both sides.
+//   runtime secret on both sides; unpublishing, password-protecting,
+//   trashing and deleting a page send withdrawals that make it a 404 at once,
+//   though the CMS the Frontend reads still returns it and then goes down,
+//   and republishing serves it again; a deletion while the Frontend is down
+//   is kept for `wp gq-events retry`.
 //
 // The Frontend reads published content from a stub WordPress that this proof
 // keeps in step with what it publishes, since the GETQUICK GraphQL schema
@@ -319,6 +323,127 @@ try {
     unconfigured?.delivery?.status === "failed" &&
       unconfigured.delivery.reason === "not-configured",
     JSON.stringify(unconfigured?.delivery),
+  );
+
+  // Withdrawals. The stub CMS keeps returning the entry throughout, as a
+  // WordPress whose GraphQL a cache still answers for would: only the event
+  // can make the Frontend stop serving it.
+  cms.entries.get("/launch/").content = "Published again.";
+  await wpOrFail(["post", "update", id, "--post_title=News"], cmsEnv);
+  check(
+    "the entry is served before it is withdrawn",
+    (await visit(port, "/launch/")).html.includes("Published again."),
+  );
+
+  await wpOrFail(["post", "update", id, "--post_status=draft"], cmsEnv);
+  const unpublished = await recorded(id);
+  const draft = await visit(port, "/launch/");
+  await cms.stop();
+  const draftDuringOutage = await visit(port, "/launch/");
+  check(
+    "unpublishing sends a withdrawal, and the entry is a 404 at once and through a CMS outage",
+    unpublished?.event?.action === "withdraw" &&
+      unpublished.event.entry.uri === "/launch/" &&
+      unpublished.event.entry.id === nodeId(id) &&
+      unpublished.delivery?.status === "refreshed" &&
+      draft.status === 404 &&
+      draftDuringOutage.status === 404 &&
+      !draftDuringOutage.html.includes("Published again."),
+    `${JSON.stringify(unpublished)} HTTP ${draft.status}, ${draftDuringOutage.status}`,
+  );
+
+  await cms.start();
+  await wpOrFail(["post", "update", id, "--post_status=publish"], cmsEnv);
+  const republished = await visit(port, "/launch/");
+  check(
+    "republishing serves it again",
+    republished.status === 200 && republished.html.includes("Published again."),
+    `HTTP ${republished.status}`,
+  );
+
+  await wpOrFail(["post", "update", id, "--post_password=members-only"], cmsEnv);
+  const protectedEvent = await recorded(id);
+  const protectedVisit = await visit(port, "/launch/");
+  check(
+    "password-protecting it withdraws it",
+    protectedEvent?.event?.action === "withdraw" && protectedVisit.status === 404,
+    `${JSON.stringify(protectedEvent?.event)} HTTP ${protectedVisit.status}`,
+  );
+  await wpOrFail(["post", "update", id, "--post_password="], cmsEnv);
+  check("removing the password publishes it again", (await visit(port, "/launch/")).status === 200);
+
+  await wpOrFail(["post", "delete", id], cmsEnv);
+  const trashed = await recorded(id);
+  const trashedVisit = await visit(port, "/launch/");
+  check(
+    "trashing it sends a withdrawal at the URI it had, and it is a 404",
+    trashed?.event?.action === "withdraw" &&
+      trashed.event.entry.uri === "/launch/" &&
+      trashed.delivery?.status === "refreshed" &&
+      trashedVisit.status === 404,
+    `${JSON.stringify(trashed)} HTTP ${trashedVisit.status}`,
+  );
+
+  // A draft first (no event), so the stub CMS knows its id when it is published.
+  const publishPage = async (slug, content) => {
+    const page = await wpOrFail(
+      [
+        "post",
+        "create",
+        "--post_type=page",
+        "--post_status=draft",
+        `--post_title=${slug}`,
+        `--post_name=${slug}`,
+        `--post_content=${content}`,
+        "--porcelain",
+      ],
+      cmsEnv,
+    );
+    cms.entries.set(`/${slug}/`, { id: nodeId(page), title: slug, content });
+    await wpOrFail(["post", "update", page, "--post_status=publish"], cmsEnv);
+    return page;
+  };
+  const deletedOption = async () =>
+    JSON.parse(
+      (await wp(["option", "get", "gq_publication_events_deleted", "--format=json"])).stdout ||
+        "{}",
+    );
+
+  const team = await publishPage("team", "Our team.");
+  check("a second page is published", (await visit(port, "/team/")).status === 200);
+  await wpOrFail(["post", "delete", team, "--force"], cmsEnv);
+  const deleted = await visit(port, "/team/");
+  check(
+    "deleting a published page outright withdraws it, and leaves no record once refreshed",
+    deleted.status === 404 && !(team in (await deletedOption())),
+    `HTTP ${deleted.status}`,
+  );
+
+  const old = await publishPage("old", "Old news.");
+  await stopWorker(worker);
+  const deletedOffline = await wp(["post", "delete", old, "--force"], cmsEnv);
+  const pendingDeletion = (await deletedOption())[old];
+  const listed = await wp(["gq-events", "status", "--format=json"], cmsEnv);
+  check(
+    "with the Frontend down, deleting succeeds and keeps the failed withdrawal for a retry",
+    deletedOffline.code === 0 &&
+      pendingDeletion?.event?.action === "withdraw" &&
+      pendingDeletion.delivery?.status === "failed" &&
+      pendingDeletion.delivery.reason === "network" &&
+      JSON.parse(listed.stdout || "[]").some((row) => String(row.post) === old),
+    JSON.stringify(pendingDeletion) + listed.stdout + listed.stderr,
+  );
+  worker = await local.start(port);
+  const stillServed = await visit(port, "/old/");
+  const retriedDeletion = await wp(["gq-events", "retry", old], cmsEnv);
+  const withdrawnLater = await visit(port, "/old/");
+  check(
+    "wp gq-events retry delivers it once the Frontend is back, and the page is a 404",
+    stillServed.status === 200 &&
+      retriedDeletion.code === 0 &&
+      withdrawnLater.status === 404 &&
+      !(old in (await deletedOption())),
+    `HTTP ${stillServed.status} → ${withdrawnLater.status}: ${retriedDeletion.stdout}${retriedDeletion.stderr}`,
   );
 } catch (error) {
   console.error(error.message);

@@ -6,6 +6,7 @@
 // from the Frontend's own migrations. Nothing reaches Cloudflare.
 
 import { spawn, spawnSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -247,8 +248,29 @@ export async function visit(port, path = "/") {
   return {
     status: response.status,
     location: response.headers.get("location"),
+    cacheControl: response.headers.get("cache-control"),
     html: await response.text(),
   };
+}
+
+/**
+ * Posts an event to the Frontend's /gq/events as the Site's CMS does: signed
+ * with `secret` (HMAC-SHA256 of "<timestamp>.<body>"). Resolves to the HTTP
+ * status and the answer.
+ */
+export async function deliverEvent(port, secret, event) {
+  const body = JSON.stringify(event);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const response = await fetch(`http://127.0.0.1:${port}/gq/events`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "GQ-Event-Timestamp": timestamp,
+      "GQ-Event-Signature": `v1=${createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex")}`,
+    },
+    body,
+  });
+  return { status: response.status, body: await response.json().catch(() => null) };
 }
 
 /**
