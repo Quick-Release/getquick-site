@@ -18,7 +18,7 @@ export function createPloiClient(options) {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
-        "User-Agent": `getquick-site/${VERSION}`,
+        "User-Agent": `gq-site/${VERSION}`,
         ...(body === undefined && (!options.method || options.method === "GET")
           ? {}
           : { "Content-Type": "application/json" }),

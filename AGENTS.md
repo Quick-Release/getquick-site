@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Issues live in GitHub Issues on Quick-Release/getquick-site (via `gh`). See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues on Quick-Release/gq-site (via `gh`). See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

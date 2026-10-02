@@ -59,7 +59,7 @@ if (process.env[reentry] !== "1" || process.env.SIGILLO !== "1") {
   );
 } else {
   if (!process.env.NPM_TOKEN) throw new Error("NPM_TOKEN is missing from Sigillo operations.");
-  const directory = mkdtempSync(join(tmpdir(), "getquick-site-publish-"));
+  const directory = mkdtempSync(join(tmpdir(), "gq-site-publish-"));
   const userconfig = join(directory, "npmrc");
   try {
     writeFileSync(userconfig, "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n", { mode: 0o600 });

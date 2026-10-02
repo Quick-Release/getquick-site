@@ -6,7 +6,7 @@
 ## Context
 
 Phase 2 of the [rollout plan](../plans/getquick-blueprint-rollout.md) builds
-`gq new` and `gq sync` ([spec #1](https://github.com/Quick-Release/getquick-site/issues/1)).
+`gq new` and `gq sync` ([spec #1](https://github.com/Quick-Release/gq-site/issues/1)).
 Before it, everything around `@getquick/site` was copied per site: the hooks,
 toolchain pins, docs skeleton, `AGENTS.md` base, CI Worker config, frontend
 deploy scripts and CMS deploy script existed only as Lombardi's files.

@@ -19,4 +19,4 @@ Cloudflare Workers.
 
 The blueprint and fleet vocabulary (blueprint, managed file, site-owned file,
 variant) is
-[getquick-site's glossary](https://github.com/Quick-Release/getquick-site/blob/main/GLOSSARY.md).
+[gq-site's glossary](https://github.com/Quick-Release/gq-site/blob/main/GLOSSARY.md).

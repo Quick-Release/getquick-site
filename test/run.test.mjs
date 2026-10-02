@@ -290,7 +290,7 @@ test("ploi api refuses a mutation without --yes and sends nothing", async () => 
       headers: {
         Authorization: "Bearer ploi-secret",
         Accept: "application/json",
-        "User-Agent": `getquick-site/${packageJson.version}`,
+        "User-Agent": `gq-site/${packageJson.version}`,
         "Content-Type": "application/json",
       },
       body: '{"web_directory":"/dist"}',

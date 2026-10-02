@@ -1,6 +1,6 @@
 # GETQUICK site blueprint
 
-`getquick-site` holds the blueprint every GETQUICK site follows: the `gq`
+`gq-site` holds the blueprint every GETQUICK site follows: the `gq`
 CLI, published as `@getquick/site`, and the design and rollout plan behind
 it ([ADR 0001](docs/adr/0001-the-getquick-site-blueprint.md)).
 
@@ -15,7 +15,7 @@ _Avoid_: project (in prose; `project` is the manifest key naming a site)
 
 **Blueprint**:
 The shared definition of a site's managed files and conventions.
-`getquick-site` (repository), `@getquick/site` (package) and `gq` (command)
+`gq-site` (repository, formerly `getquick-site`), `@getquick/site` (package) and `gq` (command)
 are its code names, not separate terms.
 _Avoid_: template, base project
 
