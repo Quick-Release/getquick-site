@@ -1,0 +1,313 @@
+# Provisioning and deployment
+
+[Documentation](../README.md)
+
+## Ploi provisioning and releases
+
+After [generating or adopting a site](sites.md) and
+[configuring Sigillo](secrets.md), these run through `gq sigillo run <environment> --`, which injects
+`PLOI_API_TOKEN` and the other secrets they read. Site values come from
+`gq.ops.json`:
+
+```json
+{
+  "project": "example-site",
+  "domains": { "admin": "admin.example.com", "frontend": "www.example.com" },
+  "ploi": {
+    "serverId": "12345",
+    "siteId": "67890",
+    "systemUser": "example",
+    "projectRoot": "/",
+    "webDirectory": "/apps/cms/web",
+    "database": "example_staging",
+    "envTemplate": "apps/cms/.env.production.example",
+    "deployScript": "deploy/ploi/admin.sh"
+  },
+  "releases": { "bucket": "example-releases", "prefix": "admin/" },
+  "media": { "bucket": "example-media", "domain": "media.example.com" },
+  "cloudflare": { "accountId": "0123456789abcdef0123456789abcdef" }
+}
+```
+
+- `ploi provision` inspects Ploi and plans, idempotently, the system user,
+  the site, custom deployments (no git; releases come from R2), the database
+  and the site `.env` (rendered from `ploi.envTemplate`), the deploy script
+  and the Let's Encrypt certificate. `--dry-run` only reports the plan and
+  the drift; applying asks first in a terminal and needs `--yes` elsewhere.
+  It records a newly found site ID in `gq.ops.json`.
+- `ploi release` packs the release commit (`--ref`, else the `v*` tag at
+  `HEAD`, else `HEAD`) with `git archive`: `apps/cms` and `deploy/ploi` plus a
+  `RELEASE` manifest. It uploads the archive to the `releases` bucket on R2
+  (`RELEASES_R2_*`, else `R2_*` credentials), syncs Ploi's stored deploy
+  script from `ploi.deployScript` as of that commit, and deploys with the
+  deploy variables `archive_url` (a 30-minute presigned URL) and
+  `composer_auth` (`COMPOSER_AUTH`, required). It fails unless the deploy log
+  reports `<PROJECT>_DEPLOY_STATUS=success SHA=<the release commit>`.
+  `--git-dir` reads the commit from another repository.
+- `ploi media` sets the `S3_UPLOADS_*` lines of the Ploi site's `.env` for
+  the `media` bucket from `S3_UPLOADS_KEY`/`S3_UPLOADS_SECRET`, leaving every
+  other line as it is.
+
+The site's deploy script is the other half of the contract: it reads
+`$ARCHIVE_URL` and `$COMPOSER_AUTH`, deploys the paths in
+`ploiReleaseShippedPaths` (exported for a site test), and prints the status
+line. `gq sync` generates it at `deploy/ploi/admin.sh` (see
+[Generate and sync a site](sites.md)), which is what
+`ploi.deployScript` should name.
+
+## Database sync and backup
+
+Live → local only: no `gq` command sends a database to the server. Both run
+through `gq sigillo run <environment> --` for `PLOI_API_TOKEN`, the backup
+bucket's `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` and, for `sync`,
+`COMPOSER_AUTH`. Beside the `domains`, `ploi` and `cloudflare` values above,
+they read:
+
+```json
+{
+  "backups": { "bucket": "example-releases", "prefix": "db/" },
+  "local": { "adminEmail": "dev@example.com", "frontendUrl": "http://localhost:4321" }
+}
+```
+
+- `db backup` runs one Ploi script on the server: `wp db export`, gzipped
+  and uploaded to `<backups.prefix><ploi.database>/<UTC time>.sql.gz` in the
+  `backups` bucket through a 15-minute presigned URL, then
+  `<PROJECT>_DB_EXPORT=success …` with its size and checksum. The script is
+  refused, before Ploi gets it, if it could write to a database (`wp db
+import`, `search-replace`, `wp user`, `mysql`, …).
+- `db sync` first checks that `apps/cms/.env` targets the site's DDEV
+  project (starting DDEV and wiring its database and URL into the `.env`),
+  takes the backup, downloads and verifies it, runs `composer install` with
+  the host Composer, snapshots the local database (`ddev snapshot`), imports
+  the backup, replaces the live `domains` with the DDEV URL and
+  `local.frontendUrl` (default `http://localhost:4321`), and resets the local
+  administrator `dev` / `dev` with `local.adminEmail`. It confirms first in a
+  terminal and needs `--yes` elsewhere. It relaunches itself with mkcert's
+  public CA (`NODE_EXTRA_CA_CERTS`) so its last check can reach the local
+  site over HTTPS.
+
+## Cloudflare provisioning and CI
+
+The `gq cloudflare` provisioning commands run through `gq sigillo run
+<environment> --` with the environment that holds the account's
+`CLOUDFLARE_TOKEN_MANAGER_API_TOKEN`, and store what they mint in the
+`staging` Sigillo environment (over stdin, never printed). Each finds its
+token by name (`GETQUICK <PROJECT> …`), creates it when missing or inactive,
+rolls it when Sigillo lost its value, and does nothing otherwise; `--dry-run`
+only prints the plan. Buckets are created with a 1-hour token that is deleted
+afterwards. Beside the `cloudflare`, `releases` and `media` values above, they
+read:
+
+```json
+{
+  "cloudflare": { "accountId": "…", "zoneId": "…", "zoneName": "example.com" },
+  "artifacts": { "namespace": "example", "repo": "example" },
+  "ci": { "worker": "example-ci", "backupBucket": "example-ci-backups", "directory": "infra/ci" },
+  "github": { "repository": "example-org/example" }
+}
+```
+
+- `cloudflare deploy-token`: "Staging Alchemy", the frontend's deploy token
+  (account Workers permissions, plus Zone Read / DNS Write / Workers Routes
+  Write on `cloudflare.zoneId` only) → `CLOUDFLARE_API_TOKEN`.
+- `cloudflare releases`: the `releases` bucket and "Releases R2", object
+  read/write on it only → `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` (the S3
+  keys R2 derives from the token), for `ploi release`.
+- `cloudflare media`: the `media` bucket with its public custom domain, and
+  "Media R2" → `S3_UPLOADS_KEY` / `S3_UPLOADS_SECRET`, for `ploi media`.
+- `cloudflare ci`: "Artifacts" → `ARTIFACTS_API_TOKEN`, the `ci.backupBucket`
+  bucket and "CI Backups R2" → `CI_BACKUP_R2_*`, "CI Deploy" →
+  `CI_DEPLOY_API_TOKEN`, and the `artifacts` namespace and repository.
+
+`gq sync` generates the site's CI Worker in `infra/ci`, with its own
+Wrangler (a site that keeps one elsewhere points `ci.directory` at it);
+these commands deploy and connect it:
+
+- `ci deploy` deploys the Worker `ci.worker` with `CI_DEPLOY_API_TOKEN`, then
+  sends its secrets to `wrangler secret bulk` as JSON over stdin: `CF_TOKEN`,
+  `PLOI_API_TOKEN`, `COMPOSER_AUTH`, `GITHUB_CI_TOKEN`,
+  `GITHUB_WEBHOOK_SECRET`, the backup bucket's key as `R2_*` and the releases
+  bucket's as `RELEASES_R2_*`. It refuses, before Wrangler runs, when one is
+  missing. `ci runs` lists the Worker's CI Workflow runs.
+- `github setup` stores a generated `GITHUB_WEBHOOK_SECRET` and a pasted,
+  validated fine-grained `GITHUB_CI_TOKEN` (prompting in a terminal only),
+  then creates or updates `github.repository`'s push webhook to the Worker's
+  `/github/webhook` through your `gh` login.
+- `git artifacts setup` registers `gq git artifacts`, under
+  `gq sigillo run staging`, as git's only credential helper for the Artifacts
+  host, and drops the Artifacts push URL older setups added to `origin`. As
+  the helper, `get` answers that host only with a read-only git token that
+  expires in an hour; nothing is stored.
+
+## Independent media
+
+A content site's WordPress uploads live on R2 (Human Made S3 Uploads), on a
+public custom domain of their own, so a CMS outage doesn't also take down the
+images its published pages reference. `cloudflare media` creates the bucket,
+its domain and its key; `ploi media` points the CMS's `.env` at it; the next
+CMS release activates `s3-uploads`. `gq media check` says whether that holds,
+and what to do when it doesn't (exit 1 when not ready):
+
+```sh
+pnpm media:check          # gq sigillo run staging -- gq media check
+pnpm media:check:upload   # … gq media check --upload
+pnpm media:check:local    # gq media check --local
+```
+
+- The production check, through `gq sigillo run staging`, reads `gq.ops.json`
+  `media`, `cloudflare.accountId`, `domains` and `wordpress.plugins`, the Ploi
+  site's `.env` (`PLOI_API_TOKEN`; values are compared, never shown), the
+  bucket through `S3_UPLOADS_KEY`/`S3_UPLOADS_SECRET`, the media domain, and
+  the Frontend's rendered homepage. The media domain must be neither the CMS's
+  host nor the Frontend's, and the homepage must not reference uploads on a
+  CMS (`/app/uploads/`, `/wp-content/uploads/`). Passing these makes the site
+  **configured**, not yet **ready**.
+- `--upload` proves the upload path: signed in as `CMS_CHECK_USER` with the
+  application password `CMS_CHECK_APP_PASSWORD` (a dedicated Author user; both
+  in Sigillo `staging`), it uploads a 1×1 PNG through the CMS's REST media
+  endpoint, requires WordPress to hand out a URL on the media domain, reads
+  the object back from the bucket, fetches it from the media domain without
+  the CMS and compares the bytes, then deletes the attachment (and reports an
+  object it left behind). Only then is the site **ready**.
+- `--local` checks this machine, offline and without secrets: the local CMS
+  keeps uploads on disk unless `apps/cms/.env` holds R2 credentials, which
+  would write to the live bucket. Local readiness says nothing about the
+  production prerequisite. `gq doctor` runs the same check.
+- `--json` prints `{ scope, status, ready, checks: [{ name, status, detail,
+action }] }`; `status` is `ready`, `configured` or `not-ready`.
+
+Neither the checks nor the commands they point to reset the CMS, overwrite
+site-owned files or touch other `.env` lines. Availability of R2 itself is
+outside the guarantee.
+
+## Durable published content
+
+A new content site's Frontend serves its homepage and its entries (published
+pages and posts), with the menu, logo, site identity and design presets they
+need, from its publication store: a D1 database of its own, declared in
+`infra/frontend.run.ts` and bound to the Worker as `PUBLICATION_DB`
+([ADR 0003](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0003-serve-published-content-from-a-durable-store.md),
+[ADR 0004](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0004-serve-entries-from-the-store-with-a-cold-lookup.md)).
+Visitors are served what the store holds without the Frontend reading the CMS,
+so pages stay up through a CMS outage of any length and through Worker
+restarts and redeploys. A refresh fills and updates the store:
+
+```sh
+pnpm frontend:refresh     # gq sigillo run staging -- gq frontend refresh
+pnpm frontend:refresh --uri /about-us/       # only these entries
+```
+
+- `gq frontend refresh` posts to `https://<domains.frontend>/gq/refresh`
+  (or `--url <origin>`; plain HTTP only to localhost) with
+  `FRONTEND_REFRESH_TOKEN` from Sigillo `staging` as a bearer token. Without
+  `--uri` it prepares the whole Site: the Frontend reads the front page, the
+  chrome, and every page and post WordPress lists as published or the store
+  already holds, anonymously. `--uri <path>` (repeatable, up to 100) refreshes
+  only those entries, such as a new publication or a renamed one. Each
+  complete, valid read is promoted; a failed one (timeout, network, HTTP,
+  GraphQL, missing required data, or content without its blocks) keeps what
+  was stored, and the report says why. It exits 1 unless everything asked for
+  was refreshed (and, for the whole Site, the homepage is ready).
+- `FRONTEND_REFRESH_TOKEN` is the site's own secret (32 characters or more,
+  such as `openssl rand -hex 32`), not a Cloudflare token.
+  `pnpm deploy:frontend` binds it to the Worker, and so do Cloudflare CI
+  releases once `pnpm ci:deploy` has given it to the CI Worker; deployed
+  without it, the Frontend refuses every refresh and keeps serving what it
+  holds.
+- Until a refresh has stored the front page and its chrome, pages are a 503,
+  never a placeholder or a 404. A front page WordPress confirms isn't set is
+  stored as missing and is a 404.
+- A stored entry WordPress confirmed missing is a 404; one WordPress keeps at
+  another route now redirects there (301), once a refresh has found it there.
+- An entry the store has never held is looked up in the CMS on the visit:
+  stored and served if published, a 404 if WordPress confirms nothing is
+  there, a 503 if the CMS fails. Only public entries are stored, never
+  password-protected or unpublished ones.
+- A whole-Site refresh makes at least one CMS request per entry in one Worker
+  invocation; on Workers' Free plan (50 subrequests) a larger site needs
+  `--uri` refreshes.
+- Existing sites: `infra/frontend.run.ts` only creates the store when
+  `apps/frontend/migrations` exists, so a site-owned Frontend that hasn't
+  adopted the files deploys as before.
+
+### Publication events
+
+Publishing or updating a page or post refreshes it on the Frontend without a
+deploy ([ADR 0005](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0005-refresh-publications-through-signed-cms-events.md)).
+The CMS skeleton's `web/app/mu-plugins/publication-events.php` sends a signed
+publication event to the Frontend's `/gq/events`; the Frontend reads that
+entry from WordPress anonymously, like any refresh, and promotes it only if it
+is published and complete.
+
+```sh
+pnpm ploi:events              # gq ploi events: the key into the Ploi .env
+pnpm frontend:events:check    # gq frontend events check
+```
+
+- `PUBLICATION_EVENT_SECRET` is the Site's event key (32 characters or more,
+  such as `openssl rand -hex 32`) in Sigillo `staging`: not the refresh token,
+  a deploy token or CORS. `pnpm deploy:frontend` and CI releases bind it to the
+  Worker; `gq ploi events` sets it in the Ploi site's `.env` (leaving every
+  other line, never showing it), and the next CMS release applies it.
+- Events are signed (HMAC-SHA256 of the timestamp and body, valid for five
+  minutes) and name the Site; the Frontend refuses unsigned, stale, tampered,
+  wrong-Site, unsupported and malformed ones without reading the CMS or
+  changing anything. Each event has an id and the time it happened: a
+  duplicate isn't processed twice, and one older than an event already
+  refreshed for the same entry is superseded.
+- Publishing never waits on the Frontend: the event goes out at the end of
+  the request (after the editor's response under PHP-FPM, 15 seconds at most),
+  and the entry records how it went. A failed delivery or refresh keeps the
+  previous version served; `wp gq-events status` lists pending and failed
+  events, `wp gq-events retry <post>` sends one again and `wp gq-events check`
+  proves the CMS's key against the Frontend. Automatic retries come later.
+- `gq frontend events check` sends a signed check event, which changes
+  nothing, to prove the deployed Frontend has this Site's key bound.
+- Unpublishing, making private, password-protecting, trashing or deleting a
+  page or post sends a signed withdrawal
+  ([ADR 0006](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0006-withdraw-publications-through-signed-cms-events.md)).
+  The Frontend makes every route of that entry a 404 at once, without reading
+  the CMS. No refresh, cold lookup, delayed or duplicate event, or stale CMS
+  answer brings it back; only a later publication does. Pages answer with
+  `Cache-Control: no-cache`, so no cache reuses a withdrawn page without
+  asking the Worker. A withdrawal the Frontend never received while the CMS
+  is down too can't be known: the entry stays served until either is back.
+
+`scripts/smoke/frontend-runtime.sh` proves it on a disposable generated site
+without Cloudflare: Alchemy's Astro build, served in workerd (Wrangler's local
+mode) with a local D1 store, against a stub CMS taken down, a Worker restart,
+a rebuilt redeploy, a cold lookup, a new publication, a moved entry and the
+Worker's event key and withdrawals. `scripts/smoke/cms-events.sh` adds a real
+WordPress (the pinned version, on SQLite, with WP-CLI) running the site's
+publication-events plugin against that Worker: drafts, publications, updates,
+renames, the Frontend down, failed refreshes, another key, a missing one, and
+unpublishing, password-protecting, trashing and deleting.
+
+### Shared settings
+
+Changing the menus, the logo, the site's identity (title, tagline, icon) or
+the design presets reaches every page without republishing any
+([ADR 0007](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0007-refresh-shared-settings-through-settings-events.md)).
+The CMS skeleton's `web/app/mu-plugins/settings-events.php` sends a signed
+`settings` event, through the publication events' endpoint, key and records,
+when WordPress saves one: a menu shown at the primary location or the
+locations themselves, `site_logo`, `blogname`, `blogdescription`, `site_icon`,
+the theme's global styles (where GQ Design saves the palette) or the active
+theme. The Frontend re-reads only the shared rows every page is served with
+(the chrome, the shared design presets, and the front page for the title and
+tagline), never each entry.
+
+- Each setting's events are ordered on their own: a duplicate isn't processed
+  twice, and one older than an event already refreshed for that setting is
+  superseded. A failed read keeps the stored menus, branding and design, and
+  the event stays recorded as failed for a retry.
+- `wp gq-events settings status` lists each setting's last event and how it
+  went; `wp gq-events settings retry <setting>` sends it again.
+- A whole-Site refresh stores the shared design presets too; a Site last
+  refreshed before them serves each page with the presets it was read with.
+
+`scripts/smoke/cms-events.sh` changes each setting through WordPress's own
+APIs (a primary menu, `site_logo`, the tagline and icon, a palette saved
+through the global-styles REST route) and checks the homepage and an entry
+through an outage, a failed settings refresh and its retry.

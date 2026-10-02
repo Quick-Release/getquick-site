@@ -53,13 +53,13 @@
     { "path": ".claude/skills", "symlink": "../.agents/skills" }
   ],
   "generatedSections": [
-    { "path": ".gitignore", "template": "templates/gitignore" },
-    { "path": "AGENTS.md", "template": "templates/AGENTS.md" }
+    { "path": ".gitignore", "template": "templates/fragments/gitignore.section" },
+    { "path": "AGENTS.md", "template": "templates/fragments/AGENTS.section.md" }
   ],
   "managedKeys": [
     {
       "path": "package.json",
-      "template": "templates/package.json",
+      "template": "templates/fragments/package.keys.json",
       "initial": "templates/package.initial.json"
     }
   ],
