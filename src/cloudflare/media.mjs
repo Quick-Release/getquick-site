@@ -15,7 +15,7 @@
 //   gq cloudflare media [--dry-run]
 
 import { createReporter } from "../cli/reporter.mjs";
-import { sigilloSecrets } from "../sigillo/sigillo.mjs";
+import { sigilloSecrets } from "../sigillo/commands.mjs";
 import { createCloudflareAccountClient } from "./account-client.mjs";
 import {
   accountPolicy,

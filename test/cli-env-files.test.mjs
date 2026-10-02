@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseEnv } from "../src/ops/env.mjs";
+import { parseEnv } from "../src/cli/env-files.mjs";
 
 test("parses common dotenv quoting, comments, and escapes", () => {
   assert.deepEqual(

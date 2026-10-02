@@ -19,7 +19,7 @@ import { randomBytes } from "node:crypto";
 import { createCloudflareAccountClient } from "../cloudflare/account-client.mjs";
 import { SECRETS_ENVIRONMENT } from "../cloudflare/tokens.mjs";
 import { createReporter } from "../cli/reporter.mjs";
-import { sigilloSecrets } from "../sigillo/sigillo.mjs";
+import { sigilloSecrets } from "../sigillo/commands.mjs";
 import { ciDeployToken } from "./deploy.mjs";
 
 export function webhookUrl(worker, subdomain) {

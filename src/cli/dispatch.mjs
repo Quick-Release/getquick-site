@@ -15,8 +15,8 @@ import {
   releaseCommandOptions,
   RELEASE_USAGE,
   runReleaseCommand,
-} from "../release/release.mjs";
-import { isSigilloCommand, runSigilloCommand, SIGILLO_USAGE } from "../sigillo/sigillo.mjs";
+} from "../release/commands.mjs";
+import { isSigilloCommand, runSigilloCommand, SIGILLO_USAGE } from "../sigillo/commands.mjs";
 import { CMS_USAGE, isCmsCommand, runCmsCommand } from "../cms/commands.mjs";
 import {
   isPloiWorkflow,

@@ -25,6 +25,28 @@ their own toolchain pins. See [the migration research](https://github.com/Quick-
 `vp check` runs static checks only; `vp run check` also runs the tests.
 `vp run test` uses the existing `node:test` suite, not `vp test` (Vitest).
 
+### Source filenames
+
+For this package's CLI source in `src/`:
+
+- Use lowercase kebab-case filenames.
+- Use `commands.mjs` for a module's command entry file.
+- Use `legacy-*` for compatibility-only modules, such as
+  `manifest/legacy-release-config.mjs`; current manifest settings stay in
+  `manifest/site-settings.mjs`.
+- Add a qualifier only when it disambiguates the role: `dotenv-text.mjs` parses
+  and edits text, while `cli/env-files.mjs` parses, reads, and writes environment
+  files. Keep these coherent modules separate; a naming change does not require
+  splitting or merging them.
+
+Apply these conventions when working on ambiguous names, not as a blanket rename
+of every file. They do not apply to extracted PHP/Astro app skeletons or upstream
+agent skills. Manifest and deployment contracts such as `domains.admin`,
+`deploy/ploi/admin.sh`, and `admin.d/` remain unchanged; see
+[ADR 0002](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0002-generate-sites-from-a-versioned-manifest.md).
+
+### Tests
+
 Keep tests flat in `test/`, named `<module>-<subject>.test.mjs` (for example,
 `workspace-verify.test.mjs` or `sync-ownership.test.mjs`); a module-only name is
 fine for a whole-module suite. Shared helpers live in `test/support/` and baseline

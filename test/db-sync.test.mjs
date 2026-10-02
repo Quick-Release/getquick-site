@@ -12,7 +12,7 @@ import {
   searchReplacePairs,
   sitePath,
 } from "../src/db/sync.mjs";
-import { applyEnv, parseDotenv } from "../src/dotenv.mjs";
+import { applyEnv, parseDotenv } from "../src/dotenv-text.mjs";
 
 const liveDomains = ["lombardi-admin.bnq.pt", "lombardi-fe.bnq.pt"];
 const localEnv = {

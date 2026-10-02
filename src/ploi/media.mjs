@@ -6,7 +6,7 @@
 //
 //   gq ploi media [--dry-run]
 
-import { applyEnv } from "../dotenv.mjs";
+import { applyEnv } from "../dotenv-text.mjs";
 import { createReporter } from "../cli/reporter.mjs";
 import { createPloiServerClient } from "./server-client.mjs";
 

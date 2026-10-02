@@ -22,7 +22,7 @@ import {
   foldReleaseConfig,
   readReleaseConfig,
   RELEASE_CONFIG_FILENAME,
-} from "../manifest/release-config.mjs";
+} from "../manifest/legacy-release-config.mjs";
 import { SCHEMA_VERSION, VARIANTS } from "../manifest/schema.mjs";
 import { locateProjectConfig } from "../ops/project-context.mjs";
 import { unifiedDiff } from "./diff.mjs";

@@ -19,7 +19,7 @@ import { join, relative } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
-import { parseDotenv } from "../dotenv.mjs";
+import { parseDotenv } from "../dotenv-text.mjs";
 import { createReporter } from "../cli/reporter.mjs";
 import { syncLocalDesign, withCmsLocalOperation } from "./local-design.mjs";
 import { CMS_PATH, commandExists, describeDdev, ensureCmsEnv, localEnvDefaults } from "./local.mjs";

@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyEnv } from "../src/dotenv.mjs";
+import { applyEnv } from "../src/dotenv-text.mjs";
 import { ploiReleaseShippedPaths } from "../src/index.mjs";
 import { mediaEnv } from "../src/ploi/media.mjs";
 import {
