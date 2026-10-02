@@ -3,6 +3,20 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## 0.13.4 — 2026-10-02
+
+### Changed
+
+- Clarified CLI and provider source ownership and role-based filenames while
+  preserving the package's public exports and command behavior.
+- Made the README an entry point to focused site guides, command references
+  and contributor documentation, all included in the published package.
+- Distinguished blueprint section and managed-key fragments from whole-file
+  sources without changing generated site paths or ownership rules.
+- Organized tests by module and subject, clarified shared helper roles and
+  documented fixture provenance. Test discovery still excludes extracted site
+  scripts, and existing fixture contents are preserved.
+
 ## 0.13.3 — 2026-10-02
 
 ### Fixed
