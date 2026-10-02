@@ -81,6 +81,7 @@ function printReport(body, io) {
   const lines = [];
   if (body.home) lines.push(["front page", body.home]);
   if (body.chrome) lines.push(["site chrome", body.chrome]);
+  if (body.design) lines.push(["design presets", body.design]);
   for (const [label, outcome] of lines) {
     io.out(`  ${MARKS[outcome.outcome] ?? "?"} ${label}: ${describe(outcome)}`);
   }

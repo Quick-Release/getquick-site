@@ -19,6 +19,7 @@ const REFRESHED = Object.freeze({
   refreshed: true,
   home: { outcome: "promoted", state: "published" },
   chrome: { outcome: "promoted", state: "published" },
+  design: { outcome: "promoted", state: "published" },
   routes: { outcome: "listed", count: 2 },
   entries: { "/about/": { outcome: "promoted", state: "published" } },
   moved: {},
@@ -43,6 +44,7 @@ test("a refresh asks the Frontend, with its token, to promote the whole Site", a
   assert.deepEqual(JSON.parse(request.body), {});
   assert.match(stdout, /✓ front page: promoted \(published\)/u);
   assert.match(stdout, /✓ site chrome: promoted \(published\)/u);
+  assert.match(stdout, /✓ design presets: promoted \(published\)/u);
   assert.match(stdout, /✓ published routes: 2 listed/u);
   assert.match(stdout, /✓ \/about\/: promoted \(published\)/u);
   assert.match(stdout, /^Ready: published content is served from the publication store\.$/mu);

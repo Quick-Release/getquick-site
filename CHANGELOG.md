@@ -164,8 +164,39 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
     `.env.production.example`.
   - Add `PUBLICATION_EVENT_SECRET` to Sigillo staging, rerun `pnpm ci:deploy`,
     deploy the Frontend, run `pnpm ploi:events` and release the CMS.
-- **Not yet:** withdrawals (#44), shared-settings events (#45), and automated
-  retries with editor-facing delay reports (#46).
+- **Not yet:** withdrawals (#44), and automated retries with editor-facing
+  delay reports (#46).
+- New content sites refresh their shared settings through events: a change to
+  the menus, the logo, the site's identity (title, tagline, icon) or the
+  design presets reaches the homepage and every entry without republishing
+  them, and outlives later CMS outages
+  ([ADR 0007](docs/adr/0007-refresh-shared-settings-through-settings-events.md)).
+  - The CMS skeleton gains `web/app/mu-plugins/settings-events.php`. It sends
+    a signed `settings` event, with the publication events' key and endpoint,
+    when WordPress saves a menu shown at a theme location or the locations,
+    `site_logo`, `blogname`, `blogdescription`, `site_icon`, the theme's
+    global styles (GQ Design's palette) or the active theme. One event per
+    setting per request is sent at the end of it, and each setting records its
+    last event and delivery in `gq_settings_event_<setting>`.
+    `wp gq-events settings status` and `wp gq-events settings retry <setting>`
+    list and resend them.
+  - The Frontend refreshes only the shared rows every page is served with,
+    not each entry: the chrome, the front page (title and tagline) or the new
+    shared `design` row, which the homepage and every entry are served with
+    once stored. A whole-Site refresh stores it too, and `gq frontend refresh`
+    reports it. A failed read keeps the stored menus, branding and design. A
+    setting's events are recorded like an entry's (subject `setting:<name>`),
+    so duplicates, delayed events and retries follow the same rules.
+  - `src/settings.test.ts` covers each setting on the homepage and two
+    entries, outages, each failed read kind, a partly failed identity refresh
+    and its retry, duplicate, delayed and racing events, Sites prepared before
+    the shared presets, and refused events. `scripts/smoke/cms-events.sh` now
+    changes each setting through WordPress's own APIs, including a palette
+    saved through the global-styles REST route.
+  - **Existing sites** that adopted events: copy `settings-events.php`,
+    `src/settings.test.ts` and the updated `src/lib/delivery.ts`,
+    `src/lib/events.ts`, `src/lib/wordpress.ts`, `src/pages/gq/events.ts` and
+    `src/test/wordpress-stub.ts` from a newly generated site.
 
 ### Fixed
 

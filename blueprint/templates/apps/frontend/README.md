@@ -38,7 +38,7 @@ posts) and the site chrome (menu, logo, icon, site identity, design presets)
 from its publication store, a D1 database bound as `PUBLICATION_DB`
 (`../../infra/frontend.run.ts`). `src/lib/delivery.ts` decides what is served
 and what may be stored; `src/lib/publications.ts` is the store: one row per
-publication (`home`, `chrome`, `entry:<route>`), with the `format` of its body,
+publication (`home`, `chrome`, `design`, `entry:<route>`), with the `format` of its body,
 the WordPress entry it holds and when its CMS read started, so an older read
 never replaces a newer one. `migrations/` holds its schema, which Alchemy
 applies on deploy: add a new numbered file for a change, and keep it
@@ -73,6 +73,14 @@ already refreshed for the same entry is superseded, and one whose refresh
 failed stays recorded as failed while the stored version is still served.
 Each action has its own handler there.
 
+A shared setting's change (the CMS's `settings` event for the menus, the logo,
+the site's identity or the design presets) refreshes only the shared rows
+every page is served with: the chrome, the front page (its title and tagline)
+or `design`, the presets every page uses once a refresh has stored them. So it
+reaches the homepage and every entry without re-reading them. Each setting's
+events are ordered on their own, like an entry's, and a failed read keeps the
+stored menus, branding and design.
+
 `pnpm dev` has no store: it reads the CMS live, as before.
 
 ## Blocks
@@ -89,8 +97,8 @@ change it here; a shared renderer package is planned.
 (`vp test`) run from the workspace root, and in `pnpm verify`. `src/routes.test.ts`
 renders the pages through Astro's Container API against a stubbed CMS
 (`vitest.config.ts` gives Vitest Astro's Vite config); `src/homepage.test.ts`,
-`src/entries.test.ts` and `src/events.test.ts` drive the durable homepage,
-entries and publication events through refreshes, outages, restarts, new and
+`src/entries.test.ts`, `src/events.test.ts` and `src/settings.test.ts` drive
+the durable homepage, entries, publication events and shared settings through refreshes, outages, restarts, new and
 moved publications, refused, duplicate, delayed and failed events, with the
 store on SQLite (`src/test/sqlite-d1.ts`, the same migrations and SQL).
 

@@ -1,7 +1,8 @@
 // Published-content delivery: what visitors are served, and what a trusted
 // refresh may promote. The deployed Frontend serves the front page, the
 // entries (published pages and posts) and the site chrome from the
-// publication store (publications.ts). A refresh reads the CMS (wordpress.ts)
+// publication store (publications.ts), with the shared design presets when it
+// holds them. A refresh reads the CMS (wordpress.ts)
 // and promotes only what it read completely and validly; a visit reads it
 // only to look up an entry the store has never held. Last-known-good content
 // has no age limit: it is served until a refresh replaces it.
@@ -16,12 +17,14 @@ import {
 } from "./publications";
 import { frontendBindings } from "./runtime";
 import {
+  getDesignPresets,
   getEntryByUri,
   getHomeContent,
   getPublishedRoutes,
   getSiteChrome,
   type CmsFailureReason,
   type Delivery,
+  type DesignPresets,
   type EntryContent,
   type Found,
   type HomeContent,
@@ -73,6 +76,8 @@ export type EntryDelivery =
 
 const HOME = "home";
 const CHROME = "chrome";
+/** The design presets every page is served with, once a refresh has stored them. */
+const DESIGN = "design";
 /** Entries are stored at "entry:<route>". */
 const ENTRY = "entry:";
 const entryKey = (route: string) => `${ENTRY}${route}`;
@@ -131,6 +136,7 @@ const entryPublication = z.object({
   colors,
 });
 const siteChrome = z.object({ menuItems: z.array(menuItem), siteIcon: image, siteLogo: image });
+const designPresets = z.object({ spacingSizes, colors });
 
 const parseWith = (schema: z.ZodType) => (body: unknown) => {
   const parsed = schema.safeParse(body);
@@ -139,6 +145,7 @@ const parseWith = (schema: z.ZodType) => (body: unknown) => {
 const parseHome = parseWith(homePublication) as (body: unknown) => HomePublication | undefined;
 const parseChrome = parseWith(siteChrome) as (body: unknown) => SiteChrome | undefined;
 const parseEntry = parseWith(entryPublication) as (body: unknown) => EntryPublication | undefined;
+const parseDesign = parseWith(designPresets) as (body: unknown) => DesignPresets | undefined;
 
 const emptyChrome: SiteChrome = { menuItems: [], siteIcon: null, siteLogo: null };
 
@@ -157,6 +164,25 @@ function usable<T>(stored: StoredPublication<T> | Unusable | null) {
 }
 
 /**
+ * The stored shared design presets, or null without them: a Site last
+ * refreshed before they were stored apart serves each page with the presets
+ * it was read with, as does one whose stored presets this Frontend can't read.
+ */
+function sharedDesign(stored: StoredPublication<DesignPresets> | Unusable | null) {
+  if (stored?.state === "unusable") {
+    console.error(`Delivery: the shared design presets can't be served: ${stored.message}`);
+  }
+  return stored?.state === "published" ? stored.content : null;
+}
+
+/** A page's content with the shared design presets, when they are stored. */
+function withDesign<T extends DesignPresets>(content: T, design: DesignPresets | null): T {
+  return design
+    ? { ...content, spacingSizes: design.spacingSizes, colors: design.colors }
+    : content;
+}
+
+/**
  * The front page and its chrome, from the store. Outside the deployed Worker
  * there is no store: `astro dev` reads the CMS live, and a production build
  * without one is not ready rather than a CMS reader for every visitor.
@@ -172,11 +198,12 @@ export async function publishedHome(siteOrigin?: string): Promise<HomeDelivery> 
     );
   }
 
-  let home, chrome;
+  let home, chrome, design;
   try {
-    [home, chrome] = await Promise.all([
+    [home, chrome, design] = await Promise.all([
       store.read(HOME, parseHome),
       store.read(CHROME, parseChrome),
+      store.read(DESIGN, parseDesign),
     ]);
   } catch (error) {
     if (!(error instanceof StoreFailure)) throw error;
@@ -194,7 +221,10 @@ export async function publishedHome(siteOrigin?: string): Promise<HomeDelivery> 
       "the front page and its chrome haven't been refreshed into the publication store yet",
     );
   }
-  return { kind: "found", content: { home: home.content, chrome: storedChrome } };
+  return {
+    kind: "found",
+    content: { home: withDesign(home.content, sharedDesign(design)), chrome: storedChrome },
+  };
 }
 
 async function liveHome(siteOrigin?: string): Promise<HomeDelivery> {
@@ -226,11 +256,12 @@ export async function publishedEntry(path: string, siteOrigin?: string): Promise
     );
   }
 
-  let entry, chrome;
+  let entry, chrome, design;
   try {
-    [entry, chrome] = await Promise.all([
+    [entry, chrome, design] = await Promise.all([
       store.read(entryKey(route), parseEntry),
       store.read(CHROME, parseChrome),
+      store.read(DESIGN, parseDesign),
     ]);
   } catch (error) {
     if (!(error instanceof StoreFailure)) throw error;
@@ -245,7 +276,14 @@ export async function publishedEntry(path: string, siteOrigin?: string): Promise
       "the site chrome hasn't been refreshed into the publication store yet",
     );
   }
-  if (!entry) return lookUpEntry(store, route, chrome.content);
+  const found = (content: EntryPublication): EntryDelivery => ({
+    kind: "found",
+    content: { entry: withDesign(content, sharedDesign(design)), chrome: chrome.content },
+  });
+  if (!entry) {
+    const looked = await lookUpEntry(store, route, chrome.content);
+    return looked.kind === "found" ? found(looked.content.entry) : looked;
+  }
   switch (entry.state) {
     case "unusable":
       return notServed(subject, "not-ready", entry.message);
@@ -254,7 +292,7 @@ export async function publishedEntry(path: string, siteOrigin?: string): Promise
     case "moved":
       return { kind: "moved", uri: entry.uri };
     case "published":
-      return { kind: "found", content: { entry: entry.content, chrome: chrome.content } };
+      return found(entry.content);
   }
 }
 
@@ -350,12 +388,13 @@ export interface RefreshReport extends EntriesRefreshReport {
   ready: boolean;
   home: RecordOutcome;
   chrome: RecordOutcome;
+  design: RecordOutcome;
   routes: RoutesOutcome;
 }
 
 /**
  * Refreshes the whole Site, the explicit preparation of its store: the front
- * page, the chrome, and every entry WordPress lists as published or the store
+ * page, the chrome, the shared design presets, and every entry WordPress lists as published or the store
  * already holds (so one deleted or moved since is reconciled). Each read that
  * is complete and valid is promoted; a failed one keeps what is stored, so a
  * failed chrome read doesn't touch the front page or the entries, nor the
@@ -367,22 +406,16 @@ export async function refreshSite(
   siteOrigin?: string,
 ): Promise<RefreshReport> {
   const readStartedAt = Date.now();
-  const [home, chrome, listing] = await Promise.all([
+  const [home, chrome, design, listing] = await Promise.all([
     getHomeContent(),
     getSiteChrome(siteOrigin),
+    getDesignPresets(),
     getPublishedRoutes(),
   ]);
 
   const homeOutcome = await promoteHome(store, home, readStartedAt);
-  const chromeOutcome = await promoteRead(
-    store,
-    CHROME,
-    "the site chrome",
-    readStartedAt,
-    parseChrome,
-    () =>
-      chrome.kind === "found" ? { state: "published", content: chrome.content } : chrome.failure,
-  );
+  const chromeOutcome = await promoteShared(store, CHROME, chrome, readStartedAt);
+  const designOutcome = await promoteShared(store, DESIGN, design, readStartedAt);
 
   let stored: string[] = [];
   let routes: RoutesOutcome =
@@ -424,14 +457,71 @@ export async function refreshSite(
     refreshed:
       homeOutcome.outcome !== "kept" &&
       chromeOutcome.outcome !== "kept" &&
+      designOutcome.outcome !== "kept" &&
       routes.outcome === "listed" &&
       entries.refreshed,
     home: homeOutcome,
     chrome: chromeOutcome,
+    design: designOutcome,
     routes,
     entries: entries.entries,
     moved: entries.moved,
   };
+}
+
+/** What a shared setting's change refreshes: the rows every affected page is served with. */
+export type SharedPart = "home" | "chrome" | "design";
+
+export interface SharedRefreshReport {
+  /** Whether every part was promoted (or superseded by a newer read). */
+  refreshed: boolean;
+  home?: RecordOutcome;
+  chrome?: RecordOutcome;
+  design?: RecordOutcome;
+}
+
+/**
+ * Refreshes shared settings: the chrome (menu, logo, icon), the shared design
+ * presets, or the front page (which holds the site's title and tagline).
+ * Every page is served with the stored chrome and design, so promoting them
+ * reaches every page at once, without reading the entries again. Each part is
+ * promoted only from a complete, valid read; a failed one keeps what is
+ * stored, so a failed read never erases navigation, branding or design.
+ */
+export async function refreshShared(
+  store: PublicationStore,
+  parts: SharedPart[],
+  siteOrigin?: string,
+): Promise<SharedRefreshReport> {
+  const readStartedAt = Date.now();
+  const wanted = new Set(parts);
+  const [home, chrome, design] = await Promise.all([
+    wanted.has("home") ? getHomeContent() : undefined,
+    wanted.has("chrome") ? getSiteChrome(siteOrigin) : undefined,
+    wanted.has("design") ? getDesignPresets() : undefined,
+  ]);
+  const report: SharedRefreshReport = { refreshed: true };
+  if (home) report.home = await promoteHome(store, home, readStartedAt);
+  if (chrome) report.chrome = await promoteShared(store, CHROME, chrome, readStartedAt);
+  if (design) report.design = await promoteShared(store, DESIGN, design, readStartedAt);
+  report.refreshed = [report.home, report.chrome, report.design].every(
+    (outcome) => outcome?.outcome !== "kept",
+  );
+  return report;
+}
+
+/** Promotes a read of a shared row: the chrome, or the design presets. */
+function promoteShared(
+  store: PublicationStore,
+  key: typeof CHROME | typeof DESIGN,
+  read: Found<SiteChrome | DesignPresets> | { kind: "unavailable"; failure: RefreshFailure },
+  readStartedAt: number,
+) {
+  const subject = key === CHROME ? "the site chrome" : "the shared design presets";
+  const parse = (key === CHROME ? parseChrome : parseDesign) as (body: unknown) => unknown;
+  return promoteRead(store, key, subject, readStartedAt, parse, () =>
+    read.kind === "found" ? { state: "published", content: read.content } : read.failure,
+  );
 }
 
 /**

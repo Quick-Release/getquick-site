@@ -78,10 +78,13 @@ const frontPage = () =>
   });
 
 // WordPress, up and answering from `published`, unless a handler says otherwise.
-function wordpress(handlers: { entry?: Handler; chrome?: Handler; routes?: Handler } = {}) {
+function wordpress(
+  handlers: { entry?: Handler; chrome?: Handler; design?: Handler; routes?: Handler } = {},
+) {
   return stubWordPress({
     home: frontPage,
     entry: entryAnswer,
+    design: () => data({ designTokens: presets }),
     routes: () => routes("/", ...published.keys()),
     ...handlers,
   });
@@ -92,6 +95,7 @@ function cmsDown() {
     home: unreachable,
     entry: unreachable,
     chrome: unreachable,
+    design: unreachable,
     routes: unreachable,
   });
 }
