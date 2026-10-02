@@ -1,14 +1,19 @@
-// `gq frontend refresh`: the trusted refresh of a content site's durable
-// homepage. It asks the deployed Frontend (POST /gq/refresh, the Frontend's
-// src/pages/gq/refresh.ts) to read the front page and the site chrome from the
-// CMS and promote what it read completely into its publication store. The
-// bearer token is FRONTEND_REFRESH_TOKEN, injected by gq sigillo run staging;
-// it is sent only to the Frontend and never printed. Exits 1 until the
-// Frontend is ready and everything was refreshed, so it can gate a script.
+// `gq frontend refresh`: the trusted refresh of a content site's published
+// content. It asks the deployed Frontend (POST /gq/refresh, the Frontend's
+// src/pages/gq/refresh.ts) to read published content from the CMS and promote
+// what it read completely into its publication store: the whole Site (front
+// page, site chrome and every published page and post), or with --uri only the
+// entries at those paths (a new publication, or a changed URI). The bearer
+// token is FRONTEND_REFRESH_TOKEN, injected by gq sigillo run staging; it is
+// sent only to the Frontend and never printed. Exits 1 until everything asked
+// for was refreshed (and, for the whole Site, the homepage is ready), so it
+// can gate a script.
 //
-//   gq frontend refresh [--url <frontend origin>] [--json]
+//   gq frontend refresh [--uri <path>]... [--url <frontend origin>] [--json]
 
-export const FRONTEND_USAGE = ["gq frontend refresh [--url <frontend origin>] [--json]"];
+export const FRONTEND_USAGE = [
+  "gq frontend refresh [--uri <path>]... [--url <frontend origin>] [--json]",
+];
 
 const MARKS = { promoted: "✓", superseded: "✓", kept: "✗" };
 
@@ -17,7 +22,7 @@ export function isFrontendCommand(command) {
 }
 
 export function frontendCommandOptions(command) {
-  return isFrontendCommand(command) ? ["url"] : undefined;
+  return isFrontendCommand(command) ? ["url", "uri"] : undefined;
 }
 
 function frontendOrigin(parsed, ops) {
@@ -40,9 +45,49 @@ function frontendOrigin(parsed, ops) {
   return url;
 }
 
-// Resolves to the exit code: 0 when the Frontend is ready and refreshed, 1 when not.
+function requestedUris(parsed) {
+  const uris = parsed.uri ?? [];
+  for (const uri of uris) {
+    if (!uri.startsWith("/") || uri.startsWith("//") || /[?#\s]/u.test(uri)) {
+      throw new Error(`--uri must be a path such as /about/, not ${uri}.`);
+    }
+  }
+  return uris;
+}
+
+function describe(outcome) {
+  if (outcome.outcome === "kept") {
+    return `kept the stored version (${outcome.failure.reason}): ${outcome.failure.message}`;
+  }
+  return `${outcome.outcome} (${outcome.state}${outcome.uri ? ` to ${outcome.uri}` : ""})`;
+}
+
+function printReport(body, io) {
+  const lines = [];
+  if (body.home) lines.push(["front page", body.home]);
+  if (body.chrome) lines.push(["site chrome", body.chrome]);
+  for (const [label, outcome] of lines) {
+    io.out(`  ${MARKS[outcome.outcome] ?? "?"} ${label}: ${describe(outcome)}`);
+  }
+  if (body.routes) {
+    io.out(
+      body.routes.outcome === "listed"
+        ? `  ✓ published routes: ${body.routes.count} listed`
+        : `  ✗ published routes: not listed (${body.routes.failure.reason}): ${body.routes.failure.message}`,
+    );
+  }
+  for (const [route, outcome] of Object.entries(body.entries ?? {})) {
+    io.out(`  ${MARKS[outcome.outcome] ?? "?"} ${route}: ${describe(outcome)}`);
+  }
+  for (const [from, to] of Object.entries(body.moved ?? {})) {
+    io.out(`  ✓ ${from}: moved to ${to}, and redirects there`);
+  }
+}
+
+// Resolves to the exit code: 0 when everything asked for was refreshed, 1 when not.
 export async function runFrontendCommand({ context, parsed, fetch, io }) {
   const url = frontendOrigin(parsed, context.config);
+  const uris = requestedUris(parsed);
   const token = context.env.FRONTEND_REFRESH_TOKEN?.trim();
   if (!token) {
     throw new Error(
@@ -59,8 +104,8 @@ export async function runFrontendCommand({ context, parsed, fetch, io }) {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: "{}",
-      signal: AbortSignal.timeout(30_000),
+      body: JSON.stringify(uris.length > 0 ? { uris } : {}),
+      signal: AbortSignal.timeout(uris.length > 0 ? 30_000 : 300_000),
     });
   } catch (error) {
     throw new Error(`The Frontend at ${url.origin} couldn't be reached: ${error.message}`, {
@@ -69,7 +114,12 @@ export async function runFrontendCommand({ context, parsed, fetch, io }) {
   }
 
   const body = await response.json().catch(() => null);
-  const isReport = body && typeof body === "object" && "home" in body && "chrome" in body;
+  const site = uris.length === 0;
+  // A Frontend from before entries were stored reports only the homepage.
+  const isReport =
+    body &&
+    typeof body === "object" &&
+    (site ? "home" in body && "chrome" in body : typeof body.entries === "object");
   if (!isReport) {
     const reason = body?.error ?? `HTTP ${response.status}`;
     if (parsed.json) io.out(JSON.stringify({ status: response.status, error: reason }, null, 2));
@@ -81,23 +131,22 @@ export async function runFrontendCommand({ context, parsed, fetch, io }) {
     io.out(JSON.stringify(body, null, 2));
   } else {
     io.out(`Frontend refresh (${url.origin})`);
-    for (const [label, outcome] of [
-      ["front page", body.home],
-      ["site chrome", body.chrome],
-    ]) {
-      const detail =
-        outcome.outcome === "kept"
-          ? `kept the stored version (${outcome.failure.reason}): ${outcome.failure.message}`
-          : `${outcome.outcome} (${outcome.state})`;
-      io.out(`  ${MARKS[outcome.outcome] ?? "?"} ${label}: ${detail}`);
+    printReport(body, io);
+    if (!site) {
+      io.out(
+        body.refreshed
+          ? "Refreshed: these entries are served from the publication store."
+          : "Not refreshed: entries that kept their stored version are served as before until a refresh succeeds.",
+      );
+    } else {
+      io.out(
+        body.ready
+          ? body.refreshed
+            ? "Ready: published content is served from the publication store."
+            : "Ready, but not refreshed: visitors get the last stored versions until a refresh succeeds."
+          : "Not ready: pages are a 503 until a refresh stores the front page and the site chrome.",
+      );
     }
-    io.out(
-      body.ready
-        ? body.refreshed
-          ? "Ready: the homepage is served from the publication store."
-          : "Ready, but not refreshed: visitors get the last stored version until a refresh succeeds."
-        : "Not ready: the homepage is a 503 until a refresh stores the front page and the site chrome.",
-    );
   }
-  return body.ready && body.refreshed ? 0 : 1;
+  return body.refreshed && (!site || body.ready) ? 0 : 1;
 }

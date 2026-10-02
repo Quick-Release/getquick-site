@@ -295,8 +295,9 @@ function parseArguments(argv) {
     "--ref",
     "--git-dir",
     "--url",
+    "--uri",
   ]);
-  const repeatedValueOptions = new Set(["--path", "--query"]);
+  const repeatedValueOptions = new Set(["--path", "--query", "--uri"]);
   const booleanOptions = new Set(["--all", "--dry-run", "--yes", "--upload", "--local"]);
 
   for (let index = 0; index < argv.length; index += 1) {

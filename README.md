@@ -263,7 +263,7 @@ gq cloudflare ci [--dry-run]
 
 gq media check [--upload | --local] [--json]
 
-gq frontend refresh [--url <frontend origin>] [--json]
+gq frontend refresh [--uri <path>]... [--url <frontend origin>] [--json]
 
 gq ci deploy
 gq ci runs
@@ -660,45 +660,59 @@ Neither the checks nor the commands they point to reset the CMS, overwrite
 site-owned files or touch other `.env` lines. Availability of R2 itself is
 outside the guarantee.
 
-## Durable homepage
+## Durable published content
 
-A new content site's Frontend serves its homepage, with the menu, logo, site
-identity and design presets it needs, from its publication store: a D1
-database of its own, declared in `infra/frontend.run.ts` and bound to the
-Worker as `PUBLICATION_DB`
-([ADR 0003](docs/adr/0003-serve-published-content-from-a-durable-store.md)).
-Visitors never make the Frontend read the CMS, so the homepage stays up
-through a CMS outage of any length and through Worker restarts and redeploys.
-A refresh fills and updates the store:
+A new content site's Frontend serves its homepage and its entries (published
+pages and posts), with the menu, logo, site identity and design presets they
+need, from its publication store: a D1 database of its own, declared in
+`infra/frontend.run.ts` and bound to the Worker as `PUBLICATION_DB`
+([ADR 0003](docs/adr/0003-serve-published-content-from-a-durable-store.md),
+[ADR 0004](docs/adr/0004-serve-entries-from-the-store-with-a-cold-lookup.md)).
+Visitors are served what the store holds without the Frontend reading the CMS,
+so pages stay up through a CMS outage of any length and through Worker
+restarts and redeploys. A refresh fills and updates the store:
 
 ```sh
 pnpm frontend:refresh     # gq sigillo run staging -- gq frontend refresh
+pnpm frontend:refresh --uri /about-us/       # only these entries
 ```
 
 - `gq frontend refresh` posts to `https://<domains.frontend>/gq/refresh`
   (or `--url <origin>`; plain HTTP only to localhost) with
-  `FRONTEND_REFRESH_TOKEN` from Sigillo `staging` as a bearer token. The
-  Frontend reads the front page and the chrome from the CMS, anonymously, and
-  promotes each complete, valid read; a failed one (timeout, network, HTTP,
-  GraphQL, missing required data, or a front page without its blocks) keeps
-  what was stored, and the report says why. It exits 1 unless everything was
-  refreshed and the homepage is ready.
+  `FRONTEND_REFRESH_TOKEN` from Sigillo `staging` as a bearer token. Without
+  `--uri` it prepares the whole Site: the Frontend reads the front page, the
+  chrome, and every page and post WordPress lists as published or the store
+  already holds, anonymously. `--uri <path>` (repeatable, up to 100) refreshes
+  only those entries, such as a new publication or a renamed one. Each
+  complete, valid read is promoted; a failed one (timeout, network, HTTP,
+  GraphQL, missing required data, or content without its blocks) keeps what
+  was stored, and the report says why. It exits 1 unless everything asked for
+  was refreshed (and, for the whole Site, the homepage is ready).
 - `FRONTEND_REFRESH_TOKEN` is the site's own secret (32 characters or more,
   such as `openssl rand -hex 32`), not a Cloudflare token.
   `pnpm deploy:frontend` binds it to the Worker; deployed without it, the
   Frontend refuses every refresh and keeps serving what it holds. Cloudflare
   CI releases don't pass it yet.
-- Until a refresh has stored the front page and its chrome, the homepage is a
-  503, never a placeholder or a 404. A front page WordPress confirms isn't
-  set is stored as missing and is a 404.
+- Until a refresh has stored the front page and its chrome, pages are a 503,
+  never a placeholder or a 404. A front page WordPress confirms isn't set is
+  stored as missing and is a 404.
+- A stored entry WordPress confirmed missing is a 404; one WordPress keeps at
+  another route now redirects there (301), once a refresh has found it there.
+- An entry the store has never held is looked up in the CMS on the visit:
+  stored and served if published, a 404 if WordPress confirms nothing is
+  there, a 503 if the CMS fails. Only public entries are stored, never
+  password-protected or unpublished ones.
+- A whole-Site refresh makes at least one CMS request per entry in one Worker
+  invocation; on Workers' Free plan (50 subrequests) a larger site needs
+  `--uri` refreshes.
 - Existing sites: `infra/frontend.run.ts` only creates the store when
   `apps/frontend/migrations` exists, so a site-owned Frontend that hasn't
   adopted the files deploys as before.
 
 `scripts/smoke/frontend-runtime.sh` proves it on a disposable generated site
 without Cloudflare: Alchemy's Astro build, served in workerd (Wrangler's local
-mode) with a local D1 store, against a stub CMS taken down, a Worker restart
-and a rebuilt redeploy.
+mode) with a local D1 store, against a stub CMS taken down, a Worker restart,
+a rebuilt redeploy, a cold lookup, a new publication and a moved entry.
 
 ## Programmatic use
 
@@ -758,8 +772,8 @@ The Frontend skeleton's own tests, including its rendered-route tests, run in
 a generated site: `scripts/smoke/frontend-check.sh` generates a disposable
 content site, installs its Frontend's npm dependencies (the only step that
 uses the network) and runs its tests, `astro check`, lint and format check.
-`scripts/smoke/frontend-runtime.sh` is the durable homepage's runtime proof
-(see [Durable homepage](#durable-homepage)); it also installs the CI Worker's
+`scripts/smoke/frontend-runtime.sh` is the durable published content's runtime
+proof (see [Durable published content](#durable-published-content)); it also installs the CI Worker's
 dependencies, for Wrangler's local workerd runtime.
 
 ## Releasing

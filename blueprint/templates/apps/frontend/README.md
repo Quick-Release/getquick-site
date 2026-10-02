@@ -26,32 +26,44 @@ built before the CMS exists.
 published there) or `unavailable` (a timeout, unreachable CMS, HTTP or GraphQL
 error, or an answer without the GETQUICK fields the Frontend requires). Pages
 answer `responseStatus()`: 200, 404 for missing content and 503 for
-unavailable content, never a 404 for a CMS failure. Outside `pnpm dev`, a front
-page that can't be served is a 503 too. When only the menu, logo and icon
-can't be read, the page is still served without them. Each unavailable read is
-logged with its reason.
+unavailable content, never a 404 for a CMS failure. Outside `pnpm dev`, a page
+that can't be served is a 503 too. In `pnpm dev`, when only the menu, logo and
+icon can't be read, the page is still served without them. Each unavailable
+read is logged with its reason.
 
-## The durable homepage
+## Durable published content
 
-The deployed Frontend serves the front page and the site chrome (menu, logo,
-icon, site identity, design presets) from its publication store, a D1
-database bound as `PUBLICATION_DB` (`../../infra/frontend.run.ts`), never from
-a visitor's CMS read. `src/lib/delivery.ts` decides what is served and what
-may be stored; `src/lib/publications.ts` is the store: one row per
-publication, with the `format` of its body and when its CMS read started, so
-an older read never replaces a newer one. `migrations/` holds its schema,
-which Alchemy applies on deploy: add a new numbered file for a change, and
-keep it compatible with the Worker version it replaces.
+The deployed Frontend serves the front page, the entries (published pages and
+posts) and the site chrome (menu, logo, icon, site identity, design presets)
+from its publication store, a D1 database bound as `PUBLICATION_DB`
+(`../../infra/frontend.run.ts`). `src/lib/delivery.ts` decides what is served
+and what may be stored; `src/lib/publications.ts` is the store: one row per
+publication (`home`, `chrome`, `entry:<route>`), with the `format` of its body,
+the WordPress entry it holds and when its CMS read started, so an older read
+never replaces a newer one. `migrations/` holds its schema, which Alchemy
+applies on deploy: add a new numbered file for a change, and keep it
+compatible with the Worker version it replaces.
 
 A refresh fills the store: `pnpm frontend:refresh` from the workspace root
 (`gq frontend refresh`), which posts to `/gq/refresh` (`src/pages/gq/refresh.ts`)
-with `FRONTEND_REFRESH_TOKEN`. Each complete, valid read is promoted; a failed
-one keeps the stored version, so the homepage outlives CMS outages, restarts
+with `FRONTEND_REFRESH_TOKEN`. Without `--uri` it prepares the whole Site: the
+front page, the chrome, and every page and post WordPress lists as published
+or the store already holds. `--uri /about/` refreshes only that entry, such as
+a new publication or a renamed one. Each complete, valid read is promoted; a
+failed one keeps the stored version, so pages outlive CMS outages, restarts
 and redeploys without an age limit. Until a refresh has stored the front page
-and its chrome, the homepage is a 503. `/gq/` is reserved for these endpoints.
+and the chrome, pages are a 503. `/gq/` is reserved for these endpoints.
 
-`pnpm dev` has no store: it reads the CMS live, as before. Entries
-(`[...slug].astro`) still read the CMS live too, with the stored chrome.
+- A stored entry is served without reading the CMS. One WordPress confirmed
+  missing is a 404; one published at another route now redirects there (301).
+- An entry the store has never held is looked up in the CMS on the visit
+  (the cold lookup): published, it is stored and served; confirmed missing, it
+  is a 404 and nothing is stored; if the CMS fails, a 503, never a 404. An
+  unreadable store is a 503 without reading the CMS.
+- Only public content is stored: reads are anonymous, and an entry WordPress
+  returns password-protected or unpublished is missing.
+
+`pnpm dev` has no store: it reads the CMS live, as before.
 
 ## Blocks
 
@@ -67,8 +79,9 @@ change it here; a shared renderer package is planned.
 (`vp test`) run from the workspace root, and in `pnpm verify`. `src/routes.test.ts`
 renders the pages through Astro's Container API against a stubbed CMS
 (`vitest.config.ts` gives Vitest Astro's Vite config); `src/homepage.test.ts`
-drives the durable homepage through refreshes, outages and restarts, with the
-store on SQLite (`src/test/sqlite-d1.ts`, the same migrations and SQL).
+and `src/entries.test.ts` drive the durable homepage and entries through
+refreshes, outages, restarts, new and moved publications, with the store on
+SQLite (`src/test/sqlite-d1.ts`, the same migrations and SQL).
 
 ## Deploys
 

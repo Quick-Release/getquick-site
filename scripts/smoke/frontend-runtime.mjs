@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 //
-// The durable homepage's runtime proof, on a generated content site (see
-// frontend-runtime.sh): builds the Frontend with Alchemy's Astro Cloudflare
-// build (`buildInChild`, what `pnpm deploy:frontend` runs in its build child),
-// serves the built Worker in workerd (Wrangler's local mode) with a local D1
-// publication store and the Frontend's own migrations, and drives it against
-// a stub WordPress that it can take down:
+// The durable published content's runtime proof, on a generated content site
+// (see frontend-runtime.sh): builds the Frontend with Alchemy's Astro
+// Cloudflare build (`buildInChild`, what `pnpm deploy:frontend` runs in its
+// build child), serves the built Worker in workerd (Wrangler's local mode)
+// with a local D1 publication store and the Frontend's own migrations, and
+// drives it against a stub WordPress that it can take down:
 //
-//   cold store → 503; unauthenticated refresh → 401; gq frontend refresh →
-//   homepage with menu, logo and design presets; CMS down → still served, and
-//   a failed refresh keeps it; Worker restart and a rebuilt redeploy → still
-//   served; CMS back with a change → the refresh shows it.
+//   cold store → 503 for the homepage and an entry; unauthenticated refresh →
+//   401; gq frontend refresh → homepage and entry with menu, logo and design
+//   presets; CMS down → both still served, an uncached entry is a 503 and a
+//   failed refresh keeps them; Worker restart and a rebuilt redeploy → still
+//   served; CMS back → a cold entry is looked up, a made-up one is a 404, a
+//   change, a new publication and a moved entry are refreshed.
 //
 // Nothing reaches Cloudflare: no account, token or remote resource is used.
 //
@@ -40,6 +42,8 @@ function check(label, condition, detail = "") {
 const cms = {
   heading: "Welcome to Acme",
   menuLabel: "About us",
+  // Published entries by URI.
+  entries: new Map([["/about/", { id: "page-64", title: "About", content: "We make things." }]]),
   server: null,
   port: 0,
   start() {
@@ -47,8 +51,32 @@ const cms = {
       let body = "";
       request.on("data", (chunk) => (body += chunk));
       request.on("end", () => {
-        const name = /query (\w+)/.exec(JSON.parse(body).query)?.[1];
+        const { query, variables } = JSON.parse(body);
+        const name = /query (\w+)/.exec(query)?.[1];
+        const entry = name === "EntryByUri" ? this.entries.get(decodeURI(variables.uri)) : null;
+        const brand = { colors: [{ slug: "brand", color: "#c00" }], spacingSizes: [] };
         const data = {
+          EntryByUri: {
+            postBy: null,
+            pageBy: entry
+              ? {
+                  id: entry.id,
+                  title: entry.title,
+                  content: `<p class="has-brand-color">${entry.content}</p>`,
+                  uri: decodeURI(variables.uri),
+                  status: "publish",
+                  isRestricted: false,
+                  featuredImage: null,
+                }
+              : null,
+            designTokens: brand,
+          },
+          PublishedRoutes: {
+            contentNodes: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: ["/", ...this.entries.keys()].map((uri) => ({ uri })),
+            },
+          },
           HomePage: {
             generalSettings: { title: "Acme", description: "Things" },
             nodeByUri: {
@@ -185,17 +213,29 @@ async function stopWorker(child) {
   await exited;
 }
 
-async function visit(port) {
-  const response = await fetch(`http://127.0.0.1:${port}/`);
-  return { status: response.status, html: await response.text() };
+async function visit(port, path = "/") {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, { redirect: "manual" });
+  return {
+    status: response.status,
+    location: response.headers.get("location"),
+    html: await response.text(),
+  };
 }
 
 // gq frontend refresh, as an operator runs it. Asynchronous: the stub CMS
 // answers the Worker from this process.
-function refresh(port) {
+function refresh(port, uris = []) {
   const child = spawn(
     process.execPath,
-    [gq, "frontend", "refresh", "--url", `http://127.0.0.1:${port}`, "--json"],
+    [
+      gq,
+      "frontend",
+      "refresh",
+      "--url",
+      `http://127.0.0.1:${port}`,
+      ...uris.flatMap((uri) => ["--uri", uri]),
+      "--json",
+    ],
     { cwd: site, env: { ...process.env, FRONTEND_REFRESH_TOKEN: token } },
   );
   let stdout = "";
@@ -212,6 +252,15 @@ function refresh(port) {
       }
       done({ code, report, stderr });
     }),
+  );
+}
+
+function servedEntry(html, text = "We make things.", menuLabel = cms.menuLabel) {
+  return (
+    html.includes(text) &&
+    new RegExp(`<a href="/about/"[^>]*>${menuLabel}</a>`).test(html) &&
+    html.includes('src="https://media.example/logo.svg"') &&
+    html.includes("--wp--preset--color--brand:#c00")
   );
 }
 
@@ -262,6 +311,12 @@ try {
 
   const cold = await visit(port);
   check("a never-refreshed homepage is a 503", cold.status === 503, `HTTP ${cold.status}`);
+  const coldEntry = await visit(port, "/about/");
+  check(
+    "a never-refreshed Site's entry is a 503",
+    coldEntry.status === 503,
+    `HTTP ${coldEntry.status}`,
+  );
 
   const anonymous = await fetch(`${siteUrl}/gq/refresh`, {
     method: "POST",
@@ -287,6 +342,14 @@ try {
     prepared.status === 200 && served(prepared.html),
     `HTTP ${prepared.status}`,
   );
+  const preparedEntry = await visit(port, "/about/");
+  check(
+    "and so is the published entry",
+    first.report?.entries?.["/about/"]?.outcome === "promoted" &&
+      preparedEntry.status === 200 &&
+      servedEntry(preparedEntry.html),
+    `HTTP ${preparedEntry.status}`,
+  );
 
   await cms.stop();
   const outage = await visit(port);
@@ -294,6 +357,18 @@ try {
     "with the CMS down the homepage is still served",
     outage.status === 200 && served(outage.html),
     `HTTP ${outage.status}`,
+  );
+  const outageEntry = await visit(port, "/about/");
+  check(
+    "and so is the entry",
+    outageEntry.status === 200 && servedEntry(outageEntry.html),
+    `HTTP ${outageEntry.status}`,
+  );
+  const uncached = await visit(port, "/not-stored/");
+  check(
+    "an entry the store never held is a 503, not a 404",
+    uncached.status === 503,
+    `HTTP ${uncached.status}`,
   );
   const failed = await refresh(port);
   check(
@@ -310,6 +385,12 @@ try {
     "after a Worker restart, with the CMS still down, it is still served",
     restarted.status === 200 && served(restarted.html),
     `HTTP ${restarted.status}`,
+  );
+  const restartedEntry = await visit(port, "/about/");
+  check(
+    "and so is the entry",
+    restartedEntry.status === 200 && servedEntry(restartedEntry.html),
+    `HTTP ${restartedEntry.status}`,
   );
 
   await stopWorker(worker);
@@ -333,6 +414,39 @@ try {
     "once the CMS is back, a refresh serves its changes",
     recovered.code === 0 && served(updated.html, "Spring at Acme", "Contact"),
     JSON.stringify(recovered.report),
+  );
+
+  cms.entries.set("/contact/", { id: "page-70", title: "Contact", content: "Write to us." });
+  const lookedUp = await visit(port, "/contact/");
+  check(
+    "an entry the store never held is looked up while the CMS is healthy",
+    lookedUp.status === 200 && servedEntry(lookedUp.html, "Write to us.", "Contact"),
+    `HTTP ${lookedUp.status}`,
+  );
+  const madeUp = await visit(port, "/made-up/");
+  check("a URL WordPress has nothing at is a 404", madeUp.status === 404, `HTTP ${madeUp.status}`);
+
+  cms.entries.set("/news/", { id: "page-80", title: "News", content: "We launched." });
+  const about = cms.entries.get("/about/");
+  cms.entries.delete("/about/");
+  cms.entries.set("/about-us/", { ...about, content: "We make better things." });
+  const targeted = await refresh(port, ["/news/", "/about-us/"]);
+  await cms.stop();
+  const news = await visit(port, "/news/");
+  const oldRoute = await visit(port, "/about/");
+  const newRoute = await visit(port, "/about-us/");
+  check(
+    "gq frontend refresh --uri serves a new publication through an outage",
+    targeted.code === 0 && news.status === 200 && servedEntry(news.html, "We launched.", "Contact"),
+    JSON.stringify(targeted.report) + targeted.stderr,
+  );
+  check(
+    "and a moved entry's old route redirects to its new one",
+    oldRoute.status === 301 &&
+      oldRoute.location === "/about-us/" &&
+      newRoute.status === 200 &&
+      servedEntry(newRoute.html, "We make better things.", "Contact"),
+    `HTTP ${oldRoute.status} → ${oldRoute.location}, HTTP ${newRoute.status}`,
   );
 } catch (error) {
   console.error(error.message);

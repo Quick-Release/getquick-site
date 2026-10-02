@@ -45,6 +45,7 @@ export function openTestD1(path = ":memory:"): TestD1 {
         return {
           bind: (...next) => statement(next),
           first: <T>() => run(() => (prepared().get(...parameters) ?? null) as T | null),
+          all: <T>() => run(() => ({ results: prepared().all(...parameters) as T[] })),
           run: () =>
             run(() => ({ meta: { changes: Number(prepared().run(...parameters).changes) } })),
         };

@@ -6,6 +6,7 @@
 export interface SqlStatement {
   bind(...values: unknown[]): SqlStatement;
   first<T = Record<string, unknown>>(): Promise<T | null>;
+  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
   run(): Promise<{ meta: { changes: number } }>;
 }
 
@@ -22,9 +23,18 @@ export const PUBLICATION_FORMAT = 1;
 
 export type StoredPublication<T> =
   | { state: "published"; content: T; promotedAt: number }
-  | { state: "missing"; promotedAt: number };
+  | { state: "missing"; promotedAt: number }
+  | { state: "moved"; uri: string; promotedAt: number };
 
-export type Promotion<T> = { state: "published"; content: T } | { state: "missing" };
+/**
+ * What a refresh promotes. `nodeId` is the WordPress post or page a row holds
+ * (WPGraphQL's global id): published at another URI later, its old rows are
+ * superseded.
+ */
+export type Promotion<T> =
+  | { state: "published"; content: T; nodeId?: string }
+  | { state: "missing" }
+  | { state: "moved"; uri: string; nodeId?: string };
 
 /** Why a stored row can't be served: written in a format, or a shape, this Worker doesn't know. */
 export interface Unusable {
@@ -63,6 +73,13 @@ export interface PublicationStore {
     publication: Promotion<T>,
     readStartedAt: number,
   ): Promise<"promoted" | "superseded">;
+  /**
+   * Marks every other row holding nodeId as moved to uri, unless its read
+   * started at readBefore or later. Resolves to the keys it marked.
+   */
+  supersede(nodeId: string, uri: string, keep: string, readBefore: number): Promise<string[]>;
+  /** The keys stored under prefix, whatever their state. */
+  keys(prefix: string): Promise<string[]>;
   recordAttempt(key: string, attempt: RefreshAttempt): Promise<void>;
 }
 
@@ -93,6 +110,11 @@ export function publicationStore(db: SqlDatabase): PublicationStore {
         };
       }
       if (row.state === "missing") return { state: "missing", promotedAt: row.promoted_at };
+      if (row.state === "moved") {
+        const uri = movedTo(row.body);
+        if (uri) return { state: "moved", uri, promotedAt: row.promoted_at };
+        return { state: "unusable", message: `${key} is stored as moved without a readable URI` };
+      }
 
       let content: ReturnType<typeof parse>;
       try {
@@ -110,24 +132,58 @@ export function publicationStore(db: SqlDatabase): PublicationStore {
     },
 
     async promote(key, publication, readStartedAt) {
-      const body = publication.state === "published" ? JSON.stringify(publication.content) : null;
+      const body =
+        publication.state === "published"
+          ? JSON.stringify(publication.content)
+          : publication.state === "moved"
+            ? JSON.stringify({ uri: publication.uri })
+            : null;
+      const nodeId = publication.state === "missing" ? null : (publication.nodeId ?? null);
       const result = await guard("be written", () =>
         db
           .prepare(
-            `INSERT INTO publications (key, state, format, body, read_started_at, promoted_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            `INSERT INTO publications (key, state, format, body, read_started_at, promoted_at, node_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT (key) DO UPDATE SET
                state = excluded.state,
                format = excluded.format,
                body = excluded.body,
                read_started_at = excluded.read_started_at,
-               promoted_at = excluded.promoted_at
+               promoted_at = excluded.promoted_at,
+               node_id = excluded.node_id
              WHERE excluded.read_started_at > publications.read_started_at`,
           )
-          .bind(key, publication.state, PUBLICATION_FORMAT, body, readStartedAt, Date.now())
+          .bind(key, publication.state, PUBLICATION_FORMAT, body, readStartedAt, Date.now(), nodeId)
           .run(),
       );
       return result.meta.changes > 0 ? "promoted" : "superseded";
+    },
+
+    async supersede(nodeId, uri, keep, readBefore) {
+      const body = JSON.stringify({ uri });
+      const { results } = await guard("be written", () =>
+        db
+          .prepare(
+            `UPDATE publications SET
+               state = 'moved', format = ?1, body = ?2, read_started_at = ?3, promoted_at = ?4
+             WHERE node_id = ?5 AND key <> ?6 AND read_started_at < ?3
+               AND (state = 'published' OR (state = 'moved' AND body <> ?2))
+             RETURNING key`,
+          )
+          .bind(PUBLICATION_FORMAT, body, readBefore, Date.now(), nodeId, keep)
+          .all<{ key: string }>(),
+      );
+      return results.map((row) => row.key).sort();
+    },
+
+    async keys(prefix) {
+      const { results } = await guard("be read", () =>
+        db
+          .prepare("SELECT key FROM publications WHERE substr(key, 1, length(?1)) = ?1")
+          .bind(prefix)
+          .all<{ key: string }>(),
+      );
+      return results.map((row) => row.key).sort();
     },
 
     async recordAttempt(key, attempt) {
@@ -147,4 +203,14 @@ export function publicationStore(db: SqlDatabase): PublicationStore {
       );
     },
   };
+}
+
+function movedTo(body: string | null) {
+  try {
+    const uri = (JSON.parse(body ?? "null") as { uri?: unknown } | null)?.uri;
+    // A path on this site only, never another host's (`//host/`).
+    return typeof uri === "string" && /^\/(?!\/)/.test(uri) ? uri : undefined;
+  } catch {
+    return undefined;
+  }
 }

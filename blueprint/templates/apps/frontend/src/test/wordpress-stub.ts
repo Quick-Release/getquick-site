@@ -17,6 +17,16 @@ export const chrome = {
   },
 };
 
+/** WordPress's list of published routes, on one page. */
+export function routes(...uris: string[]): Answer {
+  return data({
+    contentNodes: {
+      pageInfo: { hasNextPage: false, endCursor: null },
+      nodes: uris.map((uri) => ({ uri })),
+    },
+  });
+}
+
 export function data(value: unknown): Answer {
   return { ok: true, json: async () => ({ data: value }) };
 }
@@ -29,10 +39,15 @@ export function timeout(): never {
   throw new DOMException("The operation timed out.", "TimeoutError");
 }
 
-// The site chrome is fine unless a test says otherwise; any other query
-// fails the test.
-export function stubWordPress(handlers: { home?: Handler; entry?: Handler; chrome?: Handler }) {
-  const answer = { chrome: () => data(chrome), ...handlers };
+// The site chrome is fine, and nothing but the front page is published,
+// unless a test says otherwise; any other query fails the test.
+export function stubWordPress(handlers: {
+  home?: Handler;
+  entry?: Handler;
+  chrome?: Handler;
+  routes?: Handler;
+}) {
+  const answer = { chrome: () => data(chrome), routes: () => routes("/"), ...handlers };
   const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
     const request = JSON.parse(init.body as string) as {
       query: string;
@@ -43,6 +58,7 @@ export function stubWordPress(handlers: { home?: Handler; entry?: Handler; chrom
       HomePage: answer.home,
       EntryByUri: answer.entry,
       SiteChrome: answer.chrome,
+      PublishedRoutes: answer.routes,
     }[name ?? ""];
     if (!handler) throw new Error(`Unexpected query ${name}`);
     return handler(request.variables ?? {});

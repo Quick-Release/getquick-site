@@ -79,10 +79,18 @@ Frontend requires. It says nothing about whether the content exists; the
 Frontend answers 503, never 404.
 _Avoid_: missing content, empty (for a failed read)
 
+**Entry**:
+A published WordPress page or post, served at its own route (its URI). The
+front page is the homepage, not an entry. An entry WordPress keeps at another
+route now is moved: its old route redirects there.
+_Avoid_: post (for pages too), article
+
 **Publication store**:
-A content site's durable copy of its published content and shared chrome, in
-the Frontend's own D1 database, which visitors are served from
-([ADR 0003](docs/adr/0003-serve-published-content-from-a-durable-store.md)).
+A content site's durable copy of its published content (the front page and
+the entries) and shared chrome, in the Frontend's own D1 database, which
+visitors are served from
+([ADR 0003](docs/adr/0003-serve-published-content-from-a-durable-store.md),
+[ADR 0004](docs/adr/0004-serve-entries-from-the-store-with-a-cold-lookup.md)).
 It outlives CMS outages, Worker restarts and redeploys.
 _Avoid_: cache (it isn't evicted), KV
 
@@ -95,8 +103,15 @@ _Avoid_: stale content (as a fault)
 Reading published content from the CMS and promoting each complete, valid
 read into the publication store; a failed read keeps what is stored. Only a
 trusted caller may refresh: `gq frontend refresh` with the Site's refresh
-token. A Site no refresh has filled is not ready, and its homepage is a 503.
+token, for the whole Site (its preparation) or for chosen entries. A Site no
+refresh has filled is not ready, and its pages are a 503.
 _Avoid_: rebuild, revalidate, purge
+
+**Cold lookup**:
+A visit's read of an entry the publication store has never held, the only CMS
+read a visit makes: a published entry is stored and served, a confirmed
+missing one is a 404, and a failed read is a 503.
+_Avoid_: cache miss (it isn't a fallback for stored entries)
 
 ### Hosting
 

@@ -1,5 +1,5 @@
 // `gq frontend refresh` at the run() seam: the trusted refresh of a content
-// site's durable homepage. A recording fetch stands in for the deployed
+// site's durable published content. A recording fetch stands in for the deployed
 // Frontend's POST /gq/refresh; nothing here reaches the network.
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -19,6 +19,9 @@ const REFRESHED = Object.freeze({
   refreshed: true,
   home: { outcome: "promoted", state: "published" },
   chrome: { outcome: "promoted", state: "published" },
+  routes: { outcome: "listed", count: 2 },
+  entries: { "/about/": { outcome: "promoted", state: "published" } },
+  moved: {},
 });
 
 async function refresh(argv = [], { env = { FRONTEND_REFRESH_TOKEN: TOKEN }, respond } = {}) {
@@ -27,7 +30,7 @@ async function refresh(argv = [], { env = { FRONTEND_REFRESH_TOKEN: TOKEN }, res
   return fixture.run(["frontend", "refresh", ...argv], { env, fetch });
 }
 
-test("a refresh asks the Frontend, with its token, to promote the homepage", async () => {
+test("a refresh asks the Frontend, with its token, to promote the whole Site", async () => {
   const { code, stdout, fetch } = await refresh();
 
   assert.equal(code, 0);
@@ -37,9 +40,12 @@ test("a refresh asks the Frontend, with its token, to promote the homepage", asy
   assert.equal(request.url, "https://www.example.test/gq/refresh");
   assert.equal(request.headers.Authorization, `Bearer ${TOKEN}`);
   assert.equal(request.headers["Content-Type"], "application/json");
+  assert.deepEqual(JSON.parse(request.body), {});
   assert.match(stdout, /✓ front page: promoted \(published\)/u);
   assert.match(stdout, /✓ site chrome: promoted \(published\)/u);
-  assert.match(stdout, /^Ready: the homepage is served from the publication store\.$/mu);
+  assert.match(stdout, /✓ published routes: 2 listed/u);
+  assert.match(stdout, /✓ \/about\/: promoted \(published\)/u);
+  assert.match(stdout, /^Ready: published content is served from the publication store\.$/mu);
   assert.ok(!stdout.includes(TOKEN));
 });
 
@@ -73,7 +79,7 @@ test("a Frontend that isn't ready yet exits 1", async () => {
   const { code, stdout } = await refresh([], { respond: () => json(report, 503) });
 
   assert.equal(code, 1);
-  assert.match(stdout, /^Not ready: the homepage is a 503/mu);
+  assert.match(stdout, /^Not ready: pages are a 503/mu);
 });
 
 test("a refused refresh is reported without the token", async () => {
@@ -115,4 +121,60 @@ test("without FRONTEND_REFRESH_TOKEN nothing is sent", async () => {
   assert.equal(code, 1);
   assert.match(stderr, /FRONTEND_REFRESH_TOKEN is missing/u);
   assert.equal(fetch.requests.length, 0);
+});
+
+test("--uri refreshes only the entries at those paths, and reports moves", async () => {
+  const report = {
+    refreshed: true,
+    entries: { "/about-us/": { outcome: "promoted", state: "published" } },
+    moved: { "/about/": "/about-us/" },
+  };
+  const { code, stdout, fetch } = await refresh(["--uri", "/about-us/", "--uri", "/news/"], {
+    respond: () => json(report),
+  });
+
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(fetch.requests[0].body), { uris: ["/about-us/", "/news/"] });
+  assert.match(stdout, /✓ \/about-us\/: promoted \(published\)/u);
+  assert.match(stdout, /✓ \/about\/: moved to \/about-us\/, and redirects there/u);
+  assert.match(stdout, /^Refreshed: these entries are served from the publication store\.$/mu);
+  assert.doesNotMatch(stdout, /front page/u);
+});
+
+test("an entry refresh that kept a stored version exits 1", async () => {
+  const report = {
+    refreshed: false,
+    entries: {
+      "/about/": { outcome: "kept", failure: { reason: "http", message: "HTTP 502" } },
+    },
+    moved: {},
+  };
+  const { code, stdout } = await refresh(["--uri", "/about/"], {
+    respond: () => json(report, 503),
+  });
+
+  assert.equal(code, 1);
+  assert.match(stdout, /✗ \/about\/: kept the stored version \(http\): HTTP 502/u);
+  assert.match(stdout, /^Not refreshed/mu);
+});
+
+test("--uri takes paths only", async () => {
+  const { code, stderr, fetch } = await refresh(["--uri", "https://www.example.test/about/"]);
+
+  assert.equal(code, 1);
+  assert.match(stderr, /--uri must be a path such as \/about\//u);
+  assert.equal(fetch.requests.length, 0);
+});
+
+test("a Frontend that only stores its homepage is still reported", async () => {
+  const homepageOnly = {
+    ready: true,
+    refreshed: true,
+    home: REFRESHED.home,
+    chrome: REFRESHED.chrome,
+  };
+  const { code, stdout } = await refresh([], { respond: () => json(homepageOnly) });
+
+  assert.equal(code, 0);
+  assert.match(stdout, /✓ front page: promoted \(published\)/u);
 });

@@ -1,6 +1,7 @@
 # ADR 0003: Serve published content from a durable store
 
-- Status: Accepted
+- Status: Accepted; amended by [ADR 0004](0004-serve-entries-from-the-store-with-a-cold-lookup.md)
+  (entries, and the cold lookup of an entry the store has never held)
 - Date: 2026-10-02
 
 ## Context
