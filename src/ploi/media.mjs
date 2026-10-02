@@ -7,7 +7,7 @@
 //   gq ploi media [--dry-run]
 
 import { applyEnv } from "../dotenv.mjs";
-import { createReporter } from "../reporter.mjs";
+import { createReporter } from "../cli/reporter.mjs";
 import { createPloiServerClient } from "./server-client.mjs";
 
 // The .env lines S3 Uploads reads; the credentials come from the secret store.

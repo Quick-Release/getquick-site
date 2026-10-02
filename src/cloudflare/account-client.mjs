@@ -1,8 +1,8 @@
 // Account-scoped Cloudflare API client for the provisioning commands
 // (Lombardi's cloudflare-deploy-token.mjs `createCloudflareClient`): resolves
 // to the response's `result`, and fails with Cloudflare's own error messages.
-// gq-ops' read-only providers/cloudflare.mjs stays beside it; merging the two
-// is a later change.
+// The read-only inspection-client.mjs stays beside it; their scopes and
+// behavior remain distinct.
 const API_ORIGIN = "https://api.cloudflare.com/client/v4";
 
 // One authenticated JSON request under the account; fails with `label` and

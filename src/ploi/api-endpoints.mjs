@@ -1,4 +1,4 @@
-import { createPloiCatalog } from "./ploi-catalog.mjs";
+import { createPloiCatalog } from "./api-catalog.mjs";
 
 export const PLOI_ENDPOINTS = [
   {

@@ -1,14 +1,14 @@
-import { loadProjectContext } from "./project-context.mjs";
-import { createCloudflareClient } from "./providers/cloudflare.mjs";
-import { createPloiClient } from "./providers/ploi.mjs";
+import { loadProjectContext } from "../ops/project-context.mjs";
+import { createCloudflareClient } from "../cloudflare/inspection-client.mjs";
+import { createPloiClient } from "../ploi/api-client.mjs";
 import { printValue } from "./output.mjs";
 import {
   isPloiApiCommand,
   runPloiApiCatalogCommand,
   runPloiApiCommand,
   validatePloiApiCommand,
-} from "./ploi-api-command.mjs";
-import { PLOI_ENDPOINTS } from "./providers/ploi-endpoints.mjs";
+} from "../ploi/api-command.mjs";
+import { PLOI_ENDPOINTS } from "../ploi/api-endpoints.mjs";
 import { chooseCommand } from "./ui.mjs";
 import {
   isReleaseCommand,

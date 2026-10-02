@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { CMS_PATH, commandExists, ddevStatus, phpToolchainAvailable } from "../cms/local.mjs";
-import { artifactsRemoteUrl } from "../cloudflare/client.mjs";
+import { artifactsRemoteUrl } from "../cloudflare/account-client.mjs";
 import { MANIFEST_FILENAME } from "../manifest/schema.mjs";
 import {
   hasReleaseConfig,

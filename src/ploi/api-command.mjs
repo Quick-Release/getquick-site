@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
-import { printValue } from "./output.mjs";
-import { createPloiClient } from "./providers/ploi.mjs";
-import { ploiCatalog } from "./providers/ploi-endpoints.mjs";
-import { confirmMutation, withSpinner } from "./ui.mjs";
+import { printValue } from "../cli/output.mjs";
+import { createPloiClient } from "./api-client.mjs";
+import { ploiCatalog } from "./api-endpoints.mjs";
+import { confirmMutation, withSpinner } from "../cli/ui.mjs";
 
 export const PLOI_API_OPTIONS = [
   "server",

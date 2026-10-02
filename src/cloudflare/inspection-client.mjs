@@ -1,4 +1,4 @@
-import { requestJson } from "./http.mjs";
+import { requestJson } from "../ops/providers/http.mjs";
 
 const API_BASE_URL = "https://api.cloudflare.com/client/v4";
 

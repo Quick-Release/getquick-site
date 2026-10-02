@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createCloudflareClient } from "../src/ops/providers/cloudflare.mjs";
-import { createPloiClient } from "../src/ops/providers/ploi.mjs";
+import { createCloudflareClient } from "../src/cloudflare/inspection-client.mjs";
+import { createPloiClient } from "../src/ploi/api-client.mjs";
 
 test("Ploi client follows trusted pagination links", async () => {
   const urls = [];

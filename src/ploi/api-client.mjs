@@ -1,5 +1,5 @@
-import { requestJson } from "./http.mjs";
-import { VERSION } from "../../version.mjs";
+import { requestJson } from "../ops/providers/http.mjs";
+import { VERSION } from "../version.mjs";
 
 const API_BASE_URL = "https://ploi.io/api";
 const MAX_PAGES = 100;

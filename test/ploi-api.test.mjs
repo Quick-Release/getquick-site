@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PLOI_ENDPOINTS, ploiCatalog } from "../src/ops/providers/ploi-endpoints.mjs";
-import { createPloiClient } from "../src/ops/providers/ploi.mjs";
+import { PLOI_ENDPOINTS, ploiCatalog } from "../src/ploi/api-endpoints.mjs";
+import { createPloiClient } from "../src/ploi/api-client.mjs";
 
 test("Ploi catalog covers every researched API operation", () => {
   assert.equal(PLOI_ENDPOINTS.length, 225);
