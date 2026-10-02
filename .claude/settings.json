@@ -1,5 +1,12 @@
 {
   "permissions": {
-    "allow": ["Bash(git push origin main:*)", "Bash(git push origin v:*)", "Bash(git tag v:*)"]
+    "allow": [
+      "Bash(git push origin main:*)",
+      "Bash(git push origin v:*)",
+      "Bash(git tag v:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(git push:*)",
+      "Bash(pnpm release:publish)"
+    ]
   }
 }
