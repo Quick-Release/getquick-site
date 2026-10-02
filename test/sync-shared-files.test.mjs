@@ -516,6 +516,24 @@ test("a site that renames its 0.12 CONTEXT.md to GLOSSARY.md keeps it through gq
   assert.ok(!created.includes("CONTEXT.md"));
 });
 
+test("a site that syncs its 0.12 CONTEXT.md without renaming it gets a fresh GLOSSARY.md beside it", async () => {
+  const site = await newSite();
+  const glossary = await readSite(site.root, "GLOSSARY.md");
+  const lock = await readLock(site.root);
+  lock.created = lock.created.map((path) => (path === "GLOSSARY.md" ? "CONTEXT.md" : path));
+  await writeLock(site.root, lock);
+  await rm(join(site.root, "GLOSSARY.md"));
+  await writeFile(join(site.root, "CONTEXT.md"), "# Acme\n\nOur terms.\n");
+
+  const result = await site.run(["sync"]);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /^GLOSSARY\.md: created\.$/mu);
+  assert.equal(await readSite(site.root, "GLOSSARY.md"), glossary);
+  assert.equal(await readSite(site.root, "CONTEXT.md"), "# Acme\n\nOur terms.\n");
+  assert.ok(!(await readLock(site.root)).created.includes("CONTEXT.md"));
+});
+
 test("gq sync leaves an edited or deleted create-once file alone", async () => {
   const site = await newSite();
   await writeFile(join(site.root, "README.md"), "# Acme\n\nOur site.\n");

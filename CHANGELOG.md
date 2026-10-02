@@ -11,10 +11,11 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   `GLOSSARY.md`, and the generated `AGENTS.md` section, `docs/agents/domain.md`
   and the README and `docs/adr/README.md` templates point at it. `gq` doesn't
   rename the file in an existing site, since a create-once file is the
-  site's; `gq sync` would instead write a fresh `GLOSSARY.md` next to it. Run
-  `git mv CONTEXT.md GLOSSARY.md` before syncing to this version, and update
-  the site's own links to the old name; the lock then records `GLOSSARY.md`
-  as created and drops `CONTEXT.md`.
+  site's: synced without renaming, the site gets a fresh `GLOSSARY.md` next
+  to its `CONTEXT.md`.
+- **Existing sites:** run `git mv CONTEXT.md GLOSSARY.md` before syncing to
+  this version, and update the site's own links to the old name. The lock
+  then records `GLOSSARY.md` as created and drops `CONTEXT.md`.
 
 ## 0.12.0 — 2026-10-02
 
