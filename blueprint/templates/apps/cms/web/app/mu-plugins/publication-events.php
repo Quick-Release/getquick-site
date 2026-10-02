@@ -259,9 +259,31 @@ function send(array $event): array
     $reason = $code === 503 && isset($answer['event']) ? 'refresh' : 'rejected';
     $message = isset($answer['error']) && is_string($answer['error'])
         ? $answer['error']
-        : "The Frontend answered HTTP {$code}.";
+        : (refresh_failure($answer) ?? "The Frontend answered HTTP {$code}.");
 
     return ['status' => 'failed', 'reason' => $reason, 'httpStatus' => $code, 'message' => $message];
+}
+
+/**
+ * The first part of a refresh the Frontend kept its stored version of, and
+ * why ("timeout: WordPress didn't answer within 8 seconds"), from its report.
+ */
+function refresh_failure(array $answer): ?string
+{
+    foreach ($answer as $value) {
+        if (! is_array($value)) {
+            continue;
+        }
+        if (($value['outcome'] ?? null) === 'kept' && isset($value['failure']['reason'], $value['failure']['message'])) {
+            return "{$value['failure']['reason']}: {$value['failure']['message']}";
+        }
+        $nested = refresh_failure($value);
+        if ($nested !== null) {
+            return $nested;
+        }
+    }
+
+    return null;
 }
 
 /** Sends an entry's recorded event and records how it went. */

@@ -26,7 +26,17 @@
 //   page send withdrawals that make it a 404 at once, though the CMS the
 //   Frontend reads still returns it and then goes down, and republishing
 //   serves it again; a deletion while the Frontend is down is kept for
-//   `wp gq-events retry`.
+//   `wp gq-events retry`. delivery-retries.php's scheduler
+//   (`wp gq-events retry-due`, on a clock this proof moves on) delivers what
+//   the Frontend didn't confirm once its delay passes, without visits or
+//   republishing: a publication sent while the Frontend was down, a
+//   publication and a setting the Frontend couldn't read back (backing off
+//   while it can't), one whose request was interrupted, and the withdrawal
+//   of a page deleted while the Frontend was down; it stops after the last
+//   attempt, which editors, `wp gq-events delays` and Site Health report, and
+//   an overlapping run sends nothing. Last, with the local
+//   ddev/ddev-webserver Docker image present, a real cron daemon runs the
+//   crontab `gq ploi events` installs.
 //
 // The Frontend reads published content from a stub WordPress that this proof
 // keeps in step with what it publishes, since the GETQUICK GraphQL schema
@@ -38,6 +48,7 @@ import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { retryCrontab } from "../../src/ploi/events.mjs";
 import {
   buildFrontend,
   checker,
@@ -80,7 +91,7 @@ function setUpWordPress() {
       .replaceAll("{SQLITE_PLUGIN}", "sqlite-database-integration/load.php"),
   );
   mkdirSync(join(wordpress, "wp-content/mu-plugins"), { recursive: true });
-  for (const plugin of ["publication-events.php", "settings-events.php"]) {
+  for (const plugin of ["publication-events.php", "settings-events.php", "delivery-retries.php"]) {
     cpSync(
       join(site, "apps/cms/web/app/mu-plugins", plugin),
       join(wordpress, "wp-content/mu-plugins", plugin),
@@ -91,6 +102,12 @@ function setUpWordPress() {
   writeFileSync(
     join(wordpress, "wp-content/mu-plugins/getquick-theme-locations.php"),
     `<?php add_action('after_setup_theme', static fn() => register_nav_menus(['primary' => 'Primary menu']));\n`,
+  );
+  // The proof's clock: the retry scheduler's "now" is the real time plus an
+  // offset this proof sets, so a retry's delay passes without waiting for it.
+  writeFileSync(
+    join(wordpress, "wp-content/mu-plugins/proof-clock.php"),
+    `<?php add_filter('gq_events_now', static fn(int $now): int => $now + (int) get_option('proof_clock_offset', 0));\n`,
   );
 }
 
@@ -482,6 +499,245 @@ try {
     JSON.stringify(unconfigured?.delivery),
   );
 
+  // --- Retries: the scheduler `gq ploi events` puts in the server's cron ---
+  // `wp gq-events retry-due`, run with no visits and no republishing, sends
+  // what the Frontend didn't confirm once its delay has passed.
+  const clock = (seconds) => wpOrFail(["option", "update", "proof_clock_offset", String(seconds)]);
+  const retryDue = () => wp(["gq-events", "retry-due", "--format=json"], cmsEnv);
+  /** A command's JSON table: what a retry-due run sent, none when nothing was due. */
+  const sentBy = ({ stdout }) =>
+    JSON.parse(stdout.split("\n").find((line) => line.startsWith("[")) ?? "[]");
+  const delays = async () => {
+    const listed = await wp(["gq-events", "delays", "--format=json"], cmsEnv);
+    return { rows: sentBy(listed), stderr: listed.stderr };
+  };
+  const report = async (post) =>
+    JSON.parse(
+      await wpOrFail([
+        "eval",
+        `echo wp_json_encode(GetQuick\\Site\\DeliveryRetries\\entry_report(${post}));`,
+      ]),
+    );
+
+  cms.entries.get("/launch/").content = "Configured at last.";
+  await clock(61);
+  const configured = await retryDue();
+  const afterConfigured = await recorded(id);
+  check(
+    "the retry scheduler delivers a publication recorded before the CMS was configured, once it is",
+    configured.code === 0 &&
+      afterConfigured?.event?.id === unconfigured?.event?.id &&
+      afterConfigured?.delivery?.status === "refreshed" &&
+      (await visit(port, "/launch/")).html.includes("Configured at last."),
+    configured.stdout + configured.stderr + JSON.stringify(afterConfigured?.delivery),
+  );
+  await clock(0);
+
+  // A dispatch failure: the Frontend is down when the editor publishes.
+  const pricing = await wpOrFail(
+    [
+      "post",
+      "create",
+      "--post_type=page",
+      "--post_status=draft",
+      "--post_title=Pricing",
+      "--post_name=pricing",
+      "--porcelain",
+    ],
+    cmsEnv,
+  );
+  cms.entries.set("/pricing/", { id: nodeId(pricing), title: "Pricing", content: "Prices v1." });
+  await wpOrFail(["post", "update", pricing, "--post_status=publish"], cmsEnv);
+  check(
+    "a new page is delivered at once",
+    (await recorded(pricing))?.delivery?.status === "refreshed",
+  );
+  await stopWorker(worker);
+  cms.entries.get("/pricing/").content = "Prices v2.";
+  await wpOrFail(["post", "update", pricing, "--post_content=Prices v2."], cmsEnv);
+  const undelivered = await recorded(pricing);
+  const delayedReport = await report(pricing);
+  let delayed = await delays();
+  check(
+    "a publication the Frontend didn't receive is reported to its editor and listed as retrying",
+    undelivered?.delivery?.status === "failed" &&
+      undelivered.delivery.reason === "network" &&
+      delayedReport.state === "retrying" &&
+      delayedReport.notice?.type === "warning" &&
+      /saved in WordPress, but the public website hasn't been updated yet/u.test(
+        delayedReport.notice.message,
+      ) &&
+      delayed.rows.some(
+        (row) => row.subject === `post:${pricing}` && row.state === "retrying" && row.next,
+      ),
+    JSON.stringify(delayedReport) + JSON.stringify(delayed.rows),
+  );
+
+  worker = await local.start(port);
+  const early = await retryDue();
+  const notYet = await recorded(pricing);
+  const meanwhile = await visit(port, "/pricing/");
+  check(
+    "before its delay has passed, the scheduler leaves it, and visitors keep the last good version",
+    early.code === 0 &&
+      notYet?.delivery?.attempts === 1 &&
+      meanwhile.status === 200 &&
+      meanwhile.html.includes("Prices v1."),
+    early.stdout + early.stderr + JSON.stringify(notYet?.delivery),
+  );
+  await clock(61);
+  const due = await retryDue();
+  const delivered = await recorded(pricing);
+  const recoveredReport = await report(pricing);
+  await cms.stop();
+  const afterScheduled = await visit(port, "/pricing/");
+  check(
+    "once it is due, the scheduler delivers the same event, without republishing or visits, and the editor sees it recovered",
+    due.code === 0 &&
+      delivered?.event?.id === undelivered?.event?.id &&
+      delivered?.delivery?.status === "refreshed" &&
+      delivered.delivery.attempts === 2 &&
+      recoveredReport.state === "recovered" &&
+      recoveredReport.notice?.type === "success" &&
+      afterScheduled.html.includes("Prices v2."),
+    due.stdout + due.stderr + JSON.stringify(recoveredReport),
+  );
+  await clock(0);
+
+  // A refresh failure on the Frontend: the CMS can't be read back, for a
+  // publication and a shared setting at once.
+  cms.entries.get("/pricing/").content = "Prices v3.";
+  await wpOrFail(["post", "update", pricing, "--post_content=Prices v3."], cmsEnv);
+  cms.tagline = "Even better things";
+  await wpOrFail(["option", "update", "blogdescription", "Even better things"], cmsEnv);
+  const unreadPricing = await recorded(pricing);
+  const unreadIdentity = await settingsEvent("identity");
+  check(
+    "a refresh failure records the Frontend's reason, without any secret",
+    unreadPricing?.delivery?.reason === "refresh" &&
+      /^network: WordPress couldn't be reached/u.test(unreadPricing.delivery.message) &&
+      unreadIdentity?.delivery?.reason === "refresh" &&
+      !JSON.stringify([unreadPricing, unreadIdentity]).includes(eventKey),
+    JSON.stringify([unreadPricing?.delivery, unreadIdentity?.delivery]),
+  );
+  await clock(61);
+  const stillDown = await retryDue();
+  // The second attempt's delay (two minutes) hasn't passed.
+  const backingOff = await retryDue();
+  const afterTwo = [await recorded(pricing), await settingsEvent("identity")];
+  pages = await everyPage(port);
+  const lastGood = await visit(port, "/pricing/");
+  check(
+    "while the CMS can't be read, retries fail with a growing delay, and every page keeps its last good version",
+    stillDown.code === 0 &&
+      sentBy(stillDown).length === 2 &&
+      sentBy(backingOff).length === 0 &&
+      afterTwo.every((record) => record?.delivery?.attempts === 2) &&
+      lastGood.html.includes("Prices v2.") &&
+      pages[0].html.includes('<meta name="description" content="Better things">'),
+    stillDown.stdout + backingOff.stdout + JSON.stringify(afterTwo.map((r) => r?.delivery)),
+  );
+  await cms.start();
+  await clock(122);
+  const restored = await retryDue();
+  const afterRestore = [await recorded(pricing), await settingsEvent("identity")];
+  await cms.stop();
+  pages = await everyPage(port);
+  const fresh = await visit(port, "/pricing/");
+  check(
+    "once the CMS is back, the next due run delivers both, through a later outage",
+    restored.code === 0 &&
+      afterRestore.every(
+        (record) => record?.delivery?.status === "refreshed" && record.delivery.attempts === 3,
+      ) &&
+      fresh.html.includes("Prices v3.") &&
+      pages[0].html.includes('<meta name="description" content="Even better things">'),
+    restored.stdout + restored.stderr + JSON.stringify(afterRestore.map((r) => r?.delivery)),
+  );
+  await cms.start();
+  await clock(0);
+
+  // An interrupted request: the event was recorded as pending, but the
+  // request ended before sending it.
+  const interrupt = (queuedAgo) =>
+    wpOrFail([
+      "eval",
+      `$post = get_post(${pricing});
+       GetQuick\\Site\\PublicationEvents\\record($post->ID, GetQuick\\Site\\PublicationEvents\\event_for($post, $post), ['status' => 'pending', 'attempts' => 0, 'queuedAt' => time() - ${queuedAgo}]);`,
+    ]);
+  cms.entries.get("/pricing/").content = "Prices v4.";
+  await interrupt(0);
+  const sending = await retryDue();
+  const stillPending = await recorded(pricing);
+  await interrupt(300);
+  const resumed = await retryDue();
+  const afterResume = await recorded(pricing);
+  check(
+    "a pending event is left to its own request for a while, then sent by the scheduler if that request was interrupted",
+    sentBy(sending).length === 0 &&
+      stillPending?.delivery?.status === "pending" &&
+      afterResume?.delivery?.status === "refreshed" &&
+      (await visit(port, "/pricing/")).html.includes("Prices v4."),
+    sending.stdout + resumed.stdout + JSON.stringify(afterResume?.delivery),
+  );
+
+  // A persistent failure: retries stop after the last attempt, and it stays
+  // reported until an operator or a newer publication sends it.
+  await wpOrFail([
+    "eval",
+    `$recorded = GetQuick\\Site\\PublicationEvents\\recorded(${pricing});
+     GetQuick\\Site\\PublicationEvents\\record(${pricing}, $recorded['event'], ['status' => 'failed', 'reason' => 'refresh', 'message' => 'timeout: WordPress didn\\'t answer within 8 seconds', 'attempts' => 12, 'attemptedAt' => time() - 86000]);`,
+  ]);
+  const exhausted = await retryDue();
+  const failedReport = await report(pricing);
+  delayed = await delays();
+  const health = JSON.parse(
+    await wpOrFail([
+      "eval",
+      "echo wp_json_encode(GetQuick\\Site\\DeliveryRetries\\site_health());",
+    ]),
+  );
+  check(
+    "after its last attempt, a delivery isn't retried again; it is reported as failed to the editor, by delays and in Site Health",
+    sentBy(exhausted).length === 0 &&
+      (await recorded(pricing))?.delivery?.attempts === 12 &&
+      failedReport.state === "failed" &&
+      failedReport.notice?.type === "error" &&
+      delayed.rows.some((row) => row.subject === `post:${pricing}` && row.state === "failed") &&
+      health.status === "critical" &&
+      health.description.includes(`post:${pricing}`) &&
+      !JSON.stringify(health).includes(eventKey),
+    exhausted.stdout + JSON.stringify(failedReport) + JSON.stringify(health),
+  );
+  const operator = await wp(["gq-events", "retry", pricing], cmsEnv);
+  check(
+    "an operator's retry delivers it",
+    operator.code === 0 && (await recorded(pricing))?.delivery?.status === "refreshed",
+    operator.stdout + operator.stderr,
+  );
+
+  // Overlapping runs: one holding the lock keeps the other from sending.
+  await wpOrFail([
+    "option",
+    "add",
+    "gq_events_retry_lock",
+    String(Math.floor(Date.now() / 1000) + 300),
+  ]);
+  const overlapping = await wp(["gq-events", "retry-due"], cmsEnv);
+  await wpOrFail(["option", "delete", "gq_events_retry_lock"]);
+  check(
+    "a run while another holds the lock sends nothing",
+    overlapping.code === 0 && /Another run is sending events/u.test(overlapping.stdout),
+    overlapping.stdout + overlapping.stderr,
+  );
+
+  const table = await wp(["gq-events", "delays"], cmsEnv);
+  check(
+    "wp gq-events delays shows when the scheduler last ran",
+    /The retry scheduler last ran at/u.test(table.stdout),
+    table.stdout + table.stderr,
+  );
+
   // Withdrawals. The stub CMS keeps returning the entry throughout, as a
   // WordPress whose GraphQL a cache still answers for would: only the event
   // can make the Frontend stop serving it.
@@ -602,6 +858,112 @@ try {
       !(old in (await deletedOption())),
     `HTTP ${stillServed.status} → ${withdrawnLater.status}: ${retriedDeletion.stdout}${retriedDeletion.stderr}`,
   );
+
+  // A withdrawal the Frontend didn't receive (a page deleted outright while
+  // it was down, kept in the CMS's option for deleted entries) is retried by
+  // the scheduler like a publication.
+  const archive = await publishPage("archive", "Archived.");
+  await stopWorker(worker);
+  await wpOrFail(["post", "delete", archive, "--force"], cmsEnv);
+  const lostWithdrawal = (await deletedOption())[archive];
+  const listedWithdrawal = (await delays()).rows.find((row) => row.subject === `post:${archive}`);
+  worker = await local.start(port);
+  const beforeRetry = await visit(port, "/archive/");
+  await clock(61);
+  const withdrawnByScheduler = await retryDue();
+  const afterWithdrawal = await visit(port, "/archive/");
+  check(
+    "the scheduler delivers a withdrawal the Frontend missed, and the page is a 404",
+    lostWithdrawal?.delivery?.status === "failed" &&
+      listedWithdrawal?.action === "withdraw" &&
+      listedWithdrawal.state === "retrying" &&
+      beforeRetry.status === 200 &&
+      sentBy(withdrawnByScheduler).some(
+        (row) =>
+          row.subject === `post:${archive}` &&
+          row.action === "withdraw" &&
+          row.status === "refreshed",
+      ) &&
+      afterWithdrawal.status === 404 &&
+      !(archive in (await deletedOption())),
+    `${JSON.stringify(listedWithdrawal)} HTTP ${beforeRetry.status} → ${afterWithdrawal.status}: ${withdrawnByScheduler.stdout}${withdrawnByScheduler.stderr}`,
+  );
+  await clock(0);
+
+  // The real scheduler: a cron daemon (Debian's, in the local DDEV web server
+  // image, with WP-CLI in /usr/local/bin as on Ploi) runs the exact crontab
+  // line `gq ploi events` installs, as an unprivileged user with cron's own
+  // environment, against this WordPress. Nothing else sends the event.
+  const image = process.env.GQ_SMOKE_CRON_IMAGE ?? "ddev/ddev-webserver:v1.25.4";
+  if (spawnSync("docker", ["image", "inspect", image], { stdio: "ignore" }).status !== 0) {
+    console.log(`- skipped the real cron: no local Docker image ${image}`);
+  } else {
+    await clock(0);
+    const crontab = retryCrontab({ systemUser: "fixture", domain: "cms.example.test" });
+    // The server's .env, which Bedrock defines for cron's runs too.
+    await wpOrFail([
+      "config",
+      "set",
+      "GETQUICK_FRONTEND_URL",
+      `http://host.docker.internal:${port}`,
+    ]);
+    await wpOrFail(["config", "set", "PUBLICATION_EVENT_SECRET", eventKey]);
+    await stopWorker(worker);
+    cms.entries.get("/pricing/").content = "Prices by cron.";
+    await wpOrFail(["post", "update", pricing, "--post_content=Prices by cron."]);
+    const missed = await recorded(pricing);
+    worker = await local.start(port);
+    spawnSync("chmod", ["-R", "a+rwX", wordpress]);
+    const container = `gq-cron-proof-${process.pid}`;
+    const started = spawnSync("docker", [
+      "run",
+      "--detach",
+      "--rm",
+      "--name",
+      container,
+      "--add-host",
+      "host.docker.internal:host-gateway",
+      "--volume",
+      `${work}:${work}`,
+      "--entrypoint",
+      "sh",
+      image,
+      "-c",
+      [
+        "useradd --create-home fixture",
+        "mkdir -p /home/fixture/cms.example.test/apps",
+        `ln -s ${wordpress} /home/fixture/cms.example.test/apps/cms`,
+        `printf '%s\\n' '${crontab.frequency} ${crontab.user} ${crontab.command}' > /etc/cron.d/gq-events`,
+        "chmod 0644 /etc/cron.d/gq-events",
+        "exec cron -f",
+      ].join(" && "),
+    ]);
+    try {
+      check("the cron container starts", started.status === 0, String(started.stderr));
+      let byCron = missed;
+      for (let waited = 0; waited < 200 && byCron?.delivery?.status !== "refreshed"; waited += 5) {
+        await new Promise((done) => setTimeout(done, 5000));
+        byCron = await recorded(pricing);
+      }
+      const scheduled = JSON.parse(
+        await wpOrFail(["option", "get", "gq_events_scheduler", "--format=json"]),
+      );
+      check(
+        "a real cron running the crontab gq ploi events installs delivers a missed publication, without visits or a retry by hand",
+        missed?.delivery?.status === "failed" &&
+          byCron?.event?.id === missed.event.id &&
+          byCron?.delivery?.status === "refreshed" &&
+          byCron.delivery.attempts === 2 &&
+          scheduled.ranAt > 0 &&
+          (await visit(port, "/pricing/")).html.includes("Prices by cron."),
+        `${JSON.stringify(missed?.delivery)} → ${JSON.stringify(byCron?.delivery)}\n${
+          spawnSync("docker", ["logs", container]).stderr
+        }`,
+      );
+    } finally {
+      spawnSync("docker", ["rm", "--force", container], { stdio: "ignore" });
+    }
+  }
 } catch (error) {
   console.error(error.message);
   results.failures += 1;

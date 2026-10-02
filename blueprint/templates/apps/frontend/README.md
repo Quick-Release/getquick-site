@@ -90,6 +90,11 @@ publication that happened later lifts it. Pages answer with
 `Cache-Control: no-cache`; don't put a cache in front of the store that could
 outlive a withdrawal.
 
+The CMS retries an event (a publication, a withdrawal or a setting) the Frontend didn't confirm (its
+`delivery-retries.php`, on the server's cron) by sending the same event again,
+signed anew, so a failed event is processed again and the rules above still
+order it. The Frontend has no scheduler of its own.
+
 `pnpm dev` has no store: it reads the CMS live, as before.
 
 ## Blocks
@@ -107,11 +112,12 @@ change it here; a shared renderer package is planned.
 renders the pages through Astro's Container API against a stubbed CMS
 (`vitest.config.ts` gives Vitest Astro's Vite config); `src/homepage.test.ts`,
 `src/entries.test.ts`, `src/events.test.ts`, `src/settings.test.ts` and
-`src/withdrawals.test.ts` drive the durable homepage, entries, publication
-events, shared settings and withdrawals through refreshes, outages, restarts,
-new and moved publications, refused, duplicate, delayed, racing and failed
-events, with the store on SQLite (`src/test/sqlite-d1.ts`, the same migrations
-and SQL).
+`src/withdrawals.test.ts` and `src/retries.test.ts` drive the durable
+homepage, entries, publication events, shared settings, withdrawals and the
+CMS's retries through refreshes, outages, restarts, new and moved
+publications, refused, duplicate, delayed, racing, failed and retried events,
+with the store on SQLite (`src/test/sqlite-d1.ts`, the same migrations and
+SQL).
 
 ## Deploys
 

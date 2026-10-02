@@ -87,6 +87,7 @@ function fakeProviders({
     env: READY_ENV,
     repository: { provider: "none" },
     logs: [{ id: 3, type: "deploy" }],
+    crontabs: [],
     ...overrides,
   };
   const fetch = recordingFetch(({ method, url, body }) => {
@@ -129,6 +130,11 @@ function fakeProviders({
         state.deployed = data.variables;
         state.logs = [{ id: 4, type: "deploy" }, ...state.logs];
         return {};
+      case "GET /crontabs":
+        return { data: state.crontabs };
+      case "POST /crontabs":
+        state.crontabs = [...state.crontabs, { id: state.crontabs.length + 1, ...data }];
+        return { data: state.crontabs.at(-1) };
       case "GET /sites/34/log/4":
         return { data: { content: `composer install\n${deployResult}\n` } };
       default:
@@ -525,6 +531,12 @@ test("ploi media --dry-run changes nothing, and needs the bucket's credentials",
 // --- gq ploi events --------------------------------------------------------
 
 const EVENT_KEY = "fixture-event-signing-key-0123456789abcdef";
+const RETRY_CRONTAB = {
+  user: "fixture",
+  frequency: "* * * * *",
+  command:
+    'cd /home/fixture/admin.example.test/apps/cms && PATH="/usr/local/bin:$PATH" wp gq-events retry-due --quiet',
+};
 
 test("ploi events sets only the CMS's event secret in the Ploi site's .env, never showing it", async () => {
   const fixture = await site();
@@ -541,6 +553,46 @@ test("ploi events sets only the CMS's event secret in the Ploi site's .env, neve
   const again = await fixture.run(["ploi", "events"], { env, fetch });
   assert.match(again.stdout, /already has this Site's PUBLICATION_EVENT_SECRET/u);
   assert.equal(fetch.requests.filter(({ method }) => method === "PATCH").length, 1);
+});
+
+test("ploi events adds the crontab that retries the CMS's undelivered events every minute, once", async () => {
+  const fixture = await site();
+  const { fetch, state } = fakeProviders();
+  const env = { PLOI_API_TOKEN: "ploi-secret", PUBLICATION_EVENT_SECRET: EVENT_KEY };
+
+  const result = await fixture.run(["ploi", "events"], { env, fetch });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(
+    state.crontabs.map(({ user, frequency, command }) => ({ user, frequency, command })),
+    [RETRY_CRONTAB],
+  );
+  assert.match(result.stdout, /\+ crontab \(fixture, \* \* \* \* \*\): cd \/home\/fixture/u);
+
+  // The key set and the crontab there: nothing to do, even with the .env
+  // already holding the key.
+  const again = await fixture.run(["ploi", "events"], { env, fetch });
+  assert.equal(again.code, 0, again.stderr);
+  assert.match(again.stdout, /already has .* and the delivery retry crontab/u);
+  assert.equal(fetch.requests.filter(({ method }) => method === "POST").length, 1);
+});
+
+test("ploi events keeps an existing retry crontab and warns when it runs less often", async () => {
+  const fixture = await site();
+  const { fetch, state } = fakeProviders({
+    state: {
+      env: `${READY_ENV}PUBLICATION_EVENT_SECRET='${EVENT_KEY}'\n`,
+      crontabs: [{ id: 9, ...RETRY_CRONTAB, frequency: "*/15 * * * *" }],
+    },
+  });
+  const env = { PLOI_API_TOKEN: "ploi-secret", PUBLICATION_EVENT_SECRET: EVENT_KEY };
+
+  const result = await fixture.run(["ploi", "events"], { env, fetch });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(state.crontabs.length, 1);
+  assert.match(result.stderr, /runs at "\*\/15 \* \* \* \*", not every minute/u);
+  assert.ok(!fetch.requests.some(({ method }) => method === "POST" || method === "PATCH"));
 });
 
 test("ploi events needs an event secret long enough for the Frontend, and --dry-run changes nothing", async () => {
@@ -567,7 +619,9 @@ test("ploi events needs an event secret long enough for the Frontend, and --dry-
   assert.ok(!short.stderr.includes("short'"));
   assert.equal(dryRun.code, 0, dryRun.stderr);
   assert.match(dryRun.stdout, /Dry run: nothing changed\./u);
+  assert.match(dryRun.stdout, /\+ crontab/u);
   assert.equal(state.env, READY_ENV);
+  assert.deepEqual(state.crontabs, []);
 });
 
 test("the Ploi workflows reject options they don't take", async () => {

@@ -40,6 +40,7 @@ the installed npm package; decisions are linked, not copied into guides.
 - [ADR 0005: Refresh publications through signed CMS events](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0005-refresh-publications-through-signed-cms-events.md): publication events.
 - [ADR 0006: Withdraw publications through signed CMS events](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0006-withdraw-publications-through-signed-cms-events.md): withdrawals.
 - [ADR 0007: Refresh shared settings through settings events](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0007-refresh-shared-settings-through-settings-events.md): settings events.
+- [ADR 0008: Retry event delivery from the CMS on a server cron](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0008-retry-event-delivery-from-the-cms-on-a-server-cron.md): delivery retries and delay reporting.
 - [Rollout plan and evidence](https://github.com/Quick-Release/gq-site/blob/main/docs/plans/getquick-blueprint-rollout.md): accepted gates, passed phases and adoption checklist.
 - [Research](https://github.com/Quick-Release/gq-site/tree/main/docs/research): dated inventories and implementation research.
 - [Agent guidance](https://github.com/Quick-Release/gq-site/tree/main/docs/agents): issue tracking, triage and domain-document use.

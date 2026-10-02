@@ -1,8 +1,16 @@
-// Gives the Ploi site's CMS the key it signs its publication events with
-// (PUBLICATION_EVENT_SECRET, from the secret store): the same per-Site secret
-// `pnpm deploy:frontend` and CI releases bind to the Frontend, so the
-// Frontend accepts this CMS's events and no other's. Sets that one .env line
-// and leaves every other as it is; never shows the value. Idempotent.
+// Gives the Ploi site's CMS what its publication events need:
+//
+// - the key it signs them with (PUBLICATION_EVENT_SECRET, from the secret
+//   store): the same per-Site secret `pnpm deploy:frontend` and CI releases
+//   bind to the Frontend, so the Frontend accepts this CMS's events and no
+//   other's. Sets that one .env line and leaves every other as it is; never
+//   shows the value.
+// - the crontab that retries the events the Frontend didn't confirm
+//   (`wp gq-events retry-due`, every minute, as the site's system user;
+//   ADR 0008). Production disables WP-Cron, which would only run on visits
+//   anyway, so this is the CMS's only background scheduler.
+//
+// Idempotent.
 //
 //   gq ploi events [--dry-run]
 
@@ -11,6 +19,29 @@ import { createReporter } from "../cli/reporter.mjs";
 import { createPloiServerClient } from "./server-client.mjs";
 
 export const EVENT_SECRET = "PUBLICATION_EVENT_SECRET";
+
+/** What the cron runs: the CMS's delivery-retries.php sends what is due. */
+export const RETRY_COMMAND = "wp gq-events retry-due --quiet";
+
+/**
+ * The retry crontab for a Ploi site: every minute, as its system user, from
+ * its Bedrock app (Ploi keeps a site in /home/<user>/<domain>). WP-CLI is in
+ * /usr/local/bin on Ploi servers, which cron's PATH leaves out.
+ */
+export function retryCrontab({ systemUser, domain }) {
+  for (const [name, value] of Object.entries({ systemUser, domain })) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value ?? "")) {
+      throw new Error(
+        `The Ploi site's ${name} ${JSON.stringify(value)} can't be used in a crontab.`,
+      );
+    }
+  }
+  return {
+    user: systemUser,
+    frequency: "* * * * *",
+    command: `cd /home/${systemUser}/${domain}/apps/cms && PATH="/usr/local/bin:$PATH" ${RETRY_COMMAND}`,
+  };
+}
 
 // `gq ploi events [--dry-run]`. Resolves to an exit code.
 export async function runEvents({ context, parsed, fetch, io, interactive }) {
@@ -29,32 +60,56 @@ export async function runEvents({ context, parsed, fetch, io, interactive }) {
   }
 
   const ui = createReporter(io, interactive);
-  ui.intro("Ploi .env · publication events");
+  ui.intro("Ploi · publication events");
   const client = createPloiServerClient({
     token: context.env.PLOI_API_TOKEN,
     serverId: ops.ploi.serverId,
     fetch,
   });
-  const envPath = `/sites/${ops.ploi.siteId}/env`;
-  const response = await client.request("GET", envPath);
+  const sitePath = `/sites/${ops.ploi.siteId}`;
+  const response = await client.request("GET", `${sitePath}/env`);
   const current = response?.data ?? response?.env;
   if (typeof current !== "string" || !current.trim()) {
     throw new Error("The Ploi site has no .env yet; run gq ploi provision first.");
   }
-
   const { output, changed } = applyEnv(current, { [EVENT_SECRET]: secret });
-  if (changed.length === 0) {
-    ui.outro(`The Ploi .env already has this Site's ${EVENT_SECRET}.`);
+
+  const site = (await client.request("GET", sitePath))?.data ?? {};
+  const crontab = retryCrontab({
+    systemUser: site.system_user ?? ops.ploi.systemUser,
+    domain: site.domain ?? ops.domains?.admin,
+  });
+  const crontabs = (await client.request("GET", "/crontabs"))?.data ?? [];
+  const existing = crontabs.find(
+    (entry) => entry.user === crontab.user && entry.command === crontab.command,
+  );
+  if (existing && existing.frequency !== crontab.frequency) {
+    ui.warn(
+      `The retry crontab runs at "${existing.frequency}", not every minute; retries are only as frequent.`,
+    );
+  }
+
+  const plan = [
+    ...changed.map((name) => `~ ${name}`),
+    ...(existing ? [] : [`+ crontab (${crontab.user}, ${crontab.frequency}): ${crontab.command}`]),
+  ];
+  if (plan.length === 0) {
+    ui.outro(
+      `The Ploi site already has this Site's ${EVENT_SECRET} and the delivery retry crontab.`,
+    );
     return 0;
   }
-  ui.note(changed.map((name) => `~ ${name}`).join("\n"), "Plan (values not shown)");
+  ui.note(plan.join("\n"), "Plan (values not shown)");
   if (parsed.dryRun) {
     ui.outro("Dry run: nothing changed.");
     return 0;
   }
-  await client.request("PATCH", envPath, { content: output });
+  if (changed.length > 0) {
+    await client.request("PATCH", `${sitePath}/env`, { content: output });
+  }
+  if (!existing) await client.request("POST", "/crontabs", crontab);
   ui.outro(
-    "Updated. The next release copies the .env into the CMS; then `wp gq-events check` there proves the Frontend accepts its events.",
+    "Updated. The next release copies the .env into the CMS; then `wp gq-events check` there proves the Frontend accepts its events, and `wp gq-events delays` shows the retry scheduler's last run.",
   );
   return 0;
 }

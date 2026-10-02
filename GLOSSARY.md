@@ -138,6 +138,15 @@ without republishing them
 ([ADR 0007](docs/adr/0007-refresh-shared-settings-through-settings-events.md)).
 _Avoid_: options, theme settings (for the WordPress mechanisms behind them)
 
+**Public delivery**:
+The Frontend confirming that it acted on an event (refreshed or withdrew what
+it names), apart from the change itself: a change can be saved in WordPress while its public
+delivery is pending, delayed (failed, and retried by the CMS's delivery
+scheduler, a server cron) or failed (no attempts left). Visitors keep the
+last-known-good content until it succeeds; editors and Site Health are told
+([ADR 0008](docs/adr/0008-retry-event-delivery-from-the-cms-on-a-server-cron.md)).
+_Avoid_: sync, publish (for the Frontend's side)
+
 **Cold lookup**:
 A visit's read of an entry the publication store has never held, the only CMS
 read a visit makes: a published entry is stored and served, a confirmed

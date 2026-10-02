@@ -157,6 +157,11 @@
       "app": "apps/cms"
     },
     {
+      "path": "apps/cms/web/app/mu-plugins/delivery-retries.php",
+      "template": "templates/apps/cms/web/app/mu-plugins/delivery-retries.php",
+      "app": "apps/cms"
+    },
+    {
       "path": "apps/cms/web/app/mu-plugins/publication-events.php",
       "template": "templates/apps/cms/web/app/mu-plugins/publication-events.php",
       "app": "apps/cms"
@@ -244,6 +249,11 @@
     {
       "path": "apps/frontend/src/events.test.ts",
       "template": "templates/apps/frontend/src/events.test.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/retries.test.ts",
+      "template": "templates/apps/frontend/src/retries.test.ts",
       "app": "apps/frontend"
     },
     {
