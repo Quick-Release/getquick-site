@@ -57,6 +57,7 @@ test("--help lists the command groups without a project", async () => {
   for (const form of [
     "gq context show",
     "gq sync [--manifest] [--check] [--variant <content|commerce>] [--recreate <path>]...",
+    "gq skills update [--check]",
     "gq ploi api <operation-id>",
     "gq cloudflare dns list",
     "gq version check [version]",

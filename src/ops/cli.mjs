@@ -51,6 +51,7 @@ import {
 } from "../workspace/commands.mjs";
 import { isSyncCommand, runSyncCommand, SYNC_USAGE } from "../sync/commands.mjs";
 import { isNewCommand, NEW_USAGE, runNewCommand } from "../sync/new.mjs";
+import { isSkillsCommand, runSkillsCommand, SKILLS_USAGE } from "../skills/commands.mjs";
 import { VERSION } from "../version.mjs";
 
 const COMMAND_OPTIONS = new Map([
@@ -81,6 +82,8 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
   if (isNewCommand(argv)) {
     return runNewCommand(argv.slice(1), { cwd, env, exec, stdin, io, interactive });
   }
+  // And gq skills update, which works from any Git repository (no manifest).
+  if (isSkillsCommand(argv)) return runSkillsCommand(argv, { cwd, env, fetch, io });
 
   let effectiveArguments = argv;
   if (effectiveArguments.length === 0 && interactive) {
@@ -440,6 +443,7 @@ Project:
 ${WORKSPACE_USAGE.map((usage) => `  ${usage}`).join("\n")}
 ${NEW_USAGE.map((usage) => `  ${usage}`).join("\n")}
 ${SYNC_USAGE.map((usage) => `  ${usage}`).join("\n")}
+${SKILLS_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Ploi:
   gq ploi servers list

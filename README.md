@@ -218,6 +218,58 @@ the file (the section, or the key) and `gq sync` regenerates it.
 A lock written by a newer `gq` is refused rather than downgraded. Neither
 command needs network access or secrets.
 
+## Sync upstream agent skills
+
+`gq skills update` manages only registered skills under `.agents/skills`, and
+works from any directory inside a Git repository (no `gq.ops.json` needed).
+Registrations live in `.agents/skills.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "skills": {
+    "code-review": {
+      "repository": "mattpocock/skills",
+      "path": "skills/engineering/code-review",
+      "ref": "main",
+      "trackingBranch": "main"
+    }
+  }
+}
+```
+
+`skills-lock.json` records the installed commit and per-file hashes/modes for
+each managed skill, including supporting files (`agents/*.yaml`, templates,
+notes, scripts, etc.). A managed skill with local drift (changed, missing or
+extra files) is refused; no overwrite happens without reverting to the locked
+state first.
+
+When a registered skill already exists locally but `skills-lock.json` is
+missing, `gq skills update` bootstraps it only if the local directory exactly
+matches the fetched upstream bytes and modes; otherwise it refuses to overwrite
+that local copy.
+
+`gq skills update --check` is read-only: it reports pending updates and exits
+`1` when any are available, else `0`.
+
+For multi-skill updates, provide `GITHUB_TOKEN` or `GH_TOKEN`: GitHub's
+unauthenticated limit (typically 60 requests/hour) is easy to hit with many
+skills and supporting files.
+
+Write updates take a cooperative repository lock (`.gq-skills-update.lock`), so
+concurrent `gq skills update` writers are serialized. This lock is advisory:
+it does not protect against uncooperative/malicious concurrent filesystem
+replacement, and a crash (for example `SIGKILL`) mid multi-directory swap is
+not a crash-atomic commit guarantee.
+
+Safety checks reject symlink anchors (`.agents`, `.agents/skills`,
+`.agents/skills.json`, `skills-lock.json`) and unsafe registration paths
+(backslashes, absolute paths, `.`/`..`, NULs). Skill keys `__proto__`,
+`constructor` and `.backup` are reserved.
+
+Unregistered skills (or any other project-owned files under `.agents/skills`)
+are left untouched and are never used to infer sources.
+
 ## Commands
 
 ```sh
@@ -225,6 +277,7 @@ gq --version
 gq context show [--json]
 gq new <dir> --project <name> --variant content
 gq sync [--manifest] [--check] [--variant <content|commerce>] [--recreate <path>]...
+gq skills update [--check]
 
 gq setup [--no-ddev]
 gq doctor
