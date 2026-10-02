@@ -4,7 +4,7 @@
 # from this checkout's blueprint, installs its Frontend's and its CI Worker's
 # npm dependencies (the latter for Wrangler's local workerd runtime), sets up a
 # real WordPress (the version the CMS skeleton pins, on SQLite, with WP-CLI)
-# carrying the site's own publication-events mu-plugin, then runs
+# carrying the site's own event and delivery-retry mu-plugins, then runs
 # cms-events.mjs: WordPress publishes through its real hooks, and the Frontend
 # built by Alchemy's Astro Cloudflare build, served in workerd with a local D1
 # publication store, receives the signed events.
@@ -13,7 +13,9 @@
 # WordPress, its SQLite integration and WP-CLI, cached in GQ_SMOKE_CACHE) use
 # the network. Nothing is provisioned or deployed: no Cloudflare account,
 # token, remote resource or live CMS is used. The site is deleted afterwards
-# unless KEEP=1. Needs php and unzip.
+# unless KEEP=1. Needs php and unzip. The real-cron check runs only when
+# Docker has the image GQ_SMOKE_CRON_IMAGE (default ddev/ddev-webserver:v1.25.4,
+# which DDEV installs) locally; it is never pulled.
 
 set -euo pipefail
 

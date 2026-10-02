@@ -81,6 +81,11 @@ reaches the homepage and every entry without re-reading them. Each setting's
 events are ordered on their own, like an entry's, and a failed read keeps the
 stored menus, branding and design.
 
+The CMS retries an event the Frontend didn't confirm (its
+`delivery-retries.php`, on the server's cron) by sending the same event again,
+signed anew, so a failed event is processed again and the rules above still
+order it. The Frontend has no scheduler of its own.
+
 `pnpm dev` has no store: it reads the CMS live, as before.
 
 ## Blocks
@@ -97,9 +102,11 @@ change it here; a shared renderer package is planned.
 (`vp test`) run from the workspace root, and in `pnpm verify`. `src/routes.test.ts`
 renders the pages through Astro's Container API against a stubbed CMS
 (`vitest.config.ts` gives Vitest Astro's Vite config); `src/homepage.test.ts`,
-`src/entries.test.ts`, `src/events.test.ts` and `src/settings.test.ts` drive
-the durable homepage, entries, publication events and shared settings through refreshes, outages, restarts, new and
-moved publications, refused, duplicate, delayed and failed events, with the
+`src/entries.test.ts`, `src/events.test.ts`, `src/settings.test.ts` and
+`src/retries.test.ts` drive the durable homepage, entries, publication events,
+shared settings and the CMS's retries through refreshes, outages, restarts,
+new and moved publications, refused, duplicate, delayed, failed and retried
+events, with the
 store on SQLite (`src/test/sqlite-d1.ts`, the same migrations and SQL).
 
 ## Deploys

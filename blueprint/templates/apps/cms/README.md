@@ -75,6 +75,18 @@ wp gq-events settings status           # each setting's last event
 wp gq-events settings retry <setting>  # menus, logo, identity or design
 ```
 
+`web/app/mu-plugins/delivery-retries.php` retries the events the Frontend
+didn't confirm, entries' and settings' alike: after 1, 2, 5, 10 and 30
+minutes, then hourly, up to 12 attempts. The server's cron runs it every
+minute (`pnpm ploi:events` adds the Ploi crontab; WP-Cron isn't used).
+Editors see delayed public delivery in the editor, the page and post lists
+and on the Dashboard; Site Health has a "Public website delivery" test.
+
+```sh
+wp gq-events retry-due  # send what is due (the cron runs it with --quiet)
+wp gq-events delays     # what the Frontend hasn't confirmed, and the cron's last run
+```
+
 ## Checks
 
 `pnpm cms:lint` (Pint) and `pnpm cms:test` (Pest) cover this site's own PHP.

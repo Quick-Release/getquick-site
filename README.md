@@ -722,7 +722,7 @@ entry from WordPress anonymously, like any refresh, and promotes it only if it
 is published and complete.
 
 ```sh
-pnpm ploi:events              # gq ploi events: the key into the Ploi .env
+pnpm ploi:events              # gq ploi events: the key into the Ploi .env, and the retry crontab
 pnpm frontend:events:check    # gq frontend events check
 ```
 
@@ -742,7 +742,7 @@ pnpm frontend:events:check    # gq frontend events check
   and the entry records how it went. A failed delivery or refresh keeps the
   previous version served; `wp gq-events status` lists pending and failed
   events, `wp gq-events retry <post>` sends one again and `wp gq-events check`
-  proves the CMS's key against the Frontend. Automatic retries come later.
+  proves the CMS's key against the Frontend.
 - `gq frontend events check` sends a signed check event, which changes
   nothing, to prove the deployed Frontend has this Site's key bound.
 
@@ -782,6 +782,37 @@ tagline), never each entry.
 APIs (a primary menu, `site_logo`, the tagline and icon, a palette saved
 through the global-styles REST route) and checks the homepage and an entry
 through an outage, a failed settings refresh and its retry.
+
+### Delivery retries
+
+An event the Frontend didn't confirm is retried by the CMS, without visits or
+republishing, and editors are told the public website is behind
+([ADR 0008](docs/adr/0008-retry-event-delivery-from-the-cms-on-a-server-cron.md)).
+The CMS skeleton's `web/app/mu-plugins/delivery-retries.php` reads the
+entries' and the settings' delivery records as one list, whatever the event's
+action, and `wp gq-events retry-due` resends each due one: the same event, so
+the Frontend's ordering still holds.
+
+- A failed delivery is retried after 1, 2, 5, 10 and 30 minutes, then hourly,
+  up to 12 attempts; then it is reported as failed until an operator's
+  `wp gq-events retry` or a newer event. A pending one its request never sent
+  is picked up after two minutes. It covers an unreachable or refusing
+  Frontend and a refresh that couldn't read WordPress back.
+- The scheduler is the server's cron: `gq ploi events` adds a Ploi crontab
+  running `wp gq-events retry-due --quiet` every minute as the site's system
+  user. Production disables WP-Cron, which isn't used.
+- Editors see a notice in the block or classic editor (being delivered,
+  delayed with the reason and the next retry, failed, or recovered), "Public
+  update" states in the page and post lists, and a summary on the Dashboard
+  and the settings screens. Operators get the "Public website delivery" Site
+  Health test and `wp gq-events delays`, which also shows the scheduler's last
+  run. None of them shows the key or content.
+
+`scripts/smoke/cms-events.sh` drives `retry-due` on a real WordPress through
+dispatch and refresh failures, backoff, an interrupted request, exhausted
+attempts and an overlapping run. With the local `ddev/ddev-webserver` Docker
+image present (`GQ_SMOKE_CRON_IMAGE` picks another), a real cron daemon runs
+the exact crontab `gq ploi events` installs and delivers a missed publication.
 
 ## Programmatic use
 
