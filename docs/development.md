@@ -36,6 +36,10 @@ Tests call `run()` against a fixture site (a temporary Git repository with a
 ([`test/support/fixture-site.mjs`](https://github.com/Quick-Release/gq-site/blob/main/test/support/fixture-site.mjs)). They need
 no network, credentials, or provider accounts.
 
+For blueprint source roles, ownership mappings, and deliberate dotless source
+names, see the [blueprint map](../blueprint/README.md). `ownership.json` remains
+the authority for which site paths are touched.
+
 ## Releasing
 
 1. Bump `version` in `package.json`, add its section to `CHANGELOG.md`, and
