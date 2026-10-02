@@ -9,10 +9,18 @@
 // before it is processed (publications.ts), so a duplicate is recognised, an
 // event older than one already refreshed for the same entry is superseded
 // rather than processed, and one whose refresh failed stays on record, failed,
-// for a retry. Each action has its own handler: later slices add withdrawals
-// and shared settings beside "publish".
+// for a retry. Each action has its own handler: "publish" for a page or post,
+// "settings" for a shared setting (menus, logo, site identity, design presets),
+// and later withdrawals beside them.
 import { z } from "astro/zod";
-import { refreshEntries, refreshHome, routeOf, type RecordOutcome } from "./delivery";
+import {
+  refreshEntries,
+  refreshHome,
+  refreshShared,
+  routeOf,
+  type RecordOutcome,
+  type SharedPart,
+} from "./delivery";
 import {
   publicationStore,
   StoreFailure,
@@ -68,15 +76,47 @@ const publishEvent = z
 type PublishEvent = z.infer<typeof publishEvent>;
 
 /**
+ * The shared settings an event can name, and what each change refreshes: the
+ * menus and the logo are in the chrome every page is served with; the site's
+ * identity is its title and tagline (the front page's) and its icon (the
+ * chrome's); the design presets are the shared design every page uses.
+ */
+const SETTINGS = {
+  menus: ["chrome"],
+  logo: ["chrome"],
+  identity: ["home", "chrome"],
+  design: ["design"],
+} as const satisfies Record<string, SharedPart[]>;
+
+/** A setting is recorded as the subject "setting:<name>", so its events are ordered apart. */
+const SETTING = "setting:";
+
+/** A shared setting was changed. */
+const settingsEvent = z
+  .object({
+    ...envelope,
+    action: z.literal("settings"),
+    setting: z.enum(Object.keys(SETTINGS) as [keyof typeof SETTINGS]),
+  })
+  .strict();
+
+type SettingsEvent = z.infer<typeof settingsEvent>;
+
+/** What processing an event may need from the request: the Site's public origin. */
+export interface EventContext {
+  siteOrigin?: string;
+}
+
+/**
  * An action's handler: its event's shape, and what processing one does. A
  * parsed event is ready to run against the store, or invalid.
  */
 type Handler = (event: unknown) => { invalid: string } | { occurredAt: number; run: Run };
-type Run = (store: PublicationStore) => Promise<EventAnswer>;
+type Run = (store: PublicationStore, context: EventContext) => Promise<EventAnswer>;
 
 function handler<E extends { occurredAt: number }>(
   schema: z.ZodType<E>,
-  handle: (store: PublicationStore, event: E) => Promise<EventAnswer>,
+  handle: (store: PublicationStore, event: E, context: EventContext) => Promise<EventAnswer>,
 ): Handler {
   return (input) => {
     const parsed = schema.safeParse(input);
@@ -84,7 +124,10 @@ function handler<E extends { occurredAt: number }>(
       const issue = parsed.error.issues[0]!;
       return { invalid: `${issue.path.join(".") || "event"} ${issue.message}` };
     }
-    return { occurredAt: parsed.data.occurredAt, run: (store) => handle(store, parsed.data) };
+    return {
+      occurredAt: parsed.data.occurredAt,
+      run: (store, context) => handle(store, parsed.data, context),
+    };
   };
 }
 
@@ -94,6 +137,7 @@ const handlers: Record<string, Handler> = {
     body: { status: "checked", site: SITE },
   })),
   publish: handler(publishEvent, handlePublish),
+  settings: handler(settingsEvent, handleSettings),
 };
 
 /** The event key when the Worker has one bound, and it is strong enough. */
@@ -156,7 +200,10 @@ async function readBody(request: Request): Promise<string | null> {
  * store unless the event is signed with this Site's key, names this Site, has
  * a supported action and is well formed.
  */
-export async function receiveEvent(request: Request): Promise<EventAnswer> {
+export async function receiveEvent(
+  request: Request,
+  context: EventContext = {},
+): Promise<EventAnswer> {
   const authority = await eventAuthority();
   if ("refused" in authority) {
     return { status: 403, body: { error: `Events are disabled: ${authority.refused}.` } };
@@ -201,7 +248,7 @@ export async function receiveEvent(request: Request): Promise<EventAnswer> {
   }
 
   try {
-    return await parsed.run(authority.store);
+    return await parsed.run(authority.store, context);
   } catch (error) {
     if (!(error instanceof StoreFailure)) throw error;
     console.error(`Events: an event couldn't be recorded (store): ${error.message}`);
@@ -278,6 +325,66 @@ async function handlePublish(store: PublicationStore, event: PublishEvent): Prom
       ...(home ? { home } : {}),
       entries,
       moved,
+    },
+  };
+}
+
+/**
+ * A shared setting's change: the rows every affected page is served with are
+ * refreshed (refreshShared), so the change reaches every page without reading
+ * or republishing each entry. A setting's events are ordered like an entry's:
+ * a duplicate isn't processed again, and an event older than one refreshed for
+ * the same setting is superseded. Failed, it is kept on record for a retry and
+ * the stored chrome, design and front page stay served.
+ */
+async function handleSettings(
+  store: PublicationStore,
+  event: SettingsEvent,
+  { siteOrigin }: EventContext,
+): Promise<EventAnswer> {
+  const { recorded, duplicate } = await store.receiveEvent({
+    id: event.id,
+    action: event.action,
+    nodeId: `${SETTING}${event.setting}`,
+    // Every route: a shared setting is on every page.
+    uri: "/",
+    previousUri: null,
+    occurredAt: event.occurredAt,
+  });
+  if (duplicate && (recorded.status === "refreshed" || recorded.status === "superseded")) {
+    console.info(`Events: ${event.id} is a duplicate of a ${recorded.status} event`);
+    return { status: 200, body: { event: event.id, status: recorded.status, duplicate: true } };
+  }
+  const newer = await store.newerRefreshedEvent(recorded);
+  if (newer) {
+    await store.finishEvent(recorded, { status: "superseded" });
+    console.info(`Events: ${event.id} is superseded by the newer ${newer}`);
+    return { status: 200, body: { event: event.id, status: "superseded", by: newer } };
+  }
+
+  await store.startEvent(event.id);
+  const { refreshed, ...parts } = await refreshShared(
+    store,
+    [...SETTINGS[event.setting]],
+    siteOrigin,
+  );
+  const failure = Object.values(parts).find((outcome) => outcome.outcome === "kept");
+  await store.finishEvent(
+    recorded,
+    failure?.outcome === "kept"
+      ? { status: "failed", reason: failure.failure.reason, message: failure.failure.message }
+      : { status: "refreshed" },
+  );
+  console.info(
+    `Events: ${event.id} (settings ${event.setting}) ${refreshed ? "refreshed" : "failed"}`,
+  );
+  return {
+    status: refreshed ? 200 : 503,
+    body: {
+      event: event.id,
+      status: refreshed ? "refreshed" : "failed",
+      setting: event.setting,
+      ...parts,
     },
   };
 }

@@ -93,6 +93,7 @@ function cmsDown() {
     home: unreachable,
     entry: unreachable,
     chrome: unreachable,
+    design: unreachable,
     routes: unreachable,
   });
 }

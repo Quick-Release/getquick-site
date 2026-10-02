@@ -53,6 +53,11 @@ const newChrome = () =>
 
 const unreachable = () => Promise.reject(new TypeError("fetch failed"));
 
+// WordPress, with the design presets the front page is read with.
+function wordpress(handlers: Parameters<typeof stubWordPress>[0]) {
+  return stubWordPress({ design: () => data({ designTokens: brand }), ...handlers });
+}
+
 let directory: string;
 let db: TestD1;
 let consoleError: ReturnType<typeof vi.spyOn>;
@@ -113,7 +118,7 @@ function restartWorker() {
 }
 
 async function prepare(home: Handler = welcome) {
-  stubWordPress({ home });
+  wordpress({ home });
   const { status, report } = await refresh();
   expect(status).toBe(200);
   expect(report.ready).toBe(true);
@@ -128,7 +133,7 @@ function expectPublishedHome(html: string, heading = "Welcome to Acme") {
 }
 
 test("a Site that was never refreshed is a 503, and a visit doesn't read the CMS", async () => {
-  const fetchMock = stubWordPress({ home: welcome });
+  const fetchMock = wordpress({ home: welcome });
 
   const { status, html } = await visit();
 
@@ -144,7 +149,7 @@ test("a Site that was never refreshed is a 503, and a visit doesn't read the CMS
 
 test("after a refresh the front page, menu, logo and design presets are served from the store", async () => {
   await prepare();
-  const fetchMock = stubWordPress({ home: unreachable, chrome: unreachable });
+  const fetchMock = wordpress({ home: unreachable, chrome: unreachable });
 
   const first = await visit();
   const second = await visit();
@@ -157,7 +162,7 @@ test("after a refresh the front page, menu, logo and design presets are served f
 
 test("the front page outlives a CMS outage of any length", async () => {
   await prepare();
-  stubWordPress({ home: unreachable, chrome: unreachable });
+  wordpress({ home: unreachable, chrome: unreachable });
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(Date.now() + 400 * 24 * 60 * 60 * 1000);
 
@@ -169,7 +174,7 @@ test("the front page outlives a CMS outage of any length", async () => {
 
 test("the front page survives a Worker restart or redeploy while the CMS is down", async () => {
   await prepare();
-  stubWordPress({ home: unreachable, chrome: unreachable });
+  wordpress({ home: unreachable, chrome: unreachable });
 
   restartWorker();
   const { status, html } = await visit();
@@ -180,7 +185,7 @@ test("the front page survives a Worker restart or redeploy while the CMS is down
 
 test("a refresh replaces the front page and the chrome with WordPress's newer versions", async () => {
   await prepare();
-  stubWordPress({ home: () => frontPage("<h1>Spring at Acme</h1>"), chrome: newChrome });
+  wordpress({ home: () => frontPage("<h1>Spring at Acme</h1>"), chrome: newChrome });
 
   const { status, report } = await refresh();
   const { html } = await visit();
@@ -230,7 +235,7 @@ test.each<[string, Handler, string]>([
   ],
 ])("a refresh failing on %s keeps the last good front page", async (_case, home, reason) => {
   await prepare();
-  stubWordPress({ home, chrome: unreachable });
+  wordpress({ home, chrome: unreachable });
 
   const { status, report } = await refresh();
   const { status: visitStatus, html } = await visit();
@@ -251,7 +256,7 @@ test.each<[string, Handler, string]>([
 
 test("a failed chrome read keeps the stored menu and logo and still promotes the front page", async () => {
   await prepare();
-  stubWordPress({ home: () => frontPage("<h1>Spring at Acme</h1>"), chrome: () => httpError(503) });
+  wordpress({ home: () => frontPage("<h1>Spring at Acme</h1>"), chrome: () => httpError(503) });
 
   const { report } = await refresh();
   const { status, html } = await visit();
@@ -267,7 +272,7 @@ test("a failed chrome read keeps the stored menu and logo and still promotes the
 });
 
 test("a first refresh whose chrome read fails doesn't make the Site ready", async () => {
-  stubWordPress({ home: welcome, chrome: timeout });
+  wordpress({ home: welcome, chrome: timeout });
 
   const { status, report } = await refresh();
   const visited = await visit();
@@ -282,7 +287,7 @@ test("a refresh whose read started earlier doesn't overwrite a newer one", async
   let releaseSlowRead!: () => void;
   const slowRead = new Promise<void>((resolve) => (releaseSlowRead = resolve));
   let reads = 0;
-  stubWordPress({
+  wordpress({
     home: async () => {
       reads += 1;
       if (reads === 1) {
@@ -310,7 +315,7 @@ test("a refresh whose read started earlier doesn't overwrite a newer one", async
 
 test("a refresh confirming no front page is set makes the front page a 404 with the hint", async () => {
   await prepare();
-  stubWordPress({
+  wordpress({
     home: () =>
       data({
         generalSettings: { title: "Acme", description: "" },
@@ -334,7 +339,7 @@ test.each([
   ["the token without the Bearer scheme", TOKEN],
 ])("a refresh with %s is refused and changes nothing", async (_case, authorization) => {
   await prepare();
-  const fetchMock = stubWordPress({ home: () => frontPage("<h1>Injected</h1>") });
+  const fetchMock = wordpress({ home: () => frontPage("<h1>Injected</h1>") });
 
   const { status, report } = await refresh({ authorization });
   const { html } = await visit();
@@ -350,7 +355,7 @@ test("a Site's refresh token doesn't refresh another Site", async () => {
   const otherSite = openTestD1(join(directory, "other-site.sqlite"));
   db.close();
   bind(otherSite, "other-site-refresh-token-0123456789abcdef0123");
-  const fetchMock = stubWordPress({ home: welcome });
+  const fetchMock = wordpress({ home: welcome });
 
   const { status } = await refresh();
   const { status: visitStatus } = await visit();
@@ -365,7 +370,7 @@ test.each([
   ["a refresh token too short to trust", "short"],
 ])("with %s, refresh is disabled", async (_case, token) => {
   runtime.env = { PUBLICATION_DB: db, FRONTEND_REFRESH_TOKEN: token };
-  const fetchMock = stubWordPress({ home: welcome });
+  const fetchMock = wordpress({ home: welcome });
 
   const { status, report } = await refresh({ authorization: `Bearer ${token}` });
 
@@ -375,7 +380,7 @@ test.each([
 });
 
 test("a refresh is a POST", async () => {
-  const fetchMock = stubWordPress({ home: welcome });
+  const fetchMock = wordpress({ home: welcome });
 
   const { status } = await refresh({ method: "GET" });
 
@@ -384,7 +389,7 @@ test("a refresh is a POST", async () => {
 });
 
 test("a refresh reads WordPress anonymously, so only published content is stored", async () => {
-  const fetchMock = stubWordPress({ home: welcome });
+  const fetchMock = wordpress({ home: welcome });
 
   await refresh();
 
@@ -399,7 +404,7 @@ test("a refresh reads WordPress anonymously, so only published content is stored
 
 test("an unreadable store is a 503, not the CMS", async () => {
   await prepare();
-  const fetchMock = stubWordPress({ home: welcome });
+  const fetchMock = wordpress({ home: welcome });
   db.unavailable = true;
 
   const { status, html } = await visit();
@@ -414,7 +419,7 @@ test("an unreadable store is a 503, not the CMS", async () => {
 
 test("a refresh that can't write the store keeps what it holds and says so", async () => {
   await prepare();
-  stubWordPress({ home: () => frontPage("<h1>Spring at Acme</h1>") });
+  wordpress({ home: () => frontPage("<h1>Spring at Acme</h1>") });
   db.unavailable = true;
 
   const { status, report } = await refresh();

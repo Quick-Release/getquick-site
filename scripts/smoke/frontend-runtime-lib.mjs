@@ -25,12 +25,18 @@ export function checker() {
 /**
  * WordPress, answering the Frontend's queries by name from `entries`
  * (published entries by URI: { id, title, content }), `heading` (the front
- * page's) and `menuLabel`.
+ * page's) and the shared settings: `menuLabel`, `logo`, `icon`, `title`,
+ * `tagline` and `color` (the brand preset's).
  */
 export function stubCms(entries) {
   const cms = {
     heading: "Welcome to Acme",
     menuLabel: "About us",
+    logo: "https://media.example/logo.svg",
+    icon: null,
+    title: "Acme",
+    tagline: "Things",
+    color: "#c00",
     entries: new Map(entries),
     server: null,
     port: 0,
@@ -42,7 +48,7 @@ export function stubCms(entries) {
           const { query, variables } = JSON.parse(body);
           const name = /query (\w+)/.exec(query)?.[1];
           const entry = name === "EntryByUri" ? this.entries.get(decodeURI(variables.uri)) : null;
-          const brand = { colors: [{ slug: "brand", color: "#c00" }], spacingSizes: [] };
+          const brand = { colors: [{ slug: "brand", color: this.color }], spacingSizes: [] };
           const data = {
             EntryByUri: {
               postBy: null,
@@ -65,8 +71,9 @@ export function stubCms(entries) {
                 nodes: ["/", ...this.entries.keys()].map((uri) => ({ uri })),
               },
             },
+            DesignPresets: { designTokens: brand },
             HomePage: {
-              generalSettings: { title: "Acme", description: "Things" },
+              generalSettings: { title: this.title, description: this.tagline },
               nodeByUri: {
                 __typename: "Page",
                 isFrontPage: true,
@@ -77,10 +84,8 @@ export function stubCms(entries) {
             },
             SiteChrome: {
               generalSettings: {
-                siteIcon: null,
-                siteLogo: {
-                  node: { sourceUrl: "https://media.example/logo.svg", altText: "Acme" },
-                },
+                siteIcon: this.icon ? { node: { sourceUrl: this.icon, altText: "" } } : null,
+                siteLogo: { node: { sourceUrl: this.logo, altText: "Acme" } },
               },
               menuItems: {
                 nodes: [

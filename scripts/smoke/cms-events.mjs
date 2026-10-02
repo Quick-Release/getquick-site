@@ -2,7 +2,8 @@
 //
 // The publication events' real-CMS proof, on a generated content site (see
 // cms-events.sh): a real WordPress, on SQLite and driven by WP-CLI, runs the
-// site's own web/app/mu-plugins/publication-events.php, and the Frontend,
+// site's own web/app/mu-plugins/publication-events.php and
+// settings-events.php, and the Frontend,
 // built with Alchemy's Astro Cloudflare build and served in workerd with a
 // local D1 publication store and its event secret bound, receives the events
 // WordPress's own hooks send:
@@ -15,7 +16,13 @@
 //   recovers it once the Frontend is back; a refresh that fails on the
 //   Frontend, another key and a missing key in production are recorded as
 //   failures and change nothing served; `wp gq-events check` proves the
-//   runtime secret on both sides.
+//   runtime secret on both sides. Shared settings changed through
+//   WordPress's own APIs (a menu assigned to the primary location and edited,
+//   the site logo, the tagline and site icon, the palette saved through the
+//   global-styles REST route GQ Design uses) reach the homepage and the
+//   entries through a later outage; a failed settings refresh is recorded,
+//   `wp gq-events settings status` lists it and `wp gq-events settings retry`
+//   recovers it.
 //
 // The Frontend reads published content from a stub WordPress that this proof
 // keeps in step with what it publishes, since the GETQUICK GraphQL schema
@@ -69,9 +76,17 @@ function setUpWordPress() {
       .replaceAll("{SQLITE_PLUGIN}", "sqlite-database-integration/load.php"),
   );
   mkdirSync(join(wordpress, "wp-content/mu-plugins"), { recursive: true });
-  cpSync(
-    join(site, "apps/cms/web/app/mu-plugins/publication-events.php"),
-    join(wordpress, "wp-content/mu-plugins/publication-events.php"),
+  for (const plugin of ["publication-events.php", "settings-events.php"]) {
+    cpSync(
+      join(site, "apps/cms/web/app/mu-plugins", plugin),
+      join(wordpress, "wp-content/mu-plugins", plugin),
+    );
+  }
+  // The primary menu location GETQUICK's theme registers (getquick-theme's
+  // functions.php), which the Frontend's menu is read from.
+  writeFileSync(
+    join(wordpress, "wp-content/mu-plugins/getquick-theme-locations.php"),
+    `<?php add_action('after_setup_theme', static fn() => register_nav_menus(['primary' => 'Primary menu']));\n`,
   );
 }
 
@@ -116,6 +131,20 @@ async function recorded(id) {
   } catch {
     return null;
   }
+}
+
+async function settingsEvent(setting) {
+  const result = await wp(["option", "get", `gq_settings_event_${setting}`, "--format=json"]);
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    return null;
+  }
+}
+
+/** Every page visitors get: the homepage and the entry, with the CMS down. */
+async function everyPage(port) {
+  return Promise.all(["/", "/launch/"].map((path) => visit(port, path)));
 }
 
 let worker;
@@ -226,6 +255,134 @@ try {
       oldRoute.location === "/launch/",
     `${JSON.stringify(renamed?.event)} HTTP ${oldRoute.status} → ${oldRoute.location}`,
   );
+
+  // Shared settings, changed through WordPress's own APIs.
+  cms.menuLabel = "Contact";
+  const menu = await wpOrFail(["menu", "create", "Primary", "--porcelain"], cmsEnv);
+  await wpOrFail(["menu", "item", "add-custom", menu, "Contact", "/contact/"], cmsEnv);
+  const unlocated = await settingsEvent("menus");
+  await wpOrFail(["menu", "location", "assign", menu, "primary"], cmsEnv);
+  const menus = await settingsEvent("menus");
+  await cms.stop();
+  let pages = await everyPage(port);
+  check(
+    "a menu shown nowhere sends nothing; assigning it to the primary location sends a settings event, and every page shows it through an outage",
+    unlocated === null &&
+      menus?.delivery?.status === "refreshed" &&
+      menus.event.setting === "menus" &&
+      pages.every(
+        ({ status, html }) => status === 200 && /<a href="\/about\/"[^>]*>Contact<\/a>/u.test(html),
+      ),
+    `${JSON.stringify(menus)} ${pages.map(({ status }) => status)}`,
+  );
+
+  await cms.start();
+  cms.menuLabel = "Get in touch";
+  await wpOrFail(["menu", "item", "add-custom", menu, "Get in touch", "/contact/"], cmsEnv);
+  const edited = await settingsEvent("menus");
+  await cms.stop();
+  pages = await everyPage(port);
+  check(
+    "editing the primary menu sends a new event, and every page shows it",
+    edited?.delivery?.status === "refreshed" &&
+      edited.event.id !== menus?.event?.id &&
+      pages.every(({ html }) => html.includes("Get in touch")),
+    JSON.stringify(edited),
+  );
+
+  await cms.start();
+  cms.logo = "https://media.example/logo-2026.svg";
+  await wpOrFail(["option", "update", "site_logo", "41"], cmsEnv);
+  const logo = await settingsEvent("logo");
+  await cms.stop();
+  pages = await everyPage(port);
+  check(
+    "changing the site logo sends a settings event, and every page shows it",
+    logo?.delivery?.status === "refreshed" &&
+      pages.every(({ html }) => html.includes('src="https://media.example/logo-2026.svg"')),
+    JSON.stringify(logo),
+  );
+
+  await cms.start();
+  cms.tagline = "Better things";
+  cms.icon = "https://media.example/icon.png";
+  await wpOrFail(["option", "update", "blogdescription", "Better things"], cmsEnv);
+  await wpOrFail(["option", "update", "site_icon", "42"], cmsEnv);
+  const identity = await settingsEvent("identity");
+  await cms.stop();
+  pages = await everyPage(port);
+  check(
+    "changing the tagline and the site icon sends identity events: the homepage shows the tagline, every page the icon",
+    identity?.delivery?.status === "refreshed" &&
+      pages[0].html.includes('<meta name="description" content="Better things">') &&
+      pages.every(({ html }) =>
+        html.includes('<link rel="icon" href="https://media.example/icon.png">'),
+      ),
+    JSON.stringify(identity),
+  );
+
+  await cms.start();
+  cms.color = "#0a0";
+  const saved = await wpOrFail(
+    [
+      "eval",
+      `wp_set_current_user(1);
+       $id = WP_Theme_JSON_Resolver::get_user_global_styles_post_id();
+       $request = new WP_REST_Request('POST', "/wp/v2/global-styles/{$id}");
+       $request->set_body_params(['settings' => ['color' => ['palette' => ['theme' => [
+         ['slug' => 'brand', 'color' => '#0a0', 'name' => 'Brand'],
+       ]]]]]);
+       echo rest_do_request($request)->get_status();`,
+    ],
+    cmsEnv,
+  );
+  const design = await settingsEvent("design");
+  await cms.stop();
+  pages = await everyPage(port);
+  check(
+    "saving the palette through the global-styles REST route sends a design event, and every page uses it",
+    saved.endsWith("200") &&
+      design?.delivery?.status === "refreshed" &&
+      pages.every(
+        ({ html }) =>
+          html.includes("--wp--preset--color--brand:#0a0") && !html.includes("brand:#c00"),
+      ),
+    `${saved} ${JSON.stringify(design)}`,
+  );
+
+  // The CMS is still down: the Frontend can't read the new menu.
+  await wpOrFail(["menu", "item", "add-custom", menu, "Careers", "/careers/"], cmsEnv);
+  const unreadMenu = await settingsEvent("menus");
+  pages = await everyPage(port);
+  const listed = await wp(["gq-events", "settings", "status", "--format=json"], cmsEnv);
+  check(
+    "a settings refresh that fails on the Frontend is recorded, listed, and every page keeps its menu",
+    unreadMenu?.delivery?.status === "failed" &&
+      unreadMenu.delivery.reason === "refresh" &&
+      unreadMenu.delivery.httpStatus === 503 &&
+      pages.every(({ status, html }) => status === 200 && html.includes("Get in touch")) &&
+      JSON.parse(listed.stdout || "[]").some(
+        (row) => row.setting === "menus" && row.status === "failed",
+      ),
+    JSON.stringify(unreadMenu?.delivery) + listed.stdout + listed.stderr,
+  );
+
+  await cms.start();
+  cms.menuLabel = "Careers";
+  const retriedSettings = await wp(["gq-events", "settings", "retry", "menus"], cmsEnv);
+  const recoveredSettings = await settingsEvent("menus");
+  await cms.stop();
+  pages = await everyPage(port);
+  check(
+    "wp gq-events settings retry delivers the same event once the CMS is back",
+    retriedSettings.code === 0 &&
+      recoveredSettings?.event?.id === unreadMenu?.event?.id &&
+      recoveredSettings?.delivery?.status === "refreshed" &&
+      recoveredSettings.delivery.attempts === 2 &&
+      pages.every(({ html }) => /<a href="\/about\/"[^>]*>Careers<\/a>/u.test(html)),
+    retriedSettings.stdout + retriedSettings.stderr + JSON.stringify(recoveredSettings?.delivery),
+  );
+  await cms.start();
 
   await stopWorker(worker);
   cms.entries.get("/launch/").content = "Edited while the Frontend was down.";
