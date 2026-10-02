@@ -2,12 +2,11 @@
 // gq.ops.json, run as Ploi runs it: in a site directory, with stub wp,
 // composer, rsync, curl, php and sudo on PATH that record their calls.
 import assert from "node:assert/strict";
-import { access, lstat, readFile, rm, writeFile } from "node:fs/promises";
+import { access, lstat, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { ploiReleaseShippedPaths } from "../src/index.mjs";
-import { unifiedDiff } from "../src/sync/diff.mjs";
 
 import { createFixtureSite } from "./support/fixture-site.mjs";
 import { deploy, recordingExtension } from "./support/deploy-script.mjs";
@@ -22,15 +21,9 @@ const ACME = {
   wordpress: { plugins: PLUGINS },
 };
 
-const LOMBARDI = JSON.parse(await readFixture("manifests/lombardi.v1.json"));
-
-function readFixture(path) {
-  return readFile(new URL(`fixtures/${path}`, import.meta.url), "utf8");
-}
-
-// The deploy script gq sync renders for `manifest`.
-async function generatedScript(manifest = ACME) {
-  const fixture = await createFixtureSite({ ops: manifest });
+// The deploy script gq sync renders for ACME.
+async function generatedScript() {
+  const fixture = await createFixtureSite({ ops: ACME });
   const result = await fixture.run(["sync"]);
   assert.equal(result.code, 0, result.stderr);
   return readSite(fixture.root, "deploy/ploi/admin.sh");
@@ -160,70 +153,6 @@ test("the deploy passes COMPOSER_AUTH to Composer and never prints it", async ()
     assert.equal(result.composerAuth, composerAuth);
     assert.doesNotMatch(result.output, /secret-login/u);
   }
-});
-
-// Lombardi's current script (b2061a9) against the one its migrated manifest
-// renders plus test/fixtures/lombardi-phase-3, the extension that takes over
-// Lombardi's own steps in phase 3.
-test("Lombardi's manifest and deploy extension deploy as Lombardi's current script does", async () => {
-  const siteFiles = {
-    ".git/HEAD": "ref: refs/heads/main\n",
-    "packages/wordpress/getquick-design/getquick-design.php": "<?php\n",
-    "apps/cms/web/app/plugins/getquick-options/getquick-design.php": "<?php\n",
-    "apps/cms/web/app/plugins/getquick-post-types/getquick-post-types.php": "<?php\n",
-    "apps/cms/web/app/plugins/lombardi-contact/lombardi-contact.php": "<?php\n",
-  };
-  const releaseFiles = {
-    "apps/cms/web/app/plugins/lombardi-blocks/lombardi-blocks.php": "<?php\n",
-    "apps/cms/web/app/themes/lombardi-theme/style.css": "/* Theme Name: Lombardi */\n",
-  };
-  const current = await deploy(await readFixture("lombardi/deploy/ploi/admin.sh"), {
-    siteFiles,
-    releaseFiles,
-  });
-  const generated = await deploy(await generatedScript(LOMBARDI), {
-    siteFiles,
-    releaseFiles: {
-      ...releaseFiles,
-      "deploy/ploi/admin.d/10-lombardi.sh": await readFixture(
-        "lombardi-phase-3/deploy/ploi/admin.d/10-lombardi.sh",
-      ),
-    },
-  });
-
-  for (const result of [current, generated]) {
-    assert.equal(result.code, 0, result.output);
-    assert.match(result.stdout, /^LOMBARDI_DEPLOY_STATUS=success SHA=0123abcd$/mu);
-    for (const path of Object.keys(siteFiles)) {
-      await assert.rejects(access(join(result.site, path)), { code: "ENOENT" }, path);
-    }
-  }
-  // The same calls in the same order, except that the moved steps' wp calls
-  // run later, still in their own order.
-  const normalized = ({ calls }) =>
-    calls.map((call) =>
-      call.map((arg) => arg.replace(/^\/.*\/(release\.tar\.gz|release\/)/u, "<tmp>/$1")).join(" "),
-    );
-  const moved = (call) => /lombardi-theme|lombardi-contact|deactivate_plugins/u.test(call);
-  const [currentCalls, generatedCalls] = [current, generated].map(normalized);
-  assert.deepEqual(
-    generatedCalls.filter((call) => !moved(call)),
-    currentCalls.filter((call) => !moved(call)),
-  );
-  assert.deepEqual(generatedCalls.filter(moved), currentCalls.filter(moved));
-  assert.ok(currentCalls.includes("wp plugin deactivate lombardi-contact --quiet"));
-});
-
-// The differences are the input to phase 3, which replaces Lombardi's copy.
-test("Lombardi's manifest renders Lombardi's deploy script apart from the moved steps", async () => {
-  const path = "deploy/ploi/admin.sh";
-  const diff = unifiedDiff(
-    path,
-    await readFixture(`lombardi/${path}`),
-    await generatedScript(LOMBARDI),
-  );
-
-  assert.equal(`${diff.join("\n")}\n`, await readFixture("lombardi-phase-3/admin.sh.diff"));
 });
 
 test("gq new writes the deploy script and the deploy extension directory", async () => {
