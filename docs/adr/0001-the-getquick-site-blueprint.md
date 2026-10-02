@@ -13,7 +13,7 @@ every copy drifts and a fix reaches only the site it was made in.
 The blueprint was first proposed in a shared write-up outside any repository
 and recorded as
 [Lombardi's ADR 0001](https://github.com/Quick-Release/lombardi/blob/7386ac1/docs/adr/0001-follow-the-getquick-site-blueprint.md),
-which said the design would move here once `getquick-site` existed. This ADR
+which said the design would move here once `getquick-site` (since renamed `gq-site`) existed. This ADR
 is that record; Lombardi keeps only an ADR recording its own adoption.
 
 Lombardi is the reference site because it already had most of the

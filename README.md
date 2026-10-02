@@ -1,4 +1,4 @@
-# getquick-site
+# gq-site
 
 Shared tooling for GETQUICK sites, published to public npm as
 [`@getquick/site`](https://www.npmjs.com/package/@getquick/site): one `gq`

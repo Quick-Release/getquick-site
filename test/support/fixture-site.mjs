@@ -27,7 +27,7 @@ after(() =>
 );
 
 export async function temporaryDirectory() {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), "getquick-site-")));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "gq-site-")));
   temporaryDirectories.push(directory);
   return directory;
 }

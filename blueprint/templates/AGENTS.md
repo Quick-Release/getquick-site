@@ -3,7 +3,7 @@
 ## Managed files
 
 This site follows the GETQUICK blueprint, the shared tooling published as
-[`@getquick/site`](https://github.com/Quick-Release/getquick-site) (the `gq`
+[`@getquick/site`](https://github.com/Quick-Release/gq-site) (the `gq`
 command), pinned to an exact version in the root `devDependencies`. Its
 ownership manifest (`node_modules/@getquick/site/blueprint/ownership.json`)
 lists what `gq sync` manages here: whole files, this section of `AGENTS.md`

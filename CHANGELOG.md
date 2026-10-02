@@ -3,6 +3,18 @@
 All notable changes to `@getquick/site` are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/); each release is tagged `v<version>`.
 
+## Unreleased
+
+### Changed
+
+- The repository is renamed `Quick-Release/gq-site` (was
+  `getquick-site`); the package stays `@getquick/site`. The published
+  `repository` URL, the managed `AGENTS.md` section's link and the links in
+  new sites' `README.md` and `GLOSSARY.md` point at the new name; old links
+  keep working through GitHub's redirect.
+- Ploi requests identify as `gq-site/<version>` instead of
+  `getquick-site/<version>`.
+
 ## 0.13.1 — 2026-10-02
 
 ### Fixed
