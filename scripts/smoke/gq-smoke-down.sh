@@ -374,16 +374,44 @@ pause
 
 # ── 10 ────────────────────────────────────────────────────────────────────
 stage "Check nothing is left (acceptance)"
-say "Buckets:";  wrangler r2 bucket list 2>/dev/null | grep -i "$PROJECT" || note "  none named $PROJECT"
-say "Tokens:";   site pnpm exec gq sigillo run operations -- node "$CLEANUP" tokens || true
-say "Ploi:";     site pnpm --silent ops ploi sites list 2>/dev/null | grep -i "$PROJECT" || note "  no $PROJECT site"
-open_url "https://dash.cloudflare.com/$CF_ACCOUNT_ID/workers-and-pages"
-step "Workers & Pages: search $PROJECT, and expect no $PROJECT-fe or $PROJECT-ci Worker."
-if confirm "No $PROJECT Worker is left?"; then
-  note "Teardown complete. Kept for repeat runs: $REPOSITORY, the Sigillo project, the registry logins."
+# leftover KIND COUNT: reports how many KIND named $PROJECT are left, and
+# carries any into the closing summary.
+leftover() {
+  if [[ "$2" == 0 ]]; then
+    printf '  %s✓%s %s named %s: exactly 0\n' "$GREEN" "$RESET" "$1" "$PROJECT"
+  else
+    warn "$1 named $PROJECT: $2"
+    SKIPPED+=("delete the $2 remaining $PROJECT $1")
+  fi
+}
+if buckets=$(wrangler r2 bucket list 2>/dev/null); then
+  leftover "R2 buckets" "$(grep -ci "$PROJECT" <<<"$buckets" || true)"
 else
-  SKIPPED+=("delete the remaining $PROJECT Worker(s) in the dashboard")
+  warn "Couldn't list the R2 buckets."; SKIPPED+=("check the R2 buckets by hand (listing failed)")
 fi
+if tokens=$(site pnpm --silent exec gq sigillo run operations -- node "$CLEANUP" tokens 2>/dev/null); then
+  leftover "Cloudflare tokens" "$(grep -c '^found' <<<"$tokens" || true)"
+else
+  warn "Couldn't list the Cloudflare tokens."; SKIPPED+=("check the GETQUICK GQ-SMOKE tokens by hand (listing failed)")
+fi
+if sites=$(site pnpm --silent ops ploi sites list 2>/dev/null); then
+  leftover "Ploi sites" "$(grep -ci "$PROJECT" <<<"$sites" || true)"
+else
+  warn "Couldn't list the Ploi sites."; SKIPPED+=("check the Ploi sites by hand (listing failed)")
+fi
+records=0
+for host in "$ADMIN_HOST" "$FRONTEND_HOST" "$MEDIA_HOST"; do
+  [[ -n "$(node -e "require('dns').promises.resolve4('$host').then(a => console.log(a[0]), () => {})")" ]] && records=$((records + 1))
+done
+leftover "DNS hosts" "$records"
+open_url "https://dash.cloudflare.com/$CF_ACCOUNT_ID/workers-and-pages"
+step "Workers & Pages: search $PROJECT and count the Workers ($PROJECT-fe, $PROJECT-ci)."
+if confirm "Workers named $PROJECT in the dashboard: exactly 0?"; then
+  leftover "Workers" 0
+else
+  warn "Workers named $PROJECT remain."; SKIPPED+=("delete the remaining $PROJECT Worker(s) in the dashboard")
+fi
+(( ${#SKIPPED[@]} )) || note "Teardown complete. Kept for repeat runs: $REPOSITORY, the Sigillo project, the registry logins."
 if confirm "Log Wrangler out of your Cloudflare account again?"; then
   wrangler logout
 fi
