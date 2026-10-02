@@ -10,7 +10,7 @@ import { ploiReleaseShippedPaths } from "../../src/index.mjs";
 
 import { createFixtureSite } from "../support/fixture-site.mjs";
 import { deploy, recordingExtension } from "../support/deploy-script.mjs";
-import { hash, newSite, readSite } from "../support/new-site.mjs";
+import { hash, newSite, readSite } from "../support/generated-site.mjs";
 
 const PLUGINS = ["getquick-design", "acme-blocks", "wp-graphql"];
 

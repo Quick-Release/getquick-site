@@ -9,7 +9,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createFixtureSite, temporaryDirectory } from "../support/fixture-site.mjs";
-import { hash, newSite, readSite, snapshot } from "../support/new-site.mjs";
+import { hash, newSite, readSite, snapshot } from "../support/generated-site.mjs";
 
 const DEPLOY_PATHS = [
   "infra/ci/Dockerfile",

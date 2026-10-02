@@ -17,7 +17,7 @@ import {
   releaseRun,
   verifyChecks,
   versionedFiles,
-} from "../support/release-site.mjs";
+} from "../support/site-settings.mjs";
 
 const LOMBARDI_V0 = await readFixture("lombardi.v0.json");
 const EKIS_V0 = await readFixture("ekis.v0.json");

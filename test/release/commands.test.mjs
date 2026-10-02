@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createFixtureSite, recordingExec } from "../support/fixture-site.mjs";
-import { CONTENT_CHECKS, CONTENT_RELEASE_PATHS } from "../support/release-site.mjs";
+import { CONTENT_CHECKS, CONTENT_RELEASE_PATHS } from "../support/site-settings.mjs";
 
 // A content site whose gq.ops.json adds its theme's stylesheet header and PHP
 // define as text-file patterns, and the theme to the release paths.

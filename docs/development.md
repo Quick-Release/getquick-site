@@ -56,7 +56,22 @@ suites, such as `ploi/inspection-commands.test.mjs` and
 `ploi/api-commands.test.mjs`. Keep package-wide `run.test.mjs` and `exec.test.mjs` at the
 `test/` root, matching their source modules.
 
-Shared helpers stay in `test/support/` and baseline evidence in `test/fixtures/`.
+Shared helpers stay in `test/support/`, with filenames describing their roles:
+
+- `fixture-site.mjs`: temporary sites, cleanup, captured output and recording
+  adapters at the `run()` seam.
+- `generated-site.mjs`: a site produced by `gq new`, file reads, hashes and
+  working-tree snapshots, reused by sync and CMS suites.
+- `site-settings.mjs`: independent content-variant expectations and release,
+  verify and doctor test recipes. Keep expected values independent of production
+  defaults so the tests can detect drift.
+- `deploy-script.mjs`: the CMS deploy script harness and local tool stand-ins.
+
+Keep this small shared helper set rather than adding per-module helper folders
+or forwarding modules. Baseline evidence stays in `test/fixtures/`; its
+[provenance and preservation rules](https://github.com/Quick-Release/gq-site/blob/main/test/fixtures/README.md) explain how it is
+used and why extracted scripts are not package suites.
+
 The `test` script selects root suites and one level of explicitly named module
 folders, never recursively through fixtures or support. Add new module folders
 to that script's allowlist; extracted site test scripts must not become package

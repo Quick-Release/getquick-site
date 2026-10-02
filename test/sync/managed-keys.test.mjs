@@ -7,7 +7,7 @@ import test from "node:test";
 
 import { VERSION } from "../../src/version.mjs";
 import { createFixtureSite } from "../support/fixture-site.mjs";
-import { hash, newSite, readSite, snapshot } from "../support/new-site.mjs";
+import { hash, newSite, readSite, snapshot } from "../support/generated-site.mjs";
 
 // The root scripts that wrap gq or run the generated deploy files (the
 // release step and the checks gq verify runs), as Lombardi has them.

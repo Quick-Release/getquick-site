@@ -10,7 +10,7 @@ import test from "node:test";
 
 import { VERSION } from "../../src/version.mjs";
 import { runGq, temporaryDirectory } from "../support/fixture-site.mjs";
-import { newSite, readSite, snapshot } from "../support/new-site.mjs";
+import { newSite, readSite, snapshot } from "../support/generated-site.mjs";
 
 const PLUGINS = [
   "getquick-design",

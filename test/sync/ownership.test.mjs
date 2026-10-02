@@ -19,7 +19,7 @@ import test from "node:test";
 
 import { VERSION } from "../../src/version.mjs";
 import { createFixtureSite, runGq, temporaryDirectory } from "../support/fixture-site.mjs";
-import { hash, newSite, readSite, snapshot } from "../support/new-site.mjs";
+import { hash, newSite, readSite, snapshot } from "../support/generated-site.mjs";
 
 const MISE = '[tools]\nnode = "24.21.0"\n';
 const PRE_COMMIT = "#!/bin/sh\nset -e\n\nvp staged\npnpm check\n";

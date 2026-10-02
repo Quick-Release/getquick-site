@@ -10,7 +10,7 @@ import test from "node:test";
 
 import { VERSION } from "../../src/version.mjs";
 import { createFixtureSite, recordingExec } from "../support/fixture-site.mjs";
-import { CONTENT_CHECKS } from "../support/release-site.mjs";
+import { CONTENT_CHECKS } from "../support/site-settings.mjs";
 
 const LOCAL_CHECKS = CONTENT_CHECKS.filter((line) => !line.startsWith("composer "));
 

@@ -7,7 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createFixtureSite } from "../support/fixture-site.mjs";
-import { newSite, readSite, snapshot } from "../support/new-site.mjs";
+import { newSite, readSite, snapshot } from "../support/generated-site.mjs";
 
 // What a new site's lock records as created, outside its app skeletons.
 const CREATED_OUTSIDE_APPS = [

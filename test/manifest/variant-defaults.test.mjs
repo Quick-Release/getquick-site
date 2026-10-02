@@ -16,7 +16,7 @@ import {
   releaseRun,
   verifyChecks,
   versionedFiles,
-} from "../support/release-site.mjs";
+} from "../support/site-settings.mjs";
 
 const CONTENT = { schemaVersion: 1, project: "fixture", variant: "content" };
 
