@@ -1,20 +1,32 @@
 ---
 import Layout from "../layouts/Layout.astro";
-import { formatDate, getEntryByUri, responseStatus } from "../lib/wordpress";
+import { publishedEntry } from "../lib/delivery";
+import { formatDate, responseStatus } from "../lib/wordpress";
 import { blockPresetStyles } from "../lib/wp-block-styles";
 
-const uri = Astro.url.pathname.endsWith("/") ? Astro.url.pathname : `${Astro.url.pathname}/`;
-const delivery = await getEntryByUri(uri);
-// Only a confirmed missing entry is a 404; a CMS failure is a 503.
+// Served from the publication store, last-known-good and without an age
+// limit. Only an entry the store has never held is looked up in the CMS.
+const delivery = await publishedEntry(Astro.url.pathname, Astro.site?.origin);
+// An entry published at another URI now: its old route redirects there,
+// uncached, since the store's answer can change with the next refresh.
+if (delivery.kind === "moved") {
+  return new Response(null, {
+    status: 301,
+    headers: { Location: encodeURI(delivery.uri), "Cache-Control": "no-store" },
+  });
+}
+// Only a confirmed missing entry is a 404; a CMS or store failure is a 503.
 Astro.response.status = responseStatus(delivery);
-const entry = delivery.kind === "found" ? delivery.content : null;
+const entry = delivery.kind === "found" ? delivery.content.entry : null;
+const chrome =
+  delivery.kind === "found" ? delivery.content.chrome : delivery.kind === "missing" ? delivery.chrome : null;
 const { vars, colorRules } = blockPresetStyles(entry?.spacingSizes ?? [], entry?.colors ?? []);
 const isPost = Boolean(entry?.date);
 const title =
   entry?.title || (delivery.kind === "unavailable" ? "Temporarily unavailable" : "Page not found");
 ---
 
-<Layout title={title}>
+<Layout title={title} chrome={chrome}>
   {entry ? (
     entry.hasVideoHero ? (
       <>

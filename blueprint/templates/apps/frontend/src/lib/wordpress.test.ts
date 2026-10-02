@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
-import { getEntryByUri, getHomeContent, getSiteChrome } from "./wordpress";
+import { getEntryByUri, getHomeContent, getPublishedRoutes, getSiteChrome } from "./wordpress";
 
 test("home content comes from the page marked as the WordPress front page", async () => {
   const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
@@ -148,6 +148,8 @@ test("page content includes the CMS spacing presets, including numeric and overr
             title: "Sample Page",
             content: "<p>Content</p>",
             uri: "/sample-page/",
+            status: "publish",
+            isRestricted: false,
             featuredImage: null,
           },
           designTokens: {
@@ -198,6 +200,8 @@ test("an entry whose blocks WordPress fails to return still loads, without them"
             title: "About",
             content: "<p>Content</p>",
             uri: "/about/",
+            status: "publish",
+            isRestricted: false,
             featuredImage: null,
           },
           designTokens: { colors: [], spacingSizes: [] },
@@ -270,6 +274,79 @@ test("HTTP errors, GraphQL errors, missing required fields and absent content st
     expect(schema.failure.message).toContain("designTokens");
   }
   expect(await getEntryByUri("/absent/")).toEqual({ kind: "missing" });
+});
+
+test.each([
+  ["password-protected", { status: "publish", isRestricted: true, content: null }],
+  ["not published", { status: "draft", isRestricted: false }],
+  ["without a status", { status: null, isRestricted: null }],
+])(
+  "an entry WordPress returns %s is missing: only public content is served",
+  async (_case, fields) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          data: {
+            postBy: {
+              id: "9",
+              title: "Members",
+              excerpt: null,
+              content: "<p>Secret</p>",
+              uri: "/members/",
+              date: null,
+              featuredImage: null,
+              ...fields,
+            },
+            pageBy: null,
+            designTokens: { colors: [], spacingSizes: [] },
+          },
+        }),
+      })),
+    );
+
+    expect(await getEntryByUri("/members/")).toEqual({ kind: "missing" });
+  },
+);
+
+test("the published routes are read page by page, and any failed page fails the list", async () => {
+  const pages: Record<string, unknown> = {
+    first: { hasNextPage: true, endCursor: "c1", nodes: [{ uri: "/about/" }, { uri: null }] },
+    c1: { hasNextPage: false, endCursor: null, nodes: [{ uri: "/2026/hello/" }] },
+  };
+  const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+    const request = JSON.parse(init.body as string) as {
+      query: string;
+      variables: { after: string | null };
+    };
+    expect(request.query).toContain("contentTypes: [PAGE, POST]");
+    const { nodes, ...pageInfo } = pages[request.variables.after ?? "first"] as {
+      nodes: unknown[];
+    };
+    return { ok: true, json: async () => ({ data: { contentNodes: { pageInfo, nodes } } }) };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  expect(await getPublishedRoutes()).toEqual({
+    kind: "found",
+    content: ["/about/", "/2026/hello/"],
+  });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+
+  pages.c1 = undefined;
+  fetchMock.mockImplementation(async (_url: string, init: RequestInit) => {
+    const { variables } = JSON.parse(init.body as string) as {
+      variables: { after: string | null };
+    };
+    if (variables.after) return { ok: false, status: 500 } as never;
+    const { nodes, ...pageInfo } = pages.first as { nodes: unknown[] };
+    return { ok: true, json: async () => ({ data: { contentNodes: { pageInfo, nodes } } }) };
+  });
+  expect(await getPublishedRoutes()).toMatchObject({
+    kind: "unavailable",
+    failure: { reason: "http" },
+  });
 });
 
 test("the front page's blocks are recovered like an entry's, and a failed recovery stays unavailable", async () => {

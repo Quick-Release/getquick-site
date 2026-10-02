@@ -111,7 +111,7 @@ function reportProvisioning(io, { project, directory }) {
   io.out("  # hosted independently of it (needs a CMS check user, see gq media check):");
   io.out(scriptLine("media:check:upload"));
   io.out("  # Add FRONTEND_REFRESH_TOKEN to Sigillo staging, deploy the Frontend, then");
-  io.out("  # store its homepage: until then the homepage is a 503 (gq frontend refresh):");
+  io.out("  # store its published content: until then its pages are a 503 (gq frontend refresh):");
   io.out(scriptLine("deploy:frontend"));
   io.out(scriptLine("frontend:refresh"));
 }

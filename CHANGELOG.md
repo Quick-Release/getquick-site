@@ -76,8 +76,38 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   `pnpm frontend:refresh`.
 - **Not yet:** Cloudflare CI releases don't pass `FRONTEND_REFRESH_TOKEN`, so
   a CI release disables refresh (stored content is still served) until the
-  next `pnpm deploy:frontend`; entries still read the CMS live; refresh is
-  manual until WordPress events arrive.
+  next `pnpm deploy:frontend`; refresh is manual until WordPress events
+  arrive.
+- New content sites serve their published pages and posts (entries) from the
+  publication store too
+  ([ADR 0004](docs/adr/0004-serve-entries-from-the-store-with-a-cold-lookup.md)),
+  with the stored menu, logo and icon and the design presets each was read
+  with, through CMS outages of any length, restarts and redeploys. A stored
+  entry is never read from the CMS on a visit. An entry the store has never
+  held is looked up once (the cold lookup): stored and served if published, a
+  404 if WordPress confirms nothing is there, a 503 if the CMS or the store
+  fails, never a 404. Until the chrome is stored, entries are a 503 like the
+  homepage.
+- `gq frontend refresh` now prepares the whole Site: the front page, the
+  chrome, and every page and post WordPress lists as published or the store
+  already holds, so a changed menu or design preset reaches every entry and a
+  removed entry becomes a 404. `--uri <path>` (repeatable) refreshes only
+  those entries, such as a new publication. An entry found at a new route is
+  stored there and its old routes redirect to it (301); a failed read keeps
+  the stored entry; password-protected and unpublished entries are never
+  stored. The report lists each entry's outcome and the moves.
+- The Frontend skeleton's `src/entries.test.ts` renders entries through
+  preparation, outages, restarts, the cold lookup, new, moved and removed
+  publications, failed entry, chrome and list refreshes, shared-setting
+  changes, excluded editorial content, ordering, invalid requests and Site
+  isolation. `scripts/smoke/frontend-runtime.sh` covers entries in workerd.
+- **Existing sites** that adopted the durable homepage: copy
+  `migrations/0002_entries.sql`, `src/entries.test.ts`, and the updated
+  `src/lib/delivery.ts`, `src/lib/publications.ts`, `src/lib/runtime.ts`,
+  `src/lib/wordpress.ts` (and its test), `src/pages/[...slug].astro`,
+  `src/pages/gq/refresh.ts`, `src/routes.test.ts` and `src/test/` from a newly
+  generated site, deploy and run `pnpm frontend:refresh`. The entry query now
+  asks WordPress for `status` and `isRestricted`.
 
 ### Fixed
 

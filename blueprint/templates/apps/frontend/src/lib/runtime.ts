@@ -8,15 +8,14 @@ export interface FrontendBindings {
   FRONTEND_REFRESH_TOKEN?: string;
 }
 
+// Imported once, so concurrent requests share one import of the module.
+let workers: Promise<{ env: Record<string, unknown> } | null> | undefined;
+
 /**
  * The deployed Worker's bindings. `astro dev` and tests run outside workerd,
  * where `cloudflare:workers` doesn't exist: there are none.
  */
 export async function frontendBindings(): Promise<FrontendBindings> {
-  try {
-    const { env } = await import("cloudflare:workers");
-    return env as FrontendBindings;
-  } catch {
-    return {};
-  }
+  workers ??= import("cloudflare:workers").catch(() => null);
+  return ((await workers)?.env ?? {}) as FrontendBindings;
 }

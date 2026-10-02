@@ -125,6 +125,10 @@ const pageEntry = z.object({
   title: z.string().nullable(),
   content: z.string().nullable(),
   uri: z.string(),
+  // Only `publish` and unrestricted is public. A password-protected entry is
+  // restricted: WordPress lists it to anonymous readers, without its content.
+  status: z.string().nullable(),
+  isRestricted: z.boolean().nullable(),
   featuredImage: imageEdge,
   // Left out when read without blocks.
   blocks: z.unknown().optional(),
@@ -143,6 +147,13 @@ const menuItem = z.object({
   label: z.string().nullable(),
   url: z.string().nullable(),
   target: z.string().nullable(),
+});
+
+const publishedRoutesData = z.object({
+  contentNodes: z.object({
+    pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
+    nodes: z.array(z.object({ uri: z.string().nullable() })),
+  }),
 });
 
 const siteChromeData = z.object({
@@ -234,6 +245,8 @@ const entryQuery = /* GraphQL */ `
         @include(if: $withBlocks)
       uri
       date
+      status
+      isRestricted
       featuredImage {
         node {
           sourceUrl
@@ -248,11 +261,29 @@ const entryQuery = /* GraphQL */ `
       blocks(attributes: true, htmlContent: true, dynamicContent: true, postTemplate: false)
         @include(if: $withBlocks)
       uri
+      status
+      isRestricted
       featuredImage {
         node {
           sourceUrl
           altText
         }
+      }
+    }
+  }
+`;
+
+// Anonymous readers only get what is published: no drafts, private entries or
+// revisions.
+const publishedRoutesQuery = /* GraphQL */ `
+  query PublishedRoutes($after: String) {
+    contentNodes(first: 100, after: $after, where: { contentTypes: [PAGE, POST] }) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        uri
       }
     }
   }
@@ -302,7 +333,7 @@ function describeIssues(error: z.ZodError) {
 async function query<S extends z.ZodType>(
   schema: S,
   queryText: string,
-  variables?: Record<string, string | boolean>,
+  variables?: Record<string, string | boolean | null>,
 ): Promise<z.infer<S>> {
   let response: Response;
   try {
@@ -443,12 +474,16 @@ export async function getHomeContent(): Promise<Delivery<HomeContent>> {
   });
 }
 
-/** The published post or page at a URI. Missing when WordPress has neither. */
+/**
+ * The published post or page at a URI. Missing when WordPress has neither, or
+ * only one that isn't public (password-protected): the Frontend serves only
+ * what any visitor may read.
+ */
 export async function getEntryByUri(uri: string): Promise<Delivery<EntryContent>> {
   return deliver(`the entry ${uri}`, async (): Promise<Found<EntryContent> | Missing> => {
     const { data, blocksOmitted } = await queryWithBlockRecovery(entryData, entryQuery, { uri });
     const post = data.postBy ?? data.pageBy;
-    if (!post) return { kind: "missing" };
+    if (!post || post.isRestricted || post.status !== "publish") return { kind: "missing" };
 
     const normalized = normalizePost(post);
     const blocks = parseWordPressBlocks(post.blocks);
@@ -464,6 +499,37 @@ export async function getEntryByUri(uri: string): Promise<Delivery<EntryContent>
         colors: data.designTokens.colors,
       },
     };
+  });
+}
+
+/**
+ * The URI of every published page and post, read page by page. Any failed
+ * page fails the list: an incomplete list says nothing about what isn't in it.
+ */
+export async function getPublishedRoutes(): Promise<Found<string[]> | Unavailable> {
+  return deliver("the published routes", async (): Promise<Found<string[]>> => {
+    const uris: string[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < 1000; page += 1) {
+      const { contentNodes }: z.infer<typeof publishedRoutesData> = await query(
+        publishedRoutesData,
+        publishedRoutesQuery,
+        { after },
+      );
+      for (const node of contentNodes.nodes) if (node.uri) uris.push(node.uri);
+      if (!contentNodes.pageInfo.hasNextPage) return { kind: "found", content: uris };
+      if (!contentNodes.pageInfo.endCursor) {
+        throw new CmsFailureError({
+          reason: "schema",
+          message: "WordPress said there are more published routes without a cursor to them",
+        });
+      }
+      after = contentNodes.pageInfo.endCursor;
+    }
+    throw new CmsFailureError({
+      reason: "schema",
+      message: "WordPress listed more than 100,000 published routes",
+    });
   });
 }
 

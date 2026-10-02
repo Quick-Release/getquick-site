@@ -212,6 +212,16 @@
       "app": "apps/frontend"
     },
     {
+      "path": "apps/frontend/migrations/0002_entries.sql",
+      "template": "templates/apps/frontend/migrations/0002_entries.sql",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/entries.test.ts",
+      "template": "templates/apps/frontend/src/entries.test.ts",
+      "app": "apps/frontend"
+    },
+    {
       "path": "apps/frontend/src/homepage.test.ts",
       "template": "templates/apps/frontend/src/homepage.test.ts",
       "app": "apps/frontend"
