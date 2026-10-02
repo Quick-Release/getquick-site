@@ -9,35 +9,50 @@
 // for was refreshed (and, for the whole Site, the homepage is ready), so it
 // can gate a script.
 //
+// `gq frontend events check` proves the deployed Frontend accepts this Site's
+// publication events (POST /gq/events, src/pages/gq/events.ts): it sends a
+// signed check event, which changes nothing, with PUBLICATION_EVENT_SECRET,
+// the key the Site's CMS signs its events with. The secret is never sent or
+// printed, only the signature.
+//
 //   gq frontend refresh [--uri <path>]... [--url <frontend origin>] [--json]
+//   gq frontend events check [--url <frontend origin>] [--json]
+
+import { createHmac, randomUUID } from "node:crypto";
 
 export const FRONTEND_USAGE = [
   "gq frontend refresh [--uri <path>]... [--url <frontend origin>] [--json]",
+  "gq frontend events check [--url <frontend origin>] [--json]",
 ];
 
 const MARKS = { promoted: "✓", superseded: "✓", kept: "✗" };
 
+const COMMANDS = new Map([
+  ["frontend refresh", ["url", "uri"]],
+  ["frontend events check", ["url"]],
+]);
+
 export function isFrontendCommand(command) {
-  return command.join(" ") === "frontend refresh";
+  return COMMANDS.has(command.join(" "));
 }
 
 export function frontendCommandOptions(command) {
-  return isFrontendCommand(command) ? ["url", "uri"] : undefined;
+  return COMMANDS.get(command.join(" "));
 }
 
-function frontendOrigin(parsed, ops) {
+function frontendOrigin(parsed, ops, path = "/gq/refresh") {
   const origin = parsed.url ?? (ops.domains?.frontend ? `https://${ops.domains.frontend}` : null);
   if (!origin) {
     throw new Error("gq.ops.json domains.frontend is required, or pass --url <frontend origin>.");
   }
   let url;
   try {
-    url = new URL("/gq/refresh", origin);
+    url = new URL(path, origin);
   } catch {
     throw new Error(`--url must be an origin such as https://www.example.com, not ${origin}.`);
   }
-  // The token travels in the request: only to a Frontend over HTTPS, or to
-  // this machine (a local runtime proof).
+  // The token or a signature travels in the request: only to a Frontend over
+  // HTTPS, or to this machine (a local runtime proof).
   const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   if (url.protocol !== "https:" && !(local && url.protocol === "http:")) {
     throw new Error(`The refresh token is only sent over HTTPS (or to localhost), not ${origin}.`);
@@ -84,8 +99,12 @@ function printReport(body, io) {
   }
 }
 
-// Resolves to the exit code: 0 when everything asked for was refreshed, 1 when not.
+// Resolves to the exit code: 0 when everything asked for was refreshed (or the
+// Frontend accepts this Site's events), 1 when not.
 export async function runFrontendCommand({ context, parsed, fetch, io }) {
+  if (parsed.command.join(" ") === "frontend events check") {
+    return checkEvents({ context, parsed, fetch, io });
+  }
   const url = frontendOrigin(parsed, context.config);
   const uris = requestedUris(parsed);
   const token = context.env.FRONTEND_REFRESH_TOKEN?.trim();
@@ -149,4 +168,48 @@ export async function runFrontendCommand({ context, parsed, fetch, io }) {
     }
   }
   return body.refreshed && (!site || body.ready) ? 0 : 1;
+}
+
+/** The headers the Site's CMS signs an event with: HMAC-SHA256 of "<timestamp>.<body>". */
+export function signEvent(body, secret, timestamp = Math.floor(Date.now() / 1000)) {
+  const signature = createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
+  return { "GQ-Event-Timestamp": String(timestamp), "GQ-Event-Signature": `v1=${signature}` };
+}
+
+async function checkEvents({ context, parsed, fetch, io }) {
+  const url = frontendOrigin(parsed, context.config, "/gq/events");
+  const site = context.config.project;
+  if (!site) throw new Error("gq.ops.json project is required.");
+  const secret = context.env.PUBLICATION_EVENT_SECRET?.trim();
+  if (!secret) {
+    throw new Error(
+      "PUBLICATION_EVENT_SECRET is missing; add it to Sigillo staging, deploy the Frontend with it and run this through gq sigillo run staging.",
+    );
+  }
+
+  const body = JSON.stringify({ site, id: randomUUID(), action: "check", occurredAt: Date.now() });
+  let response;
+  try {
+    response = await fetch(url.href, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...signEvent(body, secret) },
+      body,
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (error) {
+    throw new Error(`The Frontend at ${url.origin} couldn't be reached: ${error.message}`, {
+      cause: error,
+    });
+  }
+  const answer = await response.json().catch(() => null);
+  const accepted = response.status === 200 && answer?.status === "checked" && answer.site === site;
+  if (parsed.json) {
+    io.out(JSON.stringify({ accepted, status: response.status, answer }, null, 2));
+  } else if (accepted) {
+    io.out(`✓ The Frontend at ${url.origin} accepts ${site}'s publication events.`);
+  } else {
+    const reason = answer?.error ?? `HTTP ${response.status}`;
+    io.out(`✗ The Frontend at ${url.origin} refused ${site}'s publication events: ${reason}`);
+  }
+  return accepted ? 0 : 1;
 }

@@ -108,6 +108,64 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   `src/pages/gq/refresh.ts`, `src/routes.test.ts` and `src/test/` from a newly
   generated site, deploy and run `pnpm frontend:refresh`. The entry query now
   asks WordPress for `status` and `isRestricted`.
+- New content sites refresh a published page or post on the Frontend when an
+  editor publishes or updates it, without a deploy
+  ([ADR 0005](docs/adr/0005-refresh-publications-through-signed-cms-events.md)).
+  The CMS skeleton's `web/app/mu-plugins/publication-events.php` sends a
+  publication event to the Frontend's `/gq/events`. The event is signed with
+  `PUBLICATION_EVENT_SECRET` (HMAC-SHA256, valid for five minutes), names the
+  Site and carries an id, the time it happened and the entry's URI, plus the
+  URI it left if it moved. It never carries content. The Frontend refreshes
+  that route from WordPress anonymously, so only published, complete content
+  is promoted. An event for the front page refreshes the homepage.
+- The Frontend refuses unsigned, stale, tampered, wrong-Site, unsupported and
+  malformed events without reading the CMS or changing anything. It accepts
+  neither the refresh token nor a deploy token as the event key.
+- Every accepted event is recorded (migration `0003_publication_events.sql`).
+  A duplicate isn't processed twice. A delayed event older than one already
+  refreshed for the same entry is superseded and never read. One whose
+  refresh failed is recorded as failed for a retry, and the previous version
+  stays served.
+- Publishing never waits on the Frontend. The event is sent at the end of the
+  request, after the editor's response under PHP-FPM, with a 15-second
+  timeout. The entry records its delivery: `refreshed`, or `failed` with the
+  reason (`network`, `refresh`, `rejected` or `not-configured`).
+- `wp gq-events status`, `retry <post>` and `check` list pending and failed
+  events, send one again, and prove the key against the Frontend.
+- `gq ploi events` (`pnpm ploi:events`) sets `PUBLICATION_EVENT_SECRET` in
+  the Ploi site's `.env` from Sigillo staging, without showing it.
+  `gq frontend events check` (`pnpm frontend:events:check`) sends a signed
+  check event that changes nothing, to prove the deployed Frontend has the
+  key bound. `gq new` lists both after the Frontend's deploy and refresh.
+- `pnpm deploy:frontend` binds `PUBLICATION_EVENT_SECRET` to the Worker next
+  to `FRONTEND_REFRESH_TOKEN`. It refuses either if it is shorter than 32
+  characters and warns when either is missing.
+- Cloudflare CI releases now bind both secrets as well: `gq ci deploy` gives
+  them to the CI Worker when Sigillo has them, and the release step passes
+  them to the Frontend deploy only when the Worker has them.
+  `scripts/ci-release.mjs` reports whether each is set, never its value.
+- The Frontend skeleton's `src/events.test.ts` renders the event path:
+  publications, updates, moves, the front page, duplicate and delayed events,
+  each failed-refresh kind, a retry after a restart, excluded editorial
+  content, refused and rejected events, disabled events, credential
+  separation, Site isolation and an unreadable store.
+- `scripts/smoke/frontend-runtime.sh` now checks the Worker's event key in
+  workerd. `scripts/smoke/cms-events.sh` runs a real WordPress (the pinned
+  version on SQLite, with WP-CLI) with the site's plugin against that Worker,
+  covering drafts, publications, updates, renames, the Frontend being down,
+  retries, failed refreshes, another key and a missing key.
+- **Existing sites** that adopted durable entries can adopt events:
+  - From a newly generated site, copy `migrations/0003_publication_events.sql`,
+    `src/lib/events.ts`, `src/pages/gq/events.ts`, `src/events.test.ts` and
+    the updated `src/lib/delivery.ts`, `src/lib/publications.ts` and
+    `src/lib/runtime.ts`.
+  - Copy the CMS's `web/app/mu-plugins/publication-events.php` and the
+    `PUBLICATION_EVENT_SECRET` lines of `config/application.php` and
+    `.env.production.example`.
+  - Add `PUBLICATION_EVENT_SECRET` to Sigillo staging, rerun `pnpm ci:deploy`,
+    deploy the Frontend, run `pnpm ploi:events` and release the CMS.
+- **Not yet:** withdrawals (#44), shared-settings events (#45), and automated
+  retries with editor-facing delay reports (#46).
 
 ### Fixed
 

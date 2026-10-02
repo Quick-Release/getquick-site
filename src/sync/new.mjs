@@ -110,10 +110,15 @@ function reportProvisioning(io, { project, directory }) {
   io.out("  # Once the CMS is released and WordPress installed, prove its uploads are");
   io.out("  # hosted independently of it (needs a CMS check user, see gq media check):");
   io.out(scriptLine("media:check:upload"));
-  io.out("  # Add FRONTEND_REFRESH_TOKEN to Sigillo staging, deploy the Frontend, then");
+  io.out("  # Add FRONTEND_REFRESH_TOKEN and PUBLICATION_EVENT_SECRET to Sigillo staging");
+  io.out("  # (and rerun pnpm ci:deploy, so CI releases bind them), deploy the Frontend, then");
   io.out("  # store its published content: until then its pages are a 503 (gq frontend refresh):");
   io.out(scriptLine("deploy:frontend"));
   io.out(scriptLine("frontend:refresh"));
+  io.out("  # Give the CMS the event secret and release it, so publishing a page or post");
+  io.out("  # refreshes the Frontend; check the Frontend accepts the Site's events:");
+  io.out(scriptLine("ploi:events"));
+  io.out(scriptLine("frontend:events:check"));
 }
 
 function scriptLine(script) {

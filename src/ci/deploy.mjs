@@ -29,6 +29,15 @@ export const workerSecrets = Object.freeze({
   COMPOSER_AUTH: "COMPOSER_AUTH",
 });
 
+// The release step hands these to the Frontend deploy when they are set, so a
+// CI release binds the Frontend's refresh token and its publication-event
+// secret like `pnpm deploy:frontend` does. A site without a publication store
+// has neither, and its CI deploys without them.
+export const optionalWorkerSecrets = Object.freeze({
+  FRONTEND_REFRESH_TOKEN: "FRONTEND_REFRESH_TOKEN",
+  PUBLICATION_EVENT_SECRET: "PUBLICATION_EVENT_SECRET",
+});
+
 export function secretsPayload(environment) {
   const missing = Object.values(workerSecrets).filter((name) => !environment[name]);
   if (missing.length > 0) {
@@ -36,9 +45,15 @@ export function secretsPayload(environment) {
       `Missing in the secret store: ${missing.join(", ")} (see gq cloudflare ci / cloudflare releases / github setup).`,
     );
   }
+  const optional = Object.entries(optionalWorkerSecrets).filter(([, from]) =>
+    environment[from]?.trim(),
+  );
   return JSON.stringify(
     Object.fromEntries(
-      Object.entries(workerSecrets).map(([key, from]) => [key, environment[from]]),
+      [...Object.entries(workerSecrets), ...optional].map(([key, from]) => [
+        key,
+        environment[from],
+      ]),
     ),
   );
 }
@@ -97,7 +112,7 @@ export async function runCiDeploy({ context, env, exec, io }) {
     stdout: io.stdout,
     stderr: io.stderr,
   });
-  io.out(`Deployed ${target.worker} with ${Object.keys(workerSecrets).length} secrets.`);
+  io.out(`Deployed ${target.worker} with ${Object.keys(JSON.parse(payload)).length} secrets.`);
   return 0;
 }
 

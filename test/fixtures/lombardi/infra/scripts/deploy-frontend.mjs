@@ -10,21 +10,27 @@ const alchemy = process.platform === "win32" ? "alchemy.cmd" : "alchemy";
 const ops = JSON.parse(readFileSync(new URL("../../gq.ops.json", import.meta.url), "utf8"));
 
 // A Frontend with the publication store (apps/frontend/migrations) is
-// refreshed with FRONTEND_REFRESH_TOKEN from Sigillo staging, bound to the
-// Worker as a secret. Deploying without it disables refresh, not serving.
+// refreshed with FRONTEND_REFRESH_TOKEN and receives the CMS's publication
+// events signed with PUBLICATION_EVENT_SECRET, both from Sigillo staging and
+// bound to the Worker as secrets. Deploying without one disables refresh or
+// events, not serving. Their values are never printed.
 if (existsSync(new URL("../../apps/frontend/migrations", import.meta.url))) {
-  const token = process.env.FRONTEND_REFRESH_TOKEN?.trim();
-  if (token && token.length < 32) {
-    console.error(
-      "FRONTEND_REFRESH_TOKEN must be at least 32 characters; the Frontend refuses shorter ones.",
-    );
-    process.exit(1);
-  }
-  if (!token) {
-    console.warn(
-      "FRONTEND_REFRESH_TOKEN isn't set: this deploy disables gq frontend refresh. " +
-        "What the publication store holds is still served. Add it to Sigillo staging to refresh.",
-    );
+  const secrets = {
+    FRONTEND_REFRESH_TOKEN: "gq frontend refresh",
+    PUBLICATION_EVENT_SECRET: "the CMS's publication events",
+  };
+  for (const [name, disables] of Object.entries(secrets)) {
+    const value = process.env[name]?.trim();
+    if (value && value.length < 32) {
+      console.error(`${name} must be at least 32 characters; the Frontend refuses shorter ones.`);
+      process.exit(1);
+    }
+    if (!value) {
+      console.warn(
+        `${name} isn't set: this deploy disables ${disables}. ` +
+          `What the publication store holds is still served. Add it to Sigillo staging.`,
+      );
+    }
   }
 }
 

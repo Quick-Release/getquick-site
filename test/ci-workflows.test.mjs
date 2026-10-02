@@ -57,6 +57,22 @@ test("maps secret-store secrets to the CI Worker's names", () => {
   assert.equal(payload.COMPOSER_AUTH, "value-of-COMPOSER_AUTH");
 });
 
+test("adds the Frontend's refresh token and event secret when the secret store has them", () => {
+  const without = JSON.parse(secretsPayload(STORE));
+  const withThem = JSON.parse(
+    secretsPayload({
+      ...STORE,
+      FRONTEND_REFRESH_TOKEN: "value-of-refresh",
+      PUBLICATION_EVENT_SECRET: "value-of-events",
+    }),
+  );
+
+  assert.equal(without.FRONTEND_REFRESH_TOKEN, undefined);
+  assert.equal(without.PUBLICATION_EVENT_SECRET, undefined);
+  assert.equal(withThem.FRONTEND_REFRESH_TOKEN, "value-of-refresh");
+  assert.equal(withThem.PUBLICATION_EVENT_SECRET, "value-of-events");
+});
+
 test("refuses to deploy with missing secrets", () => {
   assert.throws(() => secretsPayload({}), /Missing in the secret store: CLOUDFLARE_API_TOKEN/u);
 });

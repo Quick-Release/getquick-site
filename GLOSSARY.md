@@ -103,9 +103,20 @@ _Avoid_: stale content (as a fault)
 Reading published content from the CMS and promoting each complete, valid
 read into the publication store; a failed read keeps what is stored. Only a
 trusted caller may refresh: `gq frontend refresh` with the Site's refresh
-token, for the whole Site (its preparation) or for chosen entries. A Site no
+token, for the whole Site (its preparation) or for chosen entries, and the
+Site's CMS, for the entry a publication event names. A Site no
 refresh has filled is not ready, and its pages are a 503.
 _Avoid_: rebuild, revalidate, purge
+
+**Publication event**:
+The Site's CMS telling its Frontend that a page or post was published or
+updated: signed with the Site's event secret, with its own identity and the
+time it happened, it makes the Frontend refresh that entry
+([ADR 0005](docs/adr/0005-refresh-publications-through-signed-cms-events.md)).
+It carries no content. An event older than one already refreshed for the
+same entry is superseded; one whose refresh failed stays recorded for a retry.
+Publishing never waits on it.
+_Avoid_: webhook (for the domain event), purge
 
 **Cold lookup**:
 A visit's read of an entry the publication store has never held, the only CMS

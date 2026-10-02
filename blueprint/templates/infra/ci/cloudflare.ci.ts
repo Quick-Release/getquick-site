@@ -19,6 +19,9 @@ const pnpmEnv = {
 // give Ploi's deploy (which gq ploi release waits for) enough time.
 const deployConfig = { retries: { limit: 0, delay: 1_000 }, timeout: 15 * 60 * 1000 };
 
+// Bound to the Frontend by its deploy (infra/frontend.run.ts) when present.
+const frontendSecrets = ["FRONTEND_REFRESH_TOKEN", "PUBLICATION_EVENT_SECRET"] as const;
+
 // Cost: containers bill memory for every second they run, and each step
 // starts a container and restores the workspace snapshot. So the pipeline is
 // at most three steps — install (skipped on a lockfile cache hit), verify
@@ -102,12 +105,15 @@ export class CI extends CIWorkflow<CloudflareArtifacts, Bindings> {
       name: "release",
       env: pnpmEnv,
       command: `node scripts/ci-release.mjs --ref ${params.sha}`,
-      // COMPOSER_AUTH is handed to the Ploi deploy for its composer install.
+      // COMPOSER_AUTH is handed to the Ploi deploy for its composer install;
+      // the Frontend's own secrets to its deploy, when this Worker has them
+      // (a step naming a secret the Worker lacks fails).
       secrets: [
         "PLOI_API_TOKEN",
         "RELEASES_R2_ACCESS_KEY_ID",
         "RELEASES_R2_SECRET_ACCESS_KEY",
         "COMPOSER_AUTH",
+        ...frontendSecrets.filter((name) => typeof this.env[name] === "string"),
       ],
       cloudflareCredentials: { accountId: this.env.CLOUDFLARE_DEPLOY_ACCOUNT_ID },
       // /workspace has no .git: ci-release fetches the tagged commit with these.

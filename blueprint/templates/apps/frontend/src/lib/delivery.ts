@@ -373,25 +373,7 @@ export async function refreshSite(
     getPublishedRoutes(),
   ]);
 
-  const homeOutcome = await promoteRead(
-    store,
-    HOME,
-    "the front page",
-    readStartedAt,
-    parseHome,
-    () => {
-      if (home.kind === "unavailable") return home.failure;
-      if (home.kind === "missing") return { state: "missing" };
-      const { blocksOmitted, ...content } = home.content;
-      if (blocksOmitted) {
-        return {
-          reason: "partial",
-          message: "WordPress could only return the front page without its blocks",
-        };
-      }
-      return { state: "published", content };
-    },
-  );
+  const homeOutcome = await promoteHome(store, home, readStartedAt);
   const chromeOutcome = await promoteRead(
     store,
     CHROME,
@@ -450,6 +432,30 @@ export async function refreshSite(
     entries: entries.entries,
     moved: entries.moved,
   };
+}
+
+/**
+ * Refreshes the front page only (not the chrome or the entries): the front
+ * page itself was published or changed.
+ */
+export async function refreshHome(store: PublicationStore): Promise<RecordOutcome> {
+  const readStartedAt = Date.now();
+  return promoteHome(store, await getHomeContent(), readStartedAt);
+}
+
+function promoteHome(store: PublicationStore, home: Delivery<HomeContent>, readStartedAt: number) {
+  return promoteRead(store, HOME, "the front page", readStartedAt, parseHome, () => {
+    if (home.kind === "unavailable") return home.failure;
+    if (home.kind === "missing") return { state: "missing" };
+    const { blocksOmitted, ...content } = home.content;
+    if (blocksOmitted) {
+      return {
+        reason: "partial",
+        message: "WordPress could only return the front page without its blocks",
+      };
+    }
+    return { state: "published", content };
+  });
 }
 
 /**

@@ -157,6 +157,11 @@
       "app": "apps/cms"
     },
     {
+      "path": "apps/cms/web/app/mu-plugins/publication-events.php",
+      "template": "templates/apps/cms/web/app/mu-plugins/publication-events.php",
+      "app": "apps/cms"
+    },
+    {
       "path": "apps/cms/web/app/plugins/.gitkeep",
       "template": "templates/apps/cms/web/app/plugins/gitkeep",
       "app": "apps/cms"
@@ -217,8 +222,18 @@
       "app": "apps/frontend"
     },
     {
+      "path": "apps/frontend/migrations/0003_publication_events.sql",
+      "template": "templates/apps/frontend/migrations/0003_publication_events.sql",
+      "app": "apps/frontend"
+    },
+    {
       "path": "apps/frontend/src/entries.test.ts",
       "template": "templates/apps/frontend/src/entries.test.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/events.test.ts",
+      "template": "templates/apps/frontend/src/events.test.ts",
       "app": "apps/frontend"
     },
     {
@@ -229,6 +244,11 @@
     {
       "path": "apps/frontend/src/lib/delivery.ts",
       "template": "templates/apps/frontend/src/lib/delivery.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/lib/events.ts",
+      "template": "templates/apps/frontend/src/lib/events.ts",
       "app": "apps/frontend"
     },
     {
@@ -244,6 +264,11 @@
     {
       "path": "apps/frontend/src/pages/gq/refresh.ts",
       "template": "templates/apps/frontend/src/pages/gq/refresh.ts",
+      "app": "apps/frontend"
+    },
+    {
+      "path": "apps/frontend/src/pages/gq/events.ts",
+      "template": "templates/apps/frontend/src/pages/gq/events.ts",
       "app": "apps/frontend"
     },
     {
