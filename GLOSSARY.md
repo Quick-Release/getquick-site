@@ -32,6 +32,17 @@ The files a new site's CMS or Frontend starts from, written once and only
 while that app doesn't exist yet; site-owned from then on.
 _Avoid_: app template (a template is the blueprint's source for a file)
 
+**Adoption**:
+Bringing an existing site onto the blueprint: its first sync takes over the
+managed files, its own deploy steps move into deploy extensions, and anything
+the generated sections repeat is removed from the site's own content.
+_Avoid_: onboarding (that is adding a site to the fleet)
+
+**Deploy extension**:
+A site-owned step that the generated CMS deploy runs after activating the
+site's plugins, such as activating its theme.
+_Avoid_: deploy hook (hooks are the Git hooks)
+
 **Variant**:
 The kind of site the blueprint supports: content or commerce. Lombardi is a
 content site; Ekis is a commerce site.
