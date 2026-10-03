@@ -146,19 +146,22 @@ Restore refuses once the Site's archive is recorded.
 
 ## Archive a Site
 
-Once the cut is recorded (and committed), and nobody expects the Site back:
+Once the cut is recorded (and committed), and nobody expects the Site back,
+run it from an up-to-date checkout of the repository's default branch with
+nothing changed but `gq.ops.json`:
 
 ```sh
+git switch main && git pull --ff-only
 pnpm offboard:archive --dry-run   # the plan, nothing changed
 pnpm offboard:archive             # the plan, then type the project's name
-git add gq.ops.json && git commit -m "chore: archive the Site"
 ```
 
 `pnpm offboard:archive` runs `gq offboard --archive` through
 `gq sigillo run operations`, like the cut. In a terminal it goes on only once
 you type the project's name back; elsewhere it needs `--yes`. **This can't be
 undone**: everything but the archive, the GitHub repository and the Sigillo
-project is deleted.
+project is deleted. It ends by committing `gq.ops.json` and pushing it, then
+archiving the repository: there is nothing to commit afterwards.
 
 ### What is archived
 
@@ -200,15 +203,16 @@ In this order, only after the archive is recorded:
 
 | Part      | What happens                                                                                                                                                                                                  |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ploi      | The site (and `ploi.siteId` in `gq.ops.json`), its database and its system user, unless another site on the server runs as it.                                                                                |
+| Ploi      | The site (and `ploi.siteId` in `gq.ops.json`), its database and its system user, unless another site on the server runs as it. Ploi deletes the site in the background, so gq waits for it to go first.       |
 | Frontend  | The Worker and its D1 publication store, and every other stage's.                                                                                                                                             |
 | CI        | The CI Worker, its Workflows and its container application.                                                                                                                                                   |
 | Media, R2 | The media bucket's custom domain; then the media, releases and CI backup buckets, each emptied with a key scoped to it, and deleted. The backups bucket stays: only the Site's own backups in it are deleted. |
 | Artifacts | The Artifacts repository. The empty namespace stays (the plan says so).                                                                                                                                       |
 | DNS       | The `A`, `AAAA` and `CNAME` records named exactly as the Site's hosts: `domains.admin`, `domains.frontend` and `media.domain`. Each is listed in the plan.                                                    |
 | Tokens    | Every `GETQUICK <PROJECT> …` token, deleted last on Cloudflare.                                                                                                                                               |
-| GitHub    | The push webhook is deleted and the repository archived: read-only, its code and history kept.                                                                                                                |
-| Record    | `offboarded.phase` becomes `"archived"`. Commit `gq.ops.json`.                                                                                                                                                |
+| GitHub    | The push webhook is deleted.                                                                                                                                                                                  |
+| Record    | `offboarded.phase` becomes `"archived"`, and gq commits `gq.ops.json` and pushes it to the default branch.                                                                                                    |
+| GitHub    | Last, once the record is pushed, the repository is archived: read-only, its code and history kept.                                                                                                            |
 
 The zone is shared with other Sites (`bnq.pt` holds every client's staging
 hosts): it is never deleted, and neither is any record that isn't one of the
@@ -240,13 +244,29 @@ The run ends by printing where everything is: the archive's prefix and
 `manifest.json`'s sha256, the archived repository, and the Sigillo project,
 which is kept with the Site's secrets.
 
+An archived repository takes no push, so gq pushes the record first, and
+only when that can't surprise you: the checkout is on the default branch,
+nothing but `gq.ops.json` is changed, its remote is the repository being
+archived, and the push is a fast-forward. Otherwise the plan shows a `! Git`
+line saying why, and the run deletes everything else but leaves the
+repository as it is. Commit and push `gq.ops.json` yourself, then run
+`pnpm offboard:archive` again: with the record pushed, it only archives the
+repository (it needs neither Cloudflare nor Ploi).
+
 ### If it fails halfway
 
 Run it again. A recorded archive is never written again (its `manifest.json`
 must still match the recorded sha256, or nothing more is deleted), and only
 what is still there is deleted. Until the run finishes, `gq offboard` and
 every guarded command point you back at `pnpm offboard:archive`, and
-`--restore` refuses.
+`--restore` refuses. A push refused at the end (the remote moved on while the
+run deleted) leaves the repository unarchived: pull, push `gq.ops.json`, and
+run it again.
+
+Ploi may take a while to delete the site, and refuses to delete its system
+user until it has. gq waits up to 5 minutes for the site to go, then retries
+the system user's deletion for up to 5 minutes more; past that the run stops
+with Ploi's reasons, and a rerun later picks up from there.
 
 A run that failed before its archive was verified (a source read short, or
 the verification itself) has deleted nothing, but leaves its files under

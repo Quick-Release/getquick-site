@@ -1,8 +1,8 @@
 // The provider operations offboarding plans and applies against: Cloudflare
 // (the project's tokens, Workers, Workflows, containers, D1, custom domains,
 // R2, Artifacts and the zone's DNS records), the Ploi site, its crontab,
-// database and system user, the GitHub repository and its webhooks, and the
-// CMS database backup and dump.
+// database and system user, the GitHub repository and its webhooks, the CMS
+// database backup and dump, and the operator's git checkout.
 // Each offboarding command (`gq offboard`, `--restore`, and the archive that
 // deletes) works through this one surface, so a step only says what it does,
 // never how a provider is called.
@@ -13,7 +13,8 @@
 // deletes afterwards (named "GETQUICK <PROJECT> offboarding (temporary)").
 // Ploi's token and the releases bucket's R2 key live in Sigillo staging and
 // are read into memory from there unless the environment already has them;
-// GitHub goes through the operator's `gh` login. No value is printed.
+// GitHub goes through the operator's `gh` login, and git through the
+// checkout's own remote and credentials. No value is printed.
 //
 // R2 objects (the archive's reads, writes and emptied buckets) go through
 // keys scoped to one bucket each, minted for the run as 1-hour tokens
@@ -22,6 +23,7 @@
 // scoped key can't reach another client's bucket. R2 rejects a new key for
 // a while, so each is retried until R2 first accepts it (src/r2.mjs).
 
+import { basename } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { redactText } from "../cli/redact.mjs";
@@ -71,6 +73,11 @@ const GONE = { allowNotFound: true };
 const ONE_HOUR = 60 * 60 * 1000;
 const D1_EXPORT_POLL_MS = 2000;
 const D1_EXPORT_TIMEOUT_MS = 15 * 60 * 1000;
+// Ploi deletes a site in the background: gq waits up to 5 minutes for it to
+// go, 2 s at first, then twice as long each time up to 10 s.
+const PLOI_SETTLE_MS = 5 * 60 * 1000;
+const PLOI_FIRST_WAIT_MS = 2000;
+const PLOI_LONGEST_WAIT_MS = 10_000;
 
 // The gq.ops.json keys offboarding reads, checked before anything runs. The
 // archive forgets ploi.siteId once it deletes the site, so it doesn't need it.
@@ -187,8 +194,8 @@ export async function withOffboardingProviders(dependencies, work, { archive = f
             project: ops.project,
             fetch,
           }),
-          ploi: ploiOperations(ploiClient, ops.ploi.siteId),
-          github: githubOperations(exec, env, ops.github.repository),
+          ploi: ploiOperations(ploiClient, ops.ploi.siteId, clock),
+          ...repositoryOperations(dependencies),
           r2: keys.r2,
           dumpDatabase: (uploadUrl) => exportLiveDatabase(ploiClient, ops, uploadUrl),
           async backupDatabase() {
@@ -217,6 +224,23 @@ export async function withOffboardingProviders(dependencies, work, { archive = f
       }
     },
   );
+}
+
+// Runs `work(providers)` with only the repository and the checkout (`github`
+// and `git`): what is left once a Site's infrastructure is deleted.
+export function withRepositoryProviders(dependencies, work) {
+  const ops = dependencies.context.config;
+  if (!ops.github?.repository) {
+    throw new Error("gq.ops.json github.repository is required to archive.");
+  }
+  return work({ ops, ...repositoryOperations(dependencies) });
+}
+
+function repositoryOperations({ context, env, exec }) {
+  return {
+    github: githubOperations(exec, env, context.config.github.repository),
+    git: gitOperations(exec, env, context.projectRoot, basename(context.configPath)),
+  };
 }
 
 // R2 clients for one bucket each, minted on first use as 1-hour tokens that
@@ -399,7 +423,7 @@ function cloudflareOperations({ manager, cloudflare, zone, managerId, project, f
   };
 }
 
-function ploiOperations(client, siteId) {
+function ploiOperations(client, siteId, clock) {
   const sitePath = `/sites/${siteId}`;
   return {
     async site() {
@@ -420,18 +444,67 @@ function ploiOperations(client, siteId) {
       return String(response?.data ?? response?.env ?? response?.content ?? "");
     },
     deleteSite: () => client.request("DELETE", sitePath, undefined, GONE),
+    // Resolves once Ploi neither returns nor lists the deleted site, which
+    // it deletes in the background; throws after 5 minutes.
+    async siteDeleted() {
+      const gone = await settling(
+        clock,
+        async () =>
+          !(await client.request("GET", sitePath, undefined, { allowNotFound: true })) &&
+          !(await client.list("/sites")).some(({ id }) => String(id) === String(siteId)),
+      );
+      if (!gone) {
+        throw new Error(
+          `Ploi still shows the site ${siteId} 5 minutes after deleting it: run gq offboard --archive again once it is gone.`,
+        );
+      }
+    },
     // Every site on the server.
     sites: () => client.list("/sites"),
     databases: () => client.list("/databases"),
     deleteDatabase: (id) => client.request("DELETE", `/databases/${id}`, undefined, GONE),
     systemUsers: () => client.list("/system-users"),
-    deleteSystemUser: (id) => client.request("DELETE", `/system-users/${id}`, undefined, GONE),
+    // Ploi refuses (422) while a site it is still deleting runs as the user:
+    // retried for 5 minutes, then the last refusal fails the run.
+    async deleteSystemUser(id) {
+      let refusal;
+      const deleted = await settling(clock, async () => {
+        try {
+          await client.request("DELETE", `/system-users/${id}`, undefined, GONE);
+          return true;
+        } catch (error) {
+          if (error.status !== 422) throw error;
+          refusal = error;
+          return false;
+        }
+      });
+      if (!deleted) {
+        throw new Error(
+          `${refusal.message} Ploi still refused it after gq retried for 5 minutes.`,
+          { cause: refusal },
+        );
+      }
+    },
     suspend: (reason) => client.request("POST", `${sitePath}/suspend`, { reason }),
     resume: () => client.request("POST", `${sitePath}/resume`),
     crontabs: () => client.list("/crontabs"),
     deleteCrontab: (id) => client.request("DELETE", `/crontabs/${id}`),
     createCrontab: (crontab) => client.request("POST", "/crontabs", crontab),
   };
+}
+
+// Calls `settled()` until it resolves to true, waiting on `clock` between
+// calls; resolves to false once 5 minutes have gone by.
+async function settling(clock, settled) {
+  const started = clock.now();
+  let wait = PLOI_FIRST_WAIT_MS;
+  for (;;) {
+    if (await settled()) return true;
+    const waited = clock.now() - started;
+    if (waited >= PLOI_SETTLE_MS) return false;
+    await clock.sleep(Math.min(wait, PLOI_SETTLE_MS - waited));
+    wait = Math.min(wait * 2, PLOI_LONGEST_WAIT_MS);
+  }
 }
 
 // The repository's webhooks through the operator's `gh` login (it needs repo
@@ -456,8 +529,10 @@ function githubOperations(exec, env, repository) {
     updateHook: (id, change) =>
       gh(["-X", "PATCH", `repos/${repository}/hooks/${id}`, "--input", "-"], change),
     deleteHook: (id) => gh(["-X", "DELETE", `repos/${repository}/hooks/${id}`]),
-    async archived() {
-      return (await gh([`repos/${repository}`])).archived === true;
+    // Whether it is archived, and its default branch.
+    async details() {
+      const found = await gh([`repos/${repository}`]);
+      return { archived: found.archived === true, defaultBranch: found.default_branch };
     },
     async headCommit() {
       return (await gh([`repos/${repository}/commits/HEAD`])).sha;
@@ -471,5 +546,77 @@ function githubOperations(exec, env, repository) {
         );
       }
     },
+  };
+}
+
+// The operator's checkout, through git in the project root (`cwd`): what the
+// archive reads of it, and gq.ops.json (`file`, relative to `cwd`) committed
+// and pushed. A failure names the git command, with its output redacted.
+function gitOperations(exec, env, cwd, file) {
+  async function git(args) {
+    const result = await exec("git", args, { cwd, env });
+    if (result.code !== 0) {
+      const output = redactText(result.stderr.trim()) || `exit code ${result.code}`;
+      throw new Error(`git ${args.join(" ")} failed: ${output}`);
+    }
+    return result.stdout;
+  }
+  return {
+    // The branch checked out, or null when HEAD is detached.
+    async branch() {
+      const name = (await git(["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+      return name === "HEAD" ? null : name;
+    },
+    // The remote `branch` tracks, or null.
+    async remote(branch) {
+      const result = await exec("git", ["config", "--get", `branch.${branch}.remote`], {
+        cwd,
+        env,
+      });
+      return (result.code === 0 && result.stdout.trim()) || null;
+    },
+    async remoteUrl(remote) {
+      return (await git(["remote", "get-url", remote])).trim();
+    },
+    fetch: (remote, branch) =>
+      git(["fetch", "--quiet", remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`]),
+    // The paths changed or untracked anywhere in the checkout but `file`.
+    async otherChanges() {
+      const status = await git([
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+        ":(top)",
+        `:(exclude)${file}`,
+      ]);
+      return status
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => line.slice(3));
+    },
+    // Whether `file` differs from its last commit.
+    async recordChanged() {
+      return (await git(["status", "--porcelain", "--", file])).trim() !== "";
+    },
+    // How many commits `remote`'s `branch` and HEAD each have that the other
+    // lacks (as last fetched).
+    async divergence(remote, branch) {
+      const counts = await git([
+        "rev-list",
+        "--left-right",
+        "--count",
+        `${remote}/${branch}...HEAD`,
+      ]);
+      const [behind, ahead] = counts.trim().split(/\s+/u).map(Number);
+      return { behind, ahead };
+    },
+    // Commits `file` alone, whatever else is staged.
+    async commitRecord(message) {
+      await git(["add", "--", file]);
+      await git(["commit", "--quiet", "-m", message, "--", file]);
+    },
+    // Refused by the remote unless it is a fast-forward.
+    push: (remote, branch) => git(["push", "--quiet", remote, `HEAD:refs/heads/${branch}`]),
   };
 }

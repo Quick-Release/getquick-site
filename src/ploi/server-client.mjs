@@ -1,3 +1,5 @@
+import { ploiErrorDetail } from "./errors.mjs";
+
 const apiOrigin = "https://ploi.io";
 
 // Minimal Ploi API client scoped to one server, for provisioning and
@@ -28,8 +30,13 @@ export function createPloiServerClient({ token, serverId, fetch }) {
       data = {};
     }
     if (!response.ok) {
-      const detail = typeof data.message === "string" ? `: ${data.message}` : "";
-      throw new Error(`Ploi ${method} ${path} failed with ${response.status}${detail}`);
+      const detail = ploiErrorDetail(data);
+      throw Object.assign(
+        new Error(
+          `Ploi ${method} ${path} failed with ${response.status}${detail && `: ${detail}`}`,
+        ),
+        { status: response.status },
+      );
     }
     return data;
   }

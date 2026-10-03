@@ -1,12 +1,14 @@
 // An exposed Site for the offboarding commands at the run() seam: a fixture
 // site with every block `gq offboard` reads, and one in-memory account behind
 // a recording fetch (Cloudflare, R2's S3 API and Ploi) and a recording exec
-// (Sigillo and gh). `state` holds what each provider would report, and
+// (Sigillo, gh and git). `state` holds what each provider would report, and
 // `state.log` every change in the order it was made, so a test can tell what
 // was cut, restored, archived or deleted, and when. Nothing here reaches the
 // network or a real account.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { crc32 } from "node:zlib";
 
@@ -244,7 +246,26 @@ export function exposedState() {
       { id: 78, name: "fixture" },
       { id: 79, name: "other" },
     ],
-    repository: { archived: false, head: HEAD_COMMIT },
+    // Ploi deletes a site in the background: for how many reads of it the
+    // deleted site still shows (in its listing too), and how many times a
+    // system user's deletion is refused (422) besides while a site runs as it.
+    siteLingers: 0,
+    systemUserRefusals: 0,
+    repository: { archived: false, head: HEAD_COMMIT, defaultBranch: "main" },
+    // The operator's checkout: its branch and that branch's remote, the
+    // paths changed besides gq.ops.json, how many commits the remote branch
+    // and the checkout each have that the other lacks, and gq.ops.json as
+    // last committed (null: not since the cut) and as pushed.
+    git: {
+      branch: "main",
+      remote: "origin",
+      url: "git@github.com:Example/fixture.git",
+      changes: [],
+      behind: 0,
+      ahead: 0,
+      committed: null,
+      pushed: null,
+    },
     // The bucket Sigillo staging's R2 key belongs to: the backups bucket.
     stagingBucket: "fixture-releases",
     log: [],
@@ -617,7 +638,16 @@ export function fakeAccount(overrides = {}) {
   function ploi(method, path, data, query) {
     const route = `${method} ${path}`;
     if (route === "GET /sites/34") {
-      return state.site ? { data: state.site } : json({ message: "Not found" }, 404);
+      if (!state.site) return json({ message: "Not found" }, 404);
+      const response = { data: state.site };
+      if (state.site.status === "deleting") {
+        state.siteLingers -= 1;
+        if (state.siteLingers <= 0) {
+          state.site = null;
+          state.log.push("ploi site gone");
+        }
+      }
+      return response;
     }
     if (route === "GET /sites/34/env") {
       return state.site ? { data: state.siteEnv } : json({ message: "Not found" }, 404);
@@ -633,7 +663,7 @@ export function fakeAccount(overrides = {}) {
       return { data: state.site };
     }
     if (route === "DELETE /sites/34") {
-      state.site = null;
+      state.site = state.siteLingers > 0 ? { ...state.site, status: "deleting" } : null;
       state.log.push("ploi site deleted");
       return {};
     }
@@ -662,6 +692,18 @@ export function fakeAccount(overrides = {}) {
     if (route === "GET /system-users") return ploiPage(path, state.systemUsers, query);
     const user = /^DELETE \/system-users\/(\d+)$/u.exec(route)?.[1];
     if (user) {
+      const name = state.systemUsers.find(({ id }) => String(id) === user)?.name;
+      const inUse = state.site?.system_user === name;
+      if (inUse || state.systemUserRefusals > 0) {
+        if (!inUse) state.systemUserRefusals -= 1;
+        return json(
+          {
+            message: "The given data was invalid.",
+            errors: { user: ["The system user still has sites."] },
+          },
+          422,
+        );
+      }
       state.systemUsers = state.systemUsers.filter(({ id }) => String(id) !== user);
       state.log.push(`ploi system user ${user} deleted`);
       return {};
@@ -687,8 +729,9 @@ export function fakeAccount(overrides = {}) {
   }
 
   // Sigillo staging (read with `secrets get --raw`) and gh's REST calls.
-  const exec = recordingExec(({ command, args, input }) => {
+  const exec = recordingExec(({ command, args, input, cwd }) => {
     if (command === "gh") return gh(args, input);
+    if (command === "git") return git(args, cwd);
     assert.ok(command.endsWith(SIGILLO_BIN), `unexpected child: ${command}`);
     const environment = args[args.indexOf("--env") + 1];
     assert.equal(environment, "stage", "only staging is read through Sigillo");
@@ -716,7 +759,8 @@ export function fakeAccount(overrides = {}) {
     const method = args.includes("-X") ? args[args.indexOf("-X") + 1] : "GET";
     const path = args.find((argument) => argument.startsWith("repos/"));
     if (method === "GET" && path === "repos/Example/fixture") {
-      return { stdout: JSON.stringify({ archived: state.repository.archived }) };
+      const { archived, defaultBranch } = state.repository;
+      return { stdout: JSON.stringify({ archived, default_branch: defaultBranch }) };
     }
     if (method === "GET" && path === "repos/Example/fixture/commits/HEAD") {
       return { stdout: JSON.stringify({ sha: state.repository.head }) };
@@ -741,6 +785,57 @@ export function fakeAccount(overrides = {}) {
       return { stdout: "" };
     }
     return { code: 1, stderr: `unexpected gh ${args.join(" ")}` };
+  }
+
+  // The checkout's git, run in the project root: what gq reads of it, and
+  // gq.ops.json committed and pushed. A push is refused unless it is a
+  // fast-forward to a repository that isn't archived.
+  async function git(args, cwd) {
+    const checkout = state.git;
+    const config = () => readFile(join(cwd, "gq.ops.json"), "utf8");
+    const command = args.join(" ");
+    if (command === "rev-parse --abbrev-ref HEAD") return { stdout: `${checkout.branch}\n` };
+    const tracked = /^config --get branch\.(.+)\.remote$/u.exec(command)?.[1];
+    if (tracked) {
+      return tracked === checkout.branch && checkout.remote
+        ? { stdout: `${checkout.remote}\n` }
+        : { code: 1 };
+    }
+    if (command === `remote get-url ${checkout.remote}`) return { stdout: `${checkout.url}\n` };
+    if (args[0] === "fetch") return {};
+    if (command === "status --porcelain --untracked-files=all -- :(top) :(exclude)gq.ops.json") {
+      return { stdout: checkout.changes.map((path) => ` M ${path}\n`).join("") };
+    }
+    if (command === "status --porcelain -- gq.ops.json") {
+      return { stdout: (await config()) === checkout.committed ? "" : " M gq.ops.json\n" };
+    }
+    if (command === `rev-list --left-right --count ${checkout.remote}/main...HEAD`) {
+      return { stdout: `${checkout.behind}\t${checkout.ahead}\n` };
+    }
+    if (command === "add -- gq.ops.json") {
+      checkout.staged = await config();
+      return {};
+    }
+    if (args[0] === "commit" && args.at(-1) === "gq.ops.json") {
+      assert.ok(checkout.staged !== undefined, "gq.ops.json is added first");
+      checkout.committed = checkout.staged;
+      checkout.ahead += 1;
+      state.log.push("gq.ops.json committed");
+      return {};
+    }
+    if (command === `push --quiet ${checkout.remote} HEAD:refs/heads/main`) {
+      if (state.repository.archived) {
+        return { code: 1, stderr: "ERROR: This repository was archived so it is read-only.\n" };
+      }
+      if (checkout.behind > 0) {
+        return { code: 1, stderr: " ! [rejected]        HEAD -> main (non-fast-forward)\n" };
+      }
+      checkout.pushed = checkout.committed;
+      checkout.ahead = 0;
+      state.log.push(`gq.ops.json pushed to ${checkout.remote}/main`);
+      return {};
+    }
+    return { code: 1, stderr: `unexpected git ${command}` };
   }
 
   // GitHub lists hooks a page at a time (30 unless asked, at most 100); gh

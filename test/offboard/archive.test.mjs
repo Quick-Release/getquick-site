@@ -111,8 +111,9 @@ test("offboard --archive --dry-run plans the archive and every deletion, and cha
     "  - Tokens: delete GETQUICK FIXTURE Media R2",
     "  - Tokens: delete GETQUICK FIXTURE CI Deploy",
     "  - GitHub: delete the push webhook 99 on Example/fixture",
+    '  - Record: offboarded.phase becomes "archived" in gq.ops.json',
+    "  - Git: commit gq.ops.json and push it to origin/main",
     "  - GitHub: archive the repository Example/fixture (it stays readable)",
-    '  - Record: offboarded.phase becomes "archived" in gq.ops.json (commit it)',
     "  ! Sigillo: the project PROJECT123 is kept, with the Site's secrets",
   ]);
   assert.match(result.stdout, /Dry run: nothing changed\./u);
@@ -125,7 +126,8 @@ test("offboard --archive --dry-run plans the archive and every deletion, and cha
 });
 
 // The deletions, in gq-smoke-down's order, with the project's tokens last on
-// Cloudflare and GitHub after them.
+// Cloudflare and GitHub's webhook after them; then the record, pushed before
+// the repository turns read-only.
 const DELETIONS = [
   "ploi site deleted",
   "ploi database 56 deleted",
@@ -157,6 +159,8 @@ const DELETIONS = [
   "token t-media deleted",
   "token t-deploy deleted",
   "github hook 99 deleted",
+  "gq.ops.json committed",
+  "gq.ops.json pushed to origin/main",
   "github repo archived",
 ];
 
@@ -957,14 +961,14 @@ test("offboard --archive redacts what R2 and gh echo back when they fail", async
   assertNoSecret(r2Failure);
 
   const gh = await cutSite();
-  const exec = recordingExec(({ command, args, input }) =>
+  const exec = recordingExec(({ command, args, ...options }) =>
     command === "gh" && args[0] === "repo"
       ? {
           code: 1,
           stderr:
             "HTTP 401: Bad credentials (https://api.github.com/repos/Example/fixture?access_token=ghs_leaked)",
         }
-      : gh.account.exec(command, args, { input }),
+      : gh.account.exec(command, args, options),
   );
   const ghFailure = await gh.fixture.run(["offboard", "--archive", "--yes"], {
     env: ENV,
@@ -1133,6 +1137,89 @@ test("a 401 for a key R2 has already accepted is not retried", async () => {
   assert.equal(result.code, 1);
   assert.match(result.stderr, /^gq: R2 .* failed with 401: Unauthorized: Unauthorized\n$/u);
   assert.deepEqual(clock.sleeps, []);
+});
+
+// --- Ploi deletes a site in the background ---------------------------------------
+
+test("the database and system user are deleted only once Ploi no longer shows the deleted site", async () => {
+  const { fixture, account } = await cutSite({ state: { siteLingers: 3 } });
+  const clock = fakeClock();
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], {
+    env: ENV,
+    ...account,
+    clock,
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  const log = account.state.log;
+  assert.deepEqual(
+    log.slice(log.indexOf("ploi site deleted"), log.indexOf("ploi site deleted") + 4),
+    [
+      "ploi site deleted",
+      "ploi site gone",
+      "ploi database 56 deleted",
+      "ploi system user 78 deleted",
+    ],
+  );
+  assert.deepEqual(clock.sleeps, [2000, 4000, 8000]);
+});
+
+test("a deleted site Ploi still shows after 5 minutes stops the run before its database goes", async () => {
+  const { fixture, account } = await cutSite({ state: { siteLingers: Infinity } });
+  const clock = fakeClock();
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], {
+    env: ENV,
+    ...account,
+    clock,
+  });
+
+  assert.equal(result.code, 1);
+  assert.equal(
+    result.stderr,
+    "gq: Ploi still shows the site 34 5 minutes after deleting it: run gq offboard --archive again once it is gone.\n",
+  );
+  assert.equal(
+    clock.sleeps.reduce((sum, ms) => sum + ms, 0),
+    5 * 60_000,
+  );
+  assert.equal(account.state.log.at(-1), "ploi site deleted");
+  assert.equal((await readOps(fixture)).ploi.siteId, undefined, "the deleted site is forgotten");
+});
+
+test("a system user Ploi refuses to delete at first is retried with backoff until it goes", async () => {
+  const { fixture, account } = await cutSite({ state: { systemUserRefusals: 2 } });
+  const clock = fakeClock();
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], {
+    env: ENV,
+    ...account,
+    clock,
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(account.state.log.includes("ploi system user 78 deleted"));
+  assert.deepEqual(clock.sleeps, [2000, 4000]);
+});
+
+test("a system user Ploi never lets go fails after 5 minutes with Ploi's reasons", async () => {
+  const { fixture, account } = await cutSite({ state: { systemUserRefusals: Infinity } });
+  const clock = fakeClock();
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], {
+    env: ENV,
+    ...account,
+    clock,
+  });
+
+  assert.equal(result.code, 1);
+  assert.equal(
+    result.stderr,
+    "gq: Ploi DELETE /system-users/78 failed with 422: The given data was invalid. (user: The system user still has sites.) Ploi still refused it after gq retried for 5 minutes.\n",
+  );
+  assert.deepEqual(clock.sleeps, [2000, 4000, 8000, ...Array(28).fill(10_000), 6000]);
+  assert.ok(account.state.workers.includes("fixture-fe"), "nothing after it is deleted");
 });
 
 // --- the shared zone and the tokens -------------------------------------------
@@ -1501,7 +1588,7 @@ test("offboard --archive refuses to go on when the recorded archive's manifest c
   assert.deepEqual(account.state.log, []);
 });
 
-test("offboard --archive once archived has nothing left to do and calls no provider", async () => {
+test("offboard --archive once archived has nothing left to do and reads only the repository and the checkout", async () => {
   const { fixture, account } = await cutSite();
   assert.equal(
     (await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account })).code,
@@ -1509,6 +1596,7 @@ test("offboard --archive once archived has nothing left to do and calls no provi
   );
   account.fetch.requests.length = 0;
   account.exec.calls.length = 0;
+  account.state.log.length = 0;
 
   const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
 
@@ -1521,10 +1609,173 @@ test("offboard --archive once archived has nothing left to do and calls no provi
     ),
   );
   assert.deepEqual(account.fetch.requests, []);
-  assert.deepEqual(account.exec.calls, []);
+  assert.deepEqual(
+    [...new Set(account.exec.calls.map(({ command }) => command))].sort(),
+    ["gh", "git"],
+    "no secret is read from Sigillo",
+  );
+  assert.deepEqual(account.state.log, [], "nothing changes");
   const restore = await fixture.run(["offboard", "--restore", "--yes"], { env: ENV, ...account });
   assert.equal(restore.code, 1);
   assert.match(restore.stderr, /fixture was archived .*nothing to restore/u);
+});
+
+// --- the record reaches git before the repository turns read-only ---------------
+
+test("offboard --archive commits and pushes the archived record, then archives the repository", async () => {
+  const { fixture, account } = await cutSite();
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(account.state.log.slice(-4), [
+    "github hook 99 deleted",
+    "gq.ops.json committed",
+    "gq.ops.json pushed to origin/main",
+    "github repo archived",
+  ]);
+  const pushed = JSON.parse(account.state.git.pushed);
+  assert.equal(pushed.offboarded.phase, "archived");
+  assert.deepEqual(pushed, await readOps(fixture), "what is pushed is the final record");
+  assert.match(result.stdout, /Archived fixture\. gq\.ops\.json's record is pushed\./u);
+});
+
+for (const [why, checkout, reason] of [
+  ["on another branch", { branch: "offboard" }, "the checkout is on offboard, not main"],
+  [
+    "with other changes",
+    { changes: ["src/app.ts", "notes.txt"] },
+    "the checkout has other changes (src/app.ts, notes.txt)",
+  ],
+  [
+    "behind its remote",
+    { behind: 2 },
+    "origin/main has 2 commits this checkout lacks, so the push wouldn't be a fast-forward",
+  ],
+  [
+    "whose remote is another repository",
+    { url: "https://github.com/Example/fixture-old.git" },
+    "origin is https://github.com/Example/fixture-old.git, not Example/fixture",
+  ],
+]) {
+  test(`offboard --archive from a checkout ${why} leaves the push to the operator and the repository unarchived`, async () => {
+    const { fixture, account } = await cutSite();
+    Object.assign(account.state.git, checkout);
+
+    const result = await fixture.run(["offboard", "--archive", "--yes"], {
+      env: ENV,
+      ...account,
+    });
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(planLines(result.stdout).slice(-3), [
+      '  - Record: offboarded.phase becomes "archived" in gq.ops.json',
+      `  ! Git: commit gq.ops.json and push it to main yourself (${reason}), then run gq offboard --archive again to archive the repository Example/fixture`,
+      "  ! Sigillo: the project PROJECT123 is kept, with the Site's secrets",
+    ]);
+    assert.equal(account.state.log.at(-1), "github hook 99 deleted");
+    assert.equal(account.state.repository.archived, false);
+    assert.equal(account.state.git.pushed, null);
+    assert.equal((await readOps(fixture)).offboarded.phase, "archived");
+    assert.match(
+      result.stdout,
+      /Archived fixture, but not its repository yet: push gq\.ops\.json to main, then run gq offboard --archive again\./u,
+    );
+    assert.match(result.stdout, /https:\/\/github\.com\/Example\/fixture \(not archived yet\)/u);
+  });
+}
+
+test("once the operator pushes the record, a rerun archives the repository, and the next has nothing to do", async () => {
+  const { fixture, account } = await cutSite();
+  const { state } = account;
+  state.git.branch = "offboard";
+  assert.equal(
+    (await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account })).code,
+    0,
+  );
+  // The operator commits gq.ops.json on main and pushes it.
+  const record = await readFile(fixture.path("gq.ops.json"), "utf8");
+  Object.assign(state.git, { branch: "main", committed: record, pushed: record });
+  state.log.length = 0;
+  account.fetch.requests.length = 0;
+
+  const rerun = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(rerun.code, 0, rerun.stderr);
+  assert.deepEqual(planLines(rerun.stdout), [
+    "  ✓ Git: gq.ops.json's archived record is pushed to origin/main",
+    "  - GitHub: archive the repository Example/fixture (it stays readable)",
+  ]);
+  assert.deepEqual(state.log, ["github repo archived"]);
+  assert.deepEqual(account.fetch.requests, [], "nothing but git and gh is called");
+  assert.match(rerun.stdout, /Archived Example\/fixture: it is read-only now\./u);
+
+  const again = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(again.code, 0, again.stderr);
+  assert.deepEqual(planLines(again.stdout), [
+    "  ✓ Git: gq.ops.json's archived record is pushed to origin/main",
+    "  ✓ GitHub: the repository Example/fixture is archived",
+  ]);
+  assert.match(
+    again.stdout,
+    new RegExp(
+      `Nothing left to archive: fixture was archived to r2://offboarded-clients/fixture/${today()}/\\.`,
+      "u",
+    ),
+  );
+  assert.deepEqual(state.log, ["github repo archived"]);
+  assert.deepEqual(account.fetch.requests, []);
+});
+
+test("a rerun pushes a record committed but not pushed, then archives the repository", async () => {
+  const { fixture, account } = await cutSite();
+  const { state } = account;
+  // The push is refused at first: the remote moved on while the run deleted.
+  const exec = recordingExec(({ command, args, ...options }) =>
+    command === "git" && args[0] === "push"
+      ? { code: 1, stderr: " ! [rejected]        HEAD -> main (fetch first)\n" }
+      : account.exec(command, args, options),
+  );
+  const first = await fixture.run(["offboard", "--archive", "--yes"], {
+    env: ENV,
+    fetch: account.fetch,
+    exec,
+  });
+  assert.equal(first.code, 1);
+  assert.equal(
+    first.stderr,
+    "gq: git push --quiet origin HEAD:refs/heads/main failed: ! [rejected]        HEAD -> main (fetch first). gq.ops.json records fixture as archived but isn't pushed, so Example/fixture isn't archived: push it to main, then run gq offboard --archive again.\n",
+  );
+  assert.equal(state.repository.archived, false);
+  state.log.length = 0;
+
+  const rerun = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(rerun.code, 0, rerun.stderr);
+  assert.deepEqual(planLines(rerun.stdout), [
+    "  - Git: commit gq.ops.json and push it to origin/main",
+    "  - GitHub: archive the repository Example/fixture (it stays readable)",
+  ]);
+  assert.deepEqual(state.log, ["gq.ops.json pushed to origin/main", "github repo archived"]);
+  assert.equal(JSON.parse(state.git.pushed).offboarded.phase, "archived");
+});
+
+test("a record never pushed to a repository archived since is left to the operator", async () => {
+  const { fixture, account } = await cutSite();
+  // Archived by hand, its webhook deleted first.
+  account.state.hooks = account.state.hooks.filter(({ id }) => id !== 99);
+  account.state.repository.archived = true;
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(planLines(result.stdout).slice(-3), [
+    "  ! Git: gq.ops.json's archived record isn't pushed (it isn't committed or pushed yet), and Example/fixture is archived, so it takes no push: unarchive it (gh repo unarchive Example/fixture), push gq.ops.json to main, then archive it again",
+    "  ✓ GitHub: the repository Example/fixture is archived",
+    "  ! Sigillo: the project PROJECT123 is kept, with the Site's secrets",
+  ]);
+  assert.equal(account.state.git.pushed, null, "no push is tried");
 });
 
 // --- confirmation and configuration ---------------------------------------------

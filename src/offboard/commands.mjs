@@ -18,7 +18,8 @@ import { createReporter } from "../cli/reporter.mjs";
 import { planManagedFiles } from "../sync/managed-files.mjs";
 import { archivePlan, inspectArchive } from "./archive.mjs";
 import { runPlan } from "./plan.mjs";
-import { withOffboardingProviders } from "./providers.mjs";
+import { withOffboardingProviders, withRepositoryProviders } from "./providers.mjs";
+import { inspectRepository, repositoryItems } from "./repository.mjs";
 import { assertOwnDatabase, cutPlan, inspectSite, restorePlan } from "./steps.mjs";
 
 // Command → [usage, the options it accepts, runner].
@@ -131,17 +132,27 @@ async function runArchive(dependencies) {
   }
   const ui = createReporter(io, interactive, stdin);
   ui.intro(`Archive · ${ops.project}`);
+  // Its infrastructure is deleted: what may be left is pushing the record
+  // and archiving the repository, which need neither Cloudflare nor Ploi.
   if (record.phase === "archived") {
-    ui.outro(
-      `Nothing left to archive: ${ops.project} was archived to r2://${record.archive?.bucket}/${record.archive?.prefix}.`,
+    return withRepositoryProviders(dependencies, async (providers) =>
+      runPlan(repositoryItems(await inspectRepository(providers), ops), providers, {
+        ui,
+        parsed,
+        todoSymbol: "-",
+        question: `Push gq.ops.json and archive ${ops.github.repository}?`,
+        nothing: `Nothing left to archive: ${ops.project} was archived to r2://${record.archive?.bucket}/${record.archive?.prefix}.`,
+        finished: `Archived ${ops.github.repository}: it is read-only now.`,
+      }),
     );
-    return 0;
   }
   return withOffboardingProviders(
     dependencies,
     async (providers) => {
       const site = await inspectArchive(providers);
-      const { items, result } = archivePlan(site, { configPath: context.configPath });
+      const { items, result, archivesRepository } = archivePlan(site, {
+        configPath: context.configPath,
+      });
       return runPlan(items, providers, {
         ui,
         parsed,
@@ -156,9 +167,11 @@ async function runArchive(dependencies) {
         finished: () => {
           const { bucket, prefix, manifestSha256 } = result();
           return [
-            `Archived ${ops.project}. Commit gq.ops.json.`,
+            archivesRepository
+              ? `Archived ${ops.project}. gq.ops.json's record is pushed.`
+              : `Archived ${ops.project}, but not its repository yet: push gq.ops.json to ${site.repository.defaultBranch}, then run gq offboard --archive again.`,
             `  Archive:    r2://${bucket}/${prefix} (manifest.json sha256 ${manifestSha256})`,
-            `  Code:       https://github.com/${ops.github.repository} (archived, read-only)`,
+            `  Code:       https://github.com/${ops.github.repository} (${archivesRepository ? "archived, read-only" : "not archived yet"})`,
             `  Secrets:    Sigillo project ${ops.sigillo?.projectId ?? "(gq.ops.json sigillo.projectId)"}, kept`,
           ].join("\n");
         },

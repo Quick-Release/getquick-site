@@ -1,5 +1,6 @@
 import { requestJson } from "../ops/http.mjs";
 import { VERSION } from "../version.mjs";
+import { ploiErrorDetail } from "./errors.mjs";
 
 const API_BASE_URL = "https://ploi.io/api";
 const MAX_PAGES = 100;
@@ -24,7 +25,7 @@ export function createPloiClient(options) {
           : { "Content-Type": "application/json" }),
       },
       errorMessage(response, payload) {
-        return payload.message || `Ploi request failed with HTTP ${response.status}.`;
+        return ploiErrorDetail(payload) || `Ploi request failed with HTTP ${response.status}.`;
       },
     });
   }
