@@ -5,6 +5,8 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ## Unreleased
 
+## 0.15.2 — 2026-10-03
+
 ### Fixed
 
 - A new content site's Frontend serves its entries on a CMS whose permalinks
