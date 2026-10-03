@@ -12,6 +12,8 @@
 // Idempotent. Values go to sigillo/gh over stdin, never printed or put in
 // argv. Then deploy the Worker with the new secrets: gq ci deploy
 //
+// An Artifacts-only site (no `github.repository`) has nothing to connect.
+//
 //   gq github setup [--dry-run]
 
 import { randomBytes } from "node:crypto";
@@ -64,10 +66,15 @@ export async function runGithubSetup({ context, parsed, env, fetch, exec, io, in
   const repository = ops.github?.repository;
   const worker = ops.ci?.worker;
   const accountId = ops.cloudflare?.accountId;
-  if (!repository || !worker || !accountId) {
-    throw new Error(
-      "gq.ops.json github.repository, ci.worker and cloudflare.accountId are required.",
+  if (!repository) {
+    io.out(
+      "gq.ops.json has no github.repository: this site's code lives in Cloudflare Artifacts, " +
+        "and pushes to it start CI without GitHub. Nothing to set up.",
     );
+    return 0;
+  }
+  if (!worker || !accountId) {
+    throw new Error("gq.ops.json ci.worker and cloudflare.accountId are required.");
   }
   const deployToken = ciDeployToken(context);
   const secrets = await sigilloSecrets({ context, env, exec }, SECRETS_ENVIRONMENT);

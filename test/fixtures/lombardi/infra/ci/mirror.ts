@@ -33,7 +33,7 @@ export class Mirror extends WorkflowEntrypoint<Bindings, MirrorParams> {
             env: {
               REF: ref,
               GITHUB_REMOTE: `https://github.com/${this.env.GITHUB_REPOSITORY}.git`,
-              GITHUB_AUTH: githubAuth(this.env.GITHUB_CI_TOKEN),
+              GITHUB_AUTH: githubAuth(this.env.GITHUB_CI_TOKEN ?? ""),
               // Built like @cloudflare/ci does: repo.remote is an RPC property
               // on the binding, which can't be passed on as a string.
               ARTIFACTS_REMOTE: `https://${this.env.CLOUDFLARE_ACCOUNT_ID}.artifacts.cloudflare.net/git/${this.env.ARTIFACTS_NAMESPACE}/${this.env.ARTIFACTS_REPO}.git`,

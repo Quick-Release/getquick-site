@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import test from "node:test";
 
-import { secretsPayload, workerSecrets } from "../../src/ci/deploy.mjs";
+import { githubWorkerSecrets, secretsPayload, workerSecrets } from "../../src/ci/deploy.mjs";
 import { helperCommand } from "../../src/ci/git-artifacts.mjs";
 import { webhookConfig, webhookUrl } from "../../src/ci/github-setup.mjs";
 import { createFixtureSite, recordingExec, recordingFetch } from "../support/fixture-site.mjs";
@@ -43,7 +43,18 @@ function site({ ops = OPS } = {}) {
 
 // Every secret the Worker gets, as the secret store would inject it.
 const STORE = Object.freeze(
-  Object.fromEntries(Object.values(workerSecrets).map((name) => [name, `value-of-${name}`])),
+  Object.fromEntries(
+    Object.values({ ...workerSecrets, ...githubWorkerSecrets }).map((name) => [
+      name,
+      `value-of-${name}`,
+    ]),
+  ),
+);
+
+// An Artifacts-only site: no github.repository, and no GitHub secrets.
+const ARTIFACTS_ONLY_OPS = Object.freeze({ ...OPS, github: undefined });
+const ARTIFACTS_ONLY_STORE = Object.freeze(
+  Object.fromEntries(Object.entries(STORE).filter(([name]) => !name.startsWith("GITHUB_"))),
 );
 const DEPLOY_ENV = Object.freeze({ ...STORE, CI_DEPLOY_API_TOKEN: "ci-deploy", PATH: "/usr/bin" });
 
@@ -77,6 +88,15 @@ test("refuses to deploy with missing secrets", () => {
   assert.throws(() => secretsPayload({}), /Missing in the secret store: CLOUDFLARE_API_TOKEN/u);
 });
 
+test("needs the GitHub secrets only for a site on GitHub", () => {
+  assert.throws(
+    () => secretsPayload(ARTIFACTS_ONLY_STORE),
+    /Missing in the secret store: GITHUB_CI_TOKEN, GITHUB_WEBHOOK_SECRET/u,
+  );
+  const payload = JSON.parse(secretsPayload(ARTIFACTS_ONLY_STORE, { github: false }));
+  assert.deepEqual(Object.keys(payload).sort(), Object.keys(workerSecrets).sort());
+});
+
 // --- gq ci deploy / runs -----------------------------------------------------
 
 test("ci deploy deploys the Worker with its own Wrangler, then pipes its secrets over stdin", async () => {
@@ -105,6 +125,20 @@ test("ci deploy deploys the Worker with its own Wrangler, then pipes its secrets
   assert.deepEqual(JSON.parse(bulk.input), JSON.parse(secretsPayload(STORE)));
   assert.ok(!bulk.args.some((argument) => argument.includes("value-of-")), "never in argv");
   assert.match(result.stdout, /Deployed fixture-ci with 9 secrets\./u);
+});
+
+test("ci deploy deploys an Artifacts-only site's Worker without GitHub secrets", async () => {
+  const fixture = await site({ ops: ARTIFACTS_ONLY_OPS });
+  const exec = recordingExec();
+  const env = { ...ARTIFACTS_ONLY_STORE, CI_DEPLOY_API_TOKEN: "ci-deploy" };
+
+  const result = await fixture.run(["ci", "deploy"], { env, exec });
+
+  assert.equal(result.code, 0, result.stderr);
+  const secrets = JSON.parse(exec.calls[1].input);
+  assert.equal(secrets.GITHUB_CI_TOKEN, undefined);
+  assert.equal(secrets.GITHUB_WEBHOOK_SECRET, undefined);
+  assert.match(result.stdout, /Deployed fixture-ci with 7 secrets\./u);
 });
 
 test("ci deploy uses gq.ops.json ci.directory for the Worker", async () => {
@@ -310,6 +344,20 @@ test("github setup can't ask for a new GitHub token without a terminal", async (
   );
 });
 
+test("github setup has nothing to connect for an Artifacts-only site", async () => {
+  const fixture = await site({ ops: ARTIFACTS_ONLY_OPS });
+  const exec = recordingExec();
+
+  const result = await fixture.run(["github", "setup"], { env: {}, exec });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(
+    result.stdout,
+    /no github\.repository: this site's code lives in Cloudflare Artifacts/u,
+  );
+  assert.deepEqual(exec.calls, []);
+});
+
 // --- gq git artifacts --------------------------------------------------------
 
 const ARTIFACTS_HOST = "account-1.artifacts.cloudflare.net";
@@ -364,6 +412,60 @@ test("git artifacts setup drops the Artifacts push URL older setups added", asyn
   assert.match(result.stdout, /origin pushes to: git@github\.com:example\/fixture\.git\n/u);
 });
 
+test("git artifacts setup makes Artifacts the origin of an Artifacts-only site", async () => {
+  const fixture = await site({ ops: ARTIFACTS_ONLY_OPS });
+  const artifacts = `https://${ARTIFACTS_HOST}/git/fixture-ns/fixture-repo.git`;
+  let origin;
+  const exec = recordingExec(({ args }) => {
+    const joined = args.join(" ");
+    if (joined.startsWith("remote get-url"))
+      return origin ? { stdout: `${origin}\n` } : { code: 2 };
+    if (joined === `remote add origin ${artifacts}`) origin = artifacts;
+    return {};
+  });
+
+  const result = await fixture.run(["git", "artifacts", "setup"], { exec });
+
+  assert.equal(result.code, 0, result.stderr);
+  const key = `credential.https://${ARTIFACTS_HOST}.helper`;
+  assert.ok(
+    exec.calls.some(
+      ({ args }) => args.join(" ") === `config --local --add ${key} ${helperCommand(fixture.root)}`,
+    ),
+  );
+  assert.match(result.stdout, new RegExp(`Added origin: ${artifacts.replaceAll(".", "\\.")}`, "u"));
+  assert.match(
+    result.stdout,
+    /origin pushes to: https:\/\/account-1\.artifacts\.cloudflare\.net\//u,
+  );
+
+  // Run again: origin is already Artifacts, so nothing is added.
+  const again = await fixture.run(["git", "artifacts", "setup"], { exec });
+  assert.equal(again.code, 0, again.stderr);
+  assert.equal(exec.calls.filter(({ args }) => args[1] === "add").length, 1);
+});
+
+test("git artifacts setup leaves an Artifacts-only site's other origin alone, and says so", async () => {
+  const fixture = await site({ ops: ARTIFACTS_ONLY_OPS });
+  const exec = recordingExec(({ args }) =>
+    args[0] === "remote" ? { stdout: "git@github.com:example/fixture.git\n" } : {},
+  );
+
+  const result = await fixture.run(["git", "artifacts", "setup"], { exec });
+
+  assert.equal(result.code, 1);
+  assert.match(
+    result.stderr,
+    /origin is git@github\.com:example\/fixture\.git, not the Artifacts repository/u,
+  );
+  assert.match(result.stderr, /run git remote set-url origin https:\/\/account-1\.artifacts/u);
+  assert.ok(
+    !exec.calls.some(
+      ({ args }) => args.includes("set-url") || (args.includes("add") && args[0] === "remote"),
+    ),
+  );
+});
+
 const credentialRequest = (host) => Readable.from([`protocol=https\nhost=${host}\n\n`]);
 
 test("git artifacts get answers the Artifacts host with a read-only, one-hour git token", async () => {
@@ -375,6 +477,23 @@ test("git artifacts get answers the Artifacts host with a read-only, one-hour gi
     );
     assert.equal(headers.Authorization, "Bearer artifacts-api");
     assert.deepEqual(JSON.parse(body), { repo: "fixture-repo", scope: "read", ttl: 3600 });
+    return { success: true, result: { plaintext: "git-token" } };
+  });
+
+  const result = await fixture.run(["git", "artifacts", "get"], {
+    env: { ARTIFACTS_API_TOKEN: "artifacts-api" },
+    fetch,
+    stdin: credentialRequest(ARTIFACTS_HOST),
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout, "username=x\npassword=git-token\n");
+});
+
+test("git artifacts get answers an Artifacts-only site with a token that can push", async () => {
+  const fixture = await site({ ops: ARTIFACTS_ONLY_OPS });
+  const fetch = recordingFetch(({ body }) => {
+    assert.deepEqual(JSON.parse(body), { repo: "fixture-repo", scope: "write", ttl: 3600 });
     return { success: true, result: { plaintext: "git-token" } };
   });
 

@@ -3,7 +3,8 @@
 // Durable Object, and serves:
 //
 //   GET  /health          health check
-//   POST /github/webhook  GitHub push webhook → mirror Workflow (mirror.ts)
+//   POST /github/webhook  GitHub push webhook → mirror Workflow (mirror.ts),
+//                         for a site on GitHub only
 import { CiSandbox } from "@cloudflare/ci/worker";
 
 import type { Bindings } from "../env";
@@ -16,7 +17,7 @@ export { Mirror } from "../mirror";
 async function githubWebhook(request: Request, env: Bindings): Promise<Response> {
   const body = await request.text();
   const signature = request.headers.get("X-Hub-Signature-256");
-  if (!(await verifySignature(env.GITHUB_WEBHOOK_SECRET, body, signature))) {
+  if (!(await verifySignature(env.GITHUB_WEBHOOK_SECRET ?? "", body, signature))) {
     return new Response("Invalid signature", { status: 401 });
   }
   const event = request.headers.get("X-GitHub-Event");
@@ -43,7 +44,8 @@ export default {
   async fetch(request: Request, env: Bindings): Promise<Response> {
     const { pathname } = new URL(request.url);
     if (pathname === "/health") return Response.json({ ok: true });
-    if (pathname === "/github/webhook" && request.method === "POST") {
+    // An Artifacts-only site has no GitHub repository to mirror.
+    if (pathname === "/github/webhook" && request.method === "POST" && env.GITHUB_REPOSITORY) {
       return githubWebhook(request, env);
     }
     return new Response("Not found", { status: 404 });

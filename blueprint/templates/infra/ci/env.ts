@@ -15,8 +15,9 @@ export type Bindings = CiBindings & {
   CLOUDFLARE_DEPLOY_ACCOUNT_ID: string;
   // GitHub (pnpm github:setup): a fine-grained token for GITHUB_REPOSITORY
   // (Contents: read, Commit statuses: read and write) and the webhook secret.
-  GITHUB_CI_TOKEN: string;
-  GITHUB_WEBHOOK_SECRET: string;
+  // An Artifacts-only site has an empty GITHUB_REPOSITORY and neither secret.
+  GITHUB_CI_TOKEN?: string;
+  GITHUB_WEBHOOK_SECRET?: string;
   GITHUB_REPOSITORY: string;
   ARTIFACTS_NAMESPACE: string;
   ARTIFACTS_REPO: string;

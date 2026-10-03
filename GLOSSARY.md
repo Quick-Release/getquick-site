@@ -183,6 +183,13 @@ development and staging copies. A site's staging hosts are always
 Frontend, where `<project>` is the client's name (the site's `project` in
 `gq.ops.json`).
 
+**Artifacts-only Site**:
+A Site whose `gq.ops.json` names no `github.repository`
+([ADR 0012](docs/adr/0012-keep-a-sites-code-in-artifacts-when-it-has-no-github-repository.md)):
+its code lives in its Cloudflare Artifacts repository, which is its `origin`,
+and pushes there start CI with no GitHub webhook, mirror or commit status.
+_Avoid_: GitHub-less site, mirror-less site
+
 **Offboarding**:
 Taking a leaving client's Site down without losing its content or code
 ([ADR 0011](docs/adr/0011-offboard-a-site-by-cutting-access-before-archiving.md)):

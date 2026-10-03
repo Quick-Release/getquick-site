@@ -5,6 +5,30 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ## Unreleased
 
+### Added
+
+- **Artifacts-only Sites** ([ADR 0012](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0012-keep-a-sites-code-in-artifacts-when-it-has-no-github-repository.md)).
+  A Site whose `gq.ops.json` names no `github.repository` keeps its code in
+  its Cloudflare Artifacts repository, and pushes there start CI without
+  GitHub.
+  - `gq git artifacts setup` adds the Artifacts repository as `origin` when
+    there is none. It exits 1 when `origin` points elsewhere, and says how to
+    fix it. Its credential helper mints one-hour write tokens for such a
+    Site, so `git push` and `pnpm push` work.
+  - `gq ci deploy` no longer requires `GITHUB_CI_TOKEN` and
+    `GITHUB_WEBHOOK_SECRET` for such a Site. `gq github setup` says there is
+    nothing to connect and exits 0.
+  - The generated CI Worker skips GitHub commit statuses, and answers
+    `/github/webhook` with a 404, when its `GITHUB_REPOSITORY` is empty.
+    `gq sync` now renders an absent `github.repository` as empty, not as the
+    `<github.repository>` placeholder.
+  - `gq doctor` checks that such a Site's `origin` pushes to Artifacts
+    through gq's credential helper. `gq new` prints the Artifacts-only step.
+  - `gq offboard` still needs `github.repository`.
+  - **Existing sites:** sites on GitHub are unchanged. `gq sync` updates the
+    CI Worker files and `scripts/ci.test.mjs` (its push-event test now uses a
+    fixed repository); redeploy with `pnpm ci:deploy`.
+
 ## 0.15.2 — 2026-10-03
 
 ### Fixed

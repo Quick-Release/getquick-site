@@ -174,8 +174,10 @@ async function checkPnpm({ manifest, exec, env, capture, report }) {
   report.ok(`pnpm ${running} (matches the packageManager pin)`);
 }
 
-// Clones push to GitHub only; the CI Worker mirrors GitHub into Artifacts. A
-// leftover Artifacts push URL (older setups) runs the pre-push hook twice.
+// Clones of a site on GitHub push to GitHub only; the CI Worker mirrors GitHub
+// into Artifacts. A leftover Artifacts push URL (older setups) runs the
+// pre-push hook twice. An Artifacts-only site (no github.repository) pushes
+// to Artifacts only, through gq's credential helper.
 async function checkArtifactsRemote({ config, capture, report }) {
   const remote = artifactsRemoteUrl({
     accountId: config.cloudflare?.accountId,
@@ -183,15 +185,23 @@ async function checkArtifactsRemote({ config, capture, report }) {
   });
   const pushUrls = (await capture("git", ["remote", "get-url", "--push", "--all", "origin"]))
     .stdout;
+  const helpers = (
+    await capture("git", ["config", "--local", "--get-regexp", "^credential\\..*\\.helper$"])
+  ).stdout;
+  if (!config.github?.repository) {
+    if (pushUrls !== remote || !helpers.includes(" git artifacts")) {
+      return report.warn(
+        "origin doesn't push to Cloudflare Artifacts through gq's credential helper (this site has no GitHub repository) — run: pnpm git:artifacts setup",
+      );
+    }
+    return report.ok("origin pushes to Cloudflare Artifacts (no GitHub repository)");
+  }
   if (pushUrls.split("\n").includes(remote)) {
     return report.warn(
       "origin still pushes to Cloudflare Artifacts too (GitHub mirrors it now) — run: pnpm git:artifacts setup",
     );
   }
   // Setups before gq git artifacts registered a site script as the helper.
-  const helpers = (
-    await capture("git", ["config", "--local", "--get-regexp", "^credential\\..*\\.helper$"])
-  ).stdout;
   if (helpers.includes("scripts/git-artifacts.mjs")) {
     return report.warn(
       "the Artifacts credential helper runs the removed scripts/git-artifacts.mjs — run: pnpm git:artifacts setup",

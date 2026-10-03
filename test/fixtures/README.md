@@ -39,6 +39,14 @@ The offboarding change (ADR 0011) likewise updated the Lombardi
 Site's Frontend deploy and CI release refuse and its Frontend config drops its
 domain and workers.dev and preview URLs.
 
+Artifacts-only Sites (ADR 0012) likewise updated the Lombardi CI Worker files
+(`infra/ci/cloudflare.ci.ts`, `infra/ci/env.ts`, `infra/ci/github.ts`,
+`infra/ci/mirror.ts`, `infra/ci/src/index.ts` and `infra/ci/wrangler.jsonc`)
+alongside their blueprint sources, so a CI Worker without a GitHub repository
+skips the webhook and commit statuses. `lombardi/scripts/ci.test.mjs` now tests
+the push-event filter with a fixed repository, `example/site`, instead of the
+site's, since a site may have none.
+
 ## Preservation
 
 - Preserve fixture paths, contents and version identifiers during organization,
