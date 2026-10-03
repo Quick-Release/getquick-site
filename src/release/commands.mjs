@@ -179,6 +179,7 @@ function createRelease({ config, root, env, exec, io }) {
   }
 
   async function push(kind) {
+    const branch = await releaseBranch(kind);
     const currentVersion = await readVersion();
     assertVersion(currentVersion);
 
@@ -192,7 +193,7 @@ function createRelease({ config, root, env, exec, io }) {
     await check(nextVersion);
     await runChecks();
     await commit(nextVersion);
-    await pushRelease(nextVersion);
+    await pushRelease(branch, nextVersion);
     io.out(`Pushed ${kind === "patch" ? "fix" : kind} release ${nextVersion}.`);
   }
 
@@ -254,11 +255,34 @@ function createRelease({ config, root, env, exec, io }) {
     await createTag(version);
   }
 
-  async function pushRelease(version) {
+  // The branch a release pushes: HEAD's, which must be the default branch
+  // (origin/HEAD, else main) so the release commit lands where CI deploys from.
+  async function releaseBranch(kind) {
     const branch = await git(["rev-parse", "--abbrev-ref", "HEAD"]);
     if (!branch || branch === "HEAD") {
       throw new Error("Cannot push release from a detached HEAD.");
     }
+    const defaultBranch = await readDefaultBranch();
+    if (branch !== defaultBranch) {
+      throw new Error(
+        `Release push must run on the default branch ${defaultBranch}, but HEAD is on ${branch}. ` +
+          `Merge the branch into ${defaultBranch}, then run: git switch ${defaultBranch} && gq release push ${kind}`,
+      );
+    }
+    return branch;
+  }
+
+  async function readDefaultBranch() {
+    const { code, stdout } = await exec(
+      "git",
+      ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+      { cwd: root, env },
+    );
+    const ref = code === 0 ? stdout.trim() : "";
+    return ref.startsWith("origin/") ? ref.slice("origin/".length) : "main";
+  }
+
+  async function pushRelease(branch, version) {
     await runCommand("git", ["push", "origin", branch]);
     await runCommand("git", ["push", "origin", `v${version}`]);
   }

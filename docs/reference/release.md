@@ -58,7 +58,12 @@ version.
 - `release prepare` also writes the version to the version file first.
 - `release tag` checks the version and a clean tree, then creates an
   annotated `v<version>` tag.
-- `release push` bumps the version (`fix` and `patch` bump the third number),
+- `release push` first refuses to run unless HEAD is on the default branch
+  (`origin/HEAD`, or `main` when the remote doesn't name one), naming the
+  branch it found, before it bumps, commits or tags anything: a release pushed
+  from a feature branch would leave its commit off the default branch while CI
+  deploys its tag. Merge the branch, switch to the default branch, and run it
+  there. It then bumps the version (`fix` and `patch` bump the third number),
   syncs it, adds the commits since the last `v*` tag to the changelog, runs
   the checks, commits the release paths, tags, and pushes the branch and the
   tag. Command output streams through as it runs. Nothing deploys from here:

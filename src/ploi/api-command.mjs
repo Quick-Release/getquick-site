@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { printValue } from "../cli/output.mjs";
+import { redactSecrets } from "../cli/redact.mjs";
 import { createPloiClient } from "./api-client.mjs";
 import { ploiCatalog } from "./api-endpoints.mjs";
 import { confirmMutation, withSpinner } from "../cli/ui.mjs";
@@ -107,12 +108,12 @@ export async function runPloiApiCommand({ context, parsed, fetch, io, interactiv
   if (parsed.dryRun) {
     printValue(
       io,
-      {
+      redactSecrets({
         operation: endpoint.id,
         method: request.method,
         url: request.url,
         body: request.body,
-      },
+      }),
       { json: true },
     );
     return;
@@ -124,11 +125,13 @@ export async function runPloiApiCommand({ context, parsed, fetch, io, interactiv
         `${endpoint.id} changes remote state. Re-run with --yes or inspect it with --dry-run.`,
       );
     }
-    const confirmed = await confirmMutation({
-      operation: endpoint.id,
-      method: request.method,
-      url: request.url,
-    });
+    const confirmed = await confirmMutation(
+      redactSecrets({
+        operation: endpoint.id,
+        method: request.method,
+        url: request.url,
+      }),
+    );
     if (!confirmed) return;
   }
 
@@ -144,7 +147,7 @@ export async function runPloiApiCommand({ context, parsed, fetch, io, interactiv
       }),
     interactive,
   );
-  printValue(io, result, { json: true });
+  printValue(io, redactSecrets(result), { json: true });
 }
 
 async function readBody(parsed, context) {

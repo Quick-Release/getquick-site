@@ -89,6 +89,14 @@ provider's JSON. In a terminal, `gq` with no arguments opens a command picker.
 ([inventory](../research/ploi-api.md)); operation IDs follow the docs' routes,
 such as `sites.log-site`. Every non-GET operation needs `--yes` (or a prompt in
 a terminal); `--dry-run` prints the resolved request without sending it.
+Everything `ploi api` prints (responses, `--dry-run` requests and the
+confirmation prompt) has its credentials replaced with `"[redacted]"`, keeping
+the JSON's shape: the strings and numbers under any field whose name has the
+word token, password, secret, key or private (`api_key`, `privateKey`), and the
+value of any URL query parameter whose name has the word token, key, secret or
+signature, such as the `token` in a site's `deploy_webhook_url`. Booleans and
+nulls stay. The other `ploi` and `cloudflare` commands print only selected,
+non-secret fields.
 The `cloudflare accounts|zones|zone|dns` commands are read-only.
 `gq skills update` works from any Git repository and is documented in the
 [agent skills guide](../guides/skills.md).

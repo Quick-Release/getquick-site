@@ -190,6 +190,7 @@ function gitAnswers(overrides = {}) {
     "log v1.2.3..HEAD --pretty=format:%h %s": "abc1234 feat: add a page\ndef5678 fix: a typo\n",
     "diff --cached --name-only": "VERSION\n",
     "rev-parse --abbrev-ref HEAD": "main\n",
+    "symbolic-ref --quiet --short refs/remotes/origin/HEAD": "origin/main\n",
     ...overrides,
   };
   return ({ command, args }) =>
@@ -218,6 +219,8 @@ test("release push bumps, syncs, logs, checks, commits, tags and pushes", async 
   assert.deepEqual(
     exec.calls.map(({ command, args }) => [command, ...args].join(" ")),
     [
+      "git rev-parse --abbrev-ref HEAD",
+      "git symbolic-ref --quiet --short refs/remotes/origin/HEAD",
       "git tag --list v1.3.0",
       "git tag --merged HEAD --list v[0-9]* --sort=-v:refname",
       "git log v1.2.3..HEAD --pretty=format:%h %s",
@@ -226,7 +229,6 @@ test("release push bumps, syncs, logs, checks, commits, tags and pushes", async 
       "git diff --cached --name-only",
       "git commit -m Release v1.3.0",
       "git tag -a v1.3.0 -m Release v1.3.0",
-      "git rev-parse --abbrev-ref HEAD",
       "git push origin main",
       "git push origin v1.3.0",
     ],
@@ -271,6 +273,62 @@ test("release push stops when a check fails, before committing", async () => {
   assert.equal(result.code, 1);
   assert.equal(result.stderr, "gq: pnpm run check exited with code 2.\n");
   assert.equal(exec.calls.at(-1).command, "pnpm");
+});
+
+test("release push refuses a branch other than the default before changing anything", async () => {
+  const site = await releaseSite("1.2.3");
+  const exec = releaseGit({ "rev-parse --abbrev-ref HEAD": "feature/spec-38\n" });
+  const result = await site.run(["release", "push", "minor"], { exec });
+  assert.equal(result.code, 1);
+  assert.equal(
+    result.stderr,
+    "gq: Release push must run on the default branch main, but HEAD is on feature/spec-38. " +
+      "Merge the branch into main, then run: git switch main && gq release push minor\n",
+  );
+  assert.equal(await read(site, "VERSION"), "1.2.3\n");
+  assert.equal(await read(site, "CHANGELOG.md"), siteFiles("1.2.3")["CHANGELOG.md"]);
+  assert.deepEqual(
+    exec.calls.map(({ command, args }) => [command, ...args].join(" ")),
+    [
+      "git rev-parse --abbrev-ref HEAD",
+      "git symbolic-ref --quiet --short refs/remotes/origin/HEAD",
+    ],
+  );
+});
+
+test("release push falls back to main when origin/HEAD is not set", async () => {
+  const site = await releaseSite("1.2.3");
+  const answer = gitAnswers({ "rev-parse --abbrev-ref HEAD": "trunk\n" });
+  const exec = recordingExec((call) =>
+    call.args?.[0] === "symbolic-ref" ? { code: 1, stdout: "" } : answer(call),
+  );
+  const result = await site.run(["release", "push", "minor"], { exec });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /default branch main, but HEAD is on trunk\./);
+  assert.equal(await read(site, "VERSION"), "1.2.3\n");
+});
+
+test("release push follows origin/HEAD when the default branch isn't main", async () => {
+  const site = await releaseSite("1.2.3");
+  const exec = releaseGit({
+    "rev-parse --abbrev-ref HEAD": "trunk\n",
+    "symbolic-ref --quiet --short refs/remotes/origin/HEAD": "origin/trunk\n",
+  });
+  const result = await site.run(["release", "push", "minor"], { exec });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(
+    exec.calls.slice(-2).map(({ args }) => args.join(" ")),
+    ["push origin trunk", "push origin v1.3.0"],
+  );
+});
+
+test("release push refuses a detached HEAD before changing anything", async () => {
+  const site = await releaseSite("1.2.3");
+  const exec = releaseGit({ "rev-parse --abbrev-ref HEAD": "HEAD\n" });
+  const result = await site.run(["release", "push", "minor"], { exec });
+  assert.equal(result.code, 1);
+  assert.equal(result.stderr, "gq: Cannot push release from a detached HEAD.\n");
+  assert.equal(await read(site, "VERSION"), "1.2.3\n");
 });
 
 test("release push rejects anything but a bump kind", async () => {

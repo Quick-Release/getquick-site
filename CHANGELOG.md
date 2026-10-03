@@ -5,6 +5,21 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ## Unreleased
 
+### Fixed
+
+- `gq ploi api` no longer prints credentials. Responses, `--dry-run` requests
+  and the confirmation prompt replace with `"[redacted]"` the value of any URL
+  query parameter named as a credential (token, key, secret, signature), such
+  as the `token` in a site's `deploy_webhook_url` that `sites.get-site`,
+  `sites.suspend-site` and `sites.resume-site` return, and the strings and
+  numbers under any field named as a secret (token, password, secret, key,
+  private), keeping the JSON's shape. The other `ploi` and `cloudflare`
+  commands already print only selected, non-secret fields.
+- `gq release push` refuses to run unless HEAD is on the default branch
+  (`origin/HEAD`, else `main`), before bumping, committing or tagging, and
+  names the branch it found. Run from a feature branch, it used to push that
+  branch with the release commit while CI deployed the tag.
+
 ## 0.14.0 — 2026-10-03
 
 ### Added

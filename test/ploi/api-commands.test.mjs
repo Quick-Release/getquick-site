@@ -140,3 +140,98 @@ test("--data-file resolves against the site root, not the invocation directory",
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout).body, { a: 1 });
 });
+
+test("ploi api redacts credentials in URL query parameters of a response", async () => {
+  const fixture = await createFixtureSite();
+  const fetch = recordingFetch(() => ({
+    data: {
+      id: 34,
+      domain: "example.com",
+      deploy_webhook_url:
+        "https://ploi.io/webhooks/servers/12/sites/34/deploy?token=wh-secret&branch=main",
+      notes: "signed https://cdn.example.com/a.zip?X-Amz-Signature=abc&api_key=k1#top",
+    },
+  }));
+
+  const result = await fixture.run(["ploi", "api", "sites.get-site"], { env: PLOI_TOKEN, fetch });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /wh-secret|abc|k1/);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    data: {
+      id: 34,
+      domain: "example.com",
+      deploy_webhook_url:
+        "https://ploi.io/webhooks/servers/12/sites/34/deploy?token=[redacted]&branch=main",
+      notes:
+        "signed https://cdn.example.com/a.zip?X-Amz-Signature=[redacted]&api_key=[redacted]#top",
+    },
+  });
+});
+
+test("ploi api redacts fields named as secrets and keeps the response's shape", async () => {
+  const fixture = await createFixtureSite();
+  const fetch = recordingFetch(() => ({
+    data: [
+      {
+        id: 7,
+        name: "shop",
+        password: "db-pass",
+        apiToken: 12345,
+        private_key: "-----BEGIN KEY-----",
+        webhook_secret: "",
+        is_private: true,
+        secrets: ["one", { value: "two" }],
+        password_reset_at: null,
+      },
+    ],
+  }));
+
+  const result = await fixture.run(["ploi", "api", "databases.list-databases"], {
+    env: PLOI_TOKEN,
+    fetch,
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    data: [
+      {
+        id: 7,
+        name: "shop",
+        password: "[redacted]",
+        apiToken: "[redacted]",
+        private_key: "[redacted]",
+        webhook_secret: "[redacted]",
+        is_private: true,
+        secrets: ["[redacted]", { value: "[redacted]" }],
+        password_reset_at: null,
+      },
+    ],
+  });
+});
+
+test("ploi api --dry-run redacts credentials in the request it prints", async () => {
+  const fixture = await createFixtureSite();
+
+  const result = await fixture.run(
+    [
+      "ploi",
+      "api",
+      "databases.create-database",
+      "--data",
+      '{"name":"shop","user":"shop","password":"db-pass"}',
+      "--query",
+      "token=q-secret",
+      "--dry-run",
+    ],
+    { env: PLOI_TOKEN },
+  );
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    operation: "databases.create-database",
+    method: "POST",
+    url: "https://ploi.io/api/servers/12/databases?token=[redacted]",
+    body: { name: "shop", user: "shop", password: "[redacted]" },
+  });
+});
