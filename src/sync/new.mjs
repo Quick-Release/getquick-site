@@ -35,7 +35,10 @@ const CONTENT_PLUGINS = [
 
 // The root scripts that provision a new site, in order. Each runs its gq
 // command through gq sigillo run, which injects the command's secrets.
-// cf:media and ploi:media host the CMS's uploads on R2, independently of it.
+// cf:media and ploi:media host the CMS's uploads on R2, independently of it;
+// frontend:secrets generates the Frontend's refresh token and event key
+// before ci:deploy gives them to CI releases and ploi:events gives the event
+// key and the retry/reconciliation crontab to the CMS.
 const PROVISIONING = [
   "ploi:provision",
   "cf:deploy-token",
@@ -44,7 +47,9 @@ const PROVISIONING = [
   "ploi:media",
   "cf:ci",
   "github:setup",
+  "frontend:secrets",
   "ci:deploy",
+  "ploi:events",
 ];
 
 export function isNewCommand(argv) {
@@ -107,18 +112,15 @@ function reportProvisioning(io, { project, directory }) {
   io.out("  # cloudflare, artifacts, ci, github), then regenerate the managed files:");
   io.out("  pnpm exec gq sync");
   for (const script of PROVISIONING) io.out(scriptLine(script));
-  io.out("  # Once the CMS is released and WordPress installed, prove its uploads are");
-  io.out("  # hosted independently of it (needs a CMS check user, see gq media check):");
-  io.out(scriptLine("media:check:upload"));
-  io.out("  # Add FRONTEND_REFRESH_TOKEN and PUBLICATION_EVENT_SECRET to Sigillo staging");
-  io.out("  # (and rerun pnpm ci:deploy, so CI releases bind them), deploy the Frontend, then");
-  io.out("  # store its published content: until then its pages are a 503 (gq frontend refresh):");
-  io.out(scriptLine("deploy:frontend"));
+  io.out("  # Release (pnpm push minor), install WordPress, then release again so the CMS");
+  io.out("  # deploy activates the plugins and theme and applies the event key. CI releases");
+  io.out("  # deploy the Frontend with its publication store. Then prepare the Site (until");
+  io.out("  # then its pages are a 503) and prove its uploads with a CMS check user:");
   io.out(scriptLine("frontend:refresh"));
-  io.out("  # Give the CMS the event secret and release it, so publishing a page or post");
-  io.out("  # refreshes the Frontend; check the Frontend accepts the Site's events:");
-  io.out(scriptLine("ploi:events"));
-  io.out(scriptLine("frontend:events:check"));
+  io.out(scriptLine("media:check:upload"));
+  io.out("  # Ready only when every part holds: CMS schema, Frontend store and secrets,");
+  io.out("  # the CMS's scheduler reconciling, and independent media (exit 1 until then):");
+  io.out(scriptLine("site:check"));
 }
 
 function scriptLine(script) {
