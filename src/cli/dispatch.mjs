@@ -58,6 +58,13 @@ import {
 import { isSyncCommand, runSyncCommand, SYNC_USAGE } from "../sync/commands.mjs";
 import { isNewCommand, NEW_USAGE, runNewCommand } from "../sync/new.mjs";
 import { isSkillsCommand, runSkillsCommand, SKILLS_USAGE } from "../skills/commands.mjs";
+import {
+  isOffboardCommand,
+  OFFBOARD_USAGE,
+  offboardCommandOptions,
+  runOffboardCommand,
+} from "../offboard/commands.mjs";
+import { refuseWhenOffboarded } from "../offboard/guard.mjs";
 import { VERSION } from "../version.mjs";
 
 const COMMAND_OPTIONS = new Map([
@@ -118,6 +125,8 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
     project: parsed.project,
     config: parsed.config,
   });
+  // An offboarded Site refuses whatever would expose it again (ADR 0011).
+  refuseWhenOffboarded(parsed, context.config);
   const [provider, resource, action = "list"] = parsed.command;
 
   if (isReleaseCommand(parsed.command)) {
@@ -182,6 +191,18 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
 
   if (isFrontendCommand(parsed.command)) {
     return runFrontendCommand({ context, parsed, env, fetch, exec, io, interactive });
+  }
+
+  if (isOffboardCommand(parsed.command)) {
+    return runOffboardCommand(parsed.command, {
+      context,
+      parsed,
+      env,
+      fetch,
+      exec,
+      io,
+      interactive,
+    });
   }
 
   if (isSiteCommand(parsed.command)) {
@@ -311,7 +332,14 @@ function parseArguments(argv) {
     "--uri",
   ]);
   const repeatedValueOptions = new Set(["--path", "--query", "--uri"]);
-  const booleanOptions = new Set(["--all", "--dry-run", "--yes", "--upload", "--local"]);
+  const booleanOptions = new Set([
+    "--all",
+    "--dry-run",
+    "--yes",
+    "--upload",
+    "--local",
+    "--restore",
+  ]);
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -360,7 +388,8 @@ function validateCommand(parsed) {
           ciCommandOptions(parsed.command) ??
           mediaCommandOptions(parsed.command) ??
           frontendCommandOptions(parsed.command) ??
-          siteCommandOptions(parsed.command),
+          siteCommandOptions(parsed.command) ??
+          offboardCommandOptions(parsed.command),
       };
   if (!allowedOptions) throw new Error(`Unknown command: ${command}. Run gq --help.`);
 
@@ -483,6 +512,9 @@ ${FRONTEND_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Site readiness:
 ${SITE_USAGE.map((usage) => `  ${usage}`).join("\n")}
+
+Offboarding (cut and restore a Site's access):
+${OFFBOARD_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Cloudflare CI:
 ${CI_USAGE.map((usage) => `  ${usage}`).join("\n")}

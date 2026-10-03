@@ -55,6 +55,7 @@ commands. For an older manifest or vendored `shop-devtools`, follow the
   [Local development](docs/guides/local-development.md) ·
   [Secrets](docs/guides/secrets.md) ·
   [Provisioning and deployment](docs/guides/provisioning.md) ·
+  [Offboarding](docs/guides/offboarding.md) ·
   [Agent skills](docs/guides/skills.md)
 - **Reference:** [Manifest and environment](docs/reference/manifest.md) ·
   [Commands](docs/reference/commands.md) ·

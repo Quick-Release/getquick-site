@@ -8,6 +8,7 @@
 //   node scripts/ci-release.mjs --ref <sha>
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import process from "node:process";
 
 const required = [
@@ -79,7 +80,19 @@ function run(label, command, args) {
   return result.status ?? 1;
 }
 
+// An offboarded Site (gq offboard) is never released: the release would
+// deploy its CMS and attach its Frontend's domain again.
+function refuseOffboarded() {
+  const ops = JSON.parse(readFileSync(new URL("../gq.ops.json", import.meta.url), "utf8"));
+  if (ops.offboarded) {
+    throw new Error(
+      `${ops.project} is offboarded (gq.ops.json offboarded): a release would expose it again. If the Site is coming back, run gq offboard --restore first.`,
+    );
+  }
+}
+
 function main(arguments_) {
+  refuseOffboarded();
   const index = arguments_.indexOf("--ref");
   const ref = index === -1 ? null : arguments_[index + 1];
   if (!ref) throw new Error("Usage: ci-release.mjs --ref <sha>");

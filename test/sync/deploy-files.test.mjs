@@ -241,3 +241,33 @@ test("scripts/ci.test.mjs run from a git hook leaves the hook's repository alone
   assert.deepEqual(state(), before);
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
+
+test("the generated Frontend deploy and CI release step refuse an offboarded Site", async () => {
+  const fixture = await createFixtureSite({
+    ops: { ...ACME, offboarded: { at: "2026-10-01T09:00:00.000Z", phase: "cut" } },
+  });
+  assert.equal((await fixture.run(["sync"])).code, 0);
+  const environment = { ...process.env };
+  delete environment.NODE_TEST_CONTEXT;
+  const node = (script, args = []) =>
+    spawnSync(process.execPath, [script, ...args], {
+      cwd: fixture.root,
+      encoding: "utf8",
+      env: { ...environment, PATH: "" },
+    });
+
+  const deploy = node("infra/scripts/deploy-frontend.mjs");
+  assert.equal(deploy.status, 1);
+  assert.equal(
+    deploy.stderr,
+    "acme-shop is offboarded (gq.ops.json offboarded): deploying the Frontend would expose it again. If the Site is coming back, run gq offboard --restore first.\n",
+  );
+
+  const release = node("scripts/ci-release.mjs", ["--ref", "0123abcd"]);
+  assert.equal(release.status, 1);
+  assert.equal(
+    release.stderr,
+    "acme-shop is offboarded (gq.ops.json offboarded): a release would expose it again. If the Site is coming back, run gq offboard --restore first.\n",
+  );
+  assert.equal(release.stdout, "", "it refuses before anything else");
+});

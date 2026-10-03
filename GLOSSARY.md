@@ -182,6 +182,21 @@ development and staging copies. A site's staging hosts are always
 Frontend, where `<project>` is the client's name (the site's `project` in
 `gq.ops.json`).
 
+**Offboarding**:
+Taking a leaving client's Site down without losing its content or code
+([ADR 0011](docs/adr/0011-offboard-a-site-by-cutting-access-before-archiving.md)):
+first cutting every public URL and every credential gq made for it
+(`gq offboard`, reversible with `--restore`), then archiving its content to one
+place and deleting its live infrastructure (the archive, irreversible).
+_Avoid_: withdrawal (an editor unpublishing content), teardown, decommission
+
+**Offboarded Site**:
+A Site whose gq.ops.json records `offboarded`: its access is cut (phase
+`cut`) or it is archived (phase `archived`). Every command that would expose
+it again refuses, and so do its deploy scripts and CI release step; read-only
+commands keep working.
+_Avoid_: withdrawn site, disabled site
+
 **Independent media**:
 A site's WordPress uploads stored on R2 and served from the media bucket's
 own public domain, not from the CMS, so they stay available while the CMS is

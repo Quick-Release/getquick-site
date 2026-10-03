@@ -9,6 +9,15 @@ const alchemy = process.platform === "win32" ? "alchemy.cmd" : "alchemy";
 // fall back to the local DDEV endpoint, so it is always set here.
 const ops = JSON.parse(readFileSync(new URL("../../gq.ops.json", import.meta.url), "utf8"));
 
+// An offboarded Site (gq offboard) stays cut: a deploy would attach its
+// domain again.
+if (ops.offboarded) {
+  console.error(
+    `${ops.project} is offboarded (gq.ops.json offboarded): deploying the Frontend would expose it again. If the Site is coming back, run gq offboard --restore first.`,
+  );
+  process.exit(1);
+}
+
 // A Frontend with the publication store (apps/frontend/migrations) is
 // refreshed with FRONTEND_REFRESH_TOKEN and receives the CMS's publication
 // events signed with PUBLICATION_EVENT_SECRET, both from Sigillo staging and

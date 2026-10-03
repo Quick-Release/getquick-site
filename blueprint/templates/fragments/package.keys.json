@@ -51,6 +51,8 @@
     "cf:ci": "gq sigillo run operations -- gq cloudflare ci",
     "cf:deploy-token": "gq sigillo run operations -- gq cloudflare deploy-token",
     "github:setup": "gq sigillo run staging -- gq github setup",
+    "offboard": "gq sigillo run operations -- gq offboard",
+    "offboard:restore": "gq sigillo run operations -- gq offboard --restore",
     "ploi:log": "gq sigillo run staging -- gq ploi api sites.log-site --per-page 5",
     "sigillo:login": "gq sigillo login",
     "sigillo:setup": "gq sigillo setup local",

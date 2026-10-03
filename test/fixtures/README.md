@@ -33,6 +33,12 @@ and `scripts/ci-release.mjs`) alongside their blueprint sources, so CI releases
 and `deploy:frontend` bind `FRONTEND_REFRESH_TOKEN` and
 `PUBLICATION_EVENT_SECRET` for publication events.
 
+The offboarding change (ADR 0011) likewise updated the Lombardi
+`infra/frontend.run.ts`, `infra/scripts/deploy-frontend.mjs` and
+`scripts/ci-release.mjs` alongside their blueprint sources, so an offboarded
+Site's Frontend deploy and CI release refuse and its Frontend config drops its
+domain and workers.dev and preview URLs.
+
 ## Preservation
 
 - Preserve fixture paths, contents and version identifiers during organization,

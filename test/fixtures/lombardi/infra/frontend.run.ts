@@ -9,8 +9,12 @@ import { fileURLToPath } from "node:url";
 // Hostnames live in gq.ops.json (domains), shared with the Ploi and deploy scripts.
 const ops = JSON.parse(readFileSync(new URL("../gq.ops.json", import.meta.url), "utf8")) as {
   domains: { frontend: string };
+  offboarded?: { phase: string };
 };
 const productionHostname = ops.domains.frontend;
+// An offboarded Site (gq offboard) keeps no public URL: no custom domain, no
+// workers.dev and no preview URLs. Its deploy scripts refuse to run anyway.
+const offboarded = Boolean(ops.offboarded);
 
 // A Frontend that ships the publication store's migrations serves published
 // content from it (durable delivery): new content sites do. A Frontend
@@ -49,14 +53,18 @@ export const Website = Cloudflare.Website.Astro(
     return {
       name: production ? "lombardi-fe" : `lombardi-fe-${stage}`,
       rootDir: "../apps/frontend",
-      ...(production ? { domain: productionHostname } : {}),
+      ...(production && !offboarded ? { domain: productionHostname } : {}),
       astro: {
         site: production
           ? `https://${productionHostname}`
           : `https://lombardi-fe-${stage}.workers.dev`,
         output: "server",
       },
-      workersDev: production ? { enabled: false, previewsEnabled: true } : true,
+      workersDev: offboarded
+        ? { enabled: false, previewsEnabled: false }
+        : production
+          ? { enabled: false, previewsEnabled: true }
+          : true,
       sessionKVBindingName: false,
       env: durableDelivery
         ? {

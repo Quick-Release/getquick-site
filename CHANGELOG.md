@@ -5,6 +5,36 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ## Unreleased
 
+### Added
+
+- `gq offboard` cuts a leaving client's Site off, deleting nothing
+  ([ADR 0011](docs/adr/0011-offboard-a-site-by-cutting-access-before-archiving.md),
+  [Offboarding a Site](docs/guides/offboarding.md)): a final database backup,
+  then the CMS's retry crontab and the Ploi site (suspended), the Frontend
+  Worker's custom domain, workers.dev and preview URLs, the media bucket's
+  domain, the GitHub push webhook and the CI Worker's workers.dev, and last
+  every `GETQUICK <PROJECT> …` Cloudflare token (disabled). It prints the plan
+  (`✓` done, `-` to cut, `!` by hand), needs `--yes` outside a terminal,
+  supports `--dry-run`, and only cuts what is still exposed, so a failed run
+  is finished by running it again. It records `offboarded` in `gq.ops.json`
+  (new in the schema); commit it.
+- `gq offboard --restore` reverses the cut: it re-enables the tokens (never
+  creating them again), CI, the webhook, the media domain, the Frontend's
+  domain and preview URLs as `infra/frontend.run.ts` configures them, the Ploi
+  site and its crontab, and removes `offboarded`.
+- While `offboarded` is set, every command that would expose the Site again
+  refuses and names `gq offboard --restore`: `cloudflare media`,
+  `deploy-token`, `ci`, `releases`, `github setup`, `ci deploy`,
+  `ploi provision`, `events`, `media`, `release`, `ploi api` operations that
+  write, `release push`, `release tag`, `frontend refresh` and `secrets`. So
+  do the generated `infra/scripts/deploy-frontend.mjs` and
+  `scripts/ci-release.mjs`, and `infra/frontend.run.ts` drops the domain and
+  every workers.dev and preview URL. Checks, `gq db backup` and `ploi api`
+  GETs keep working.
+- Managed `package.json` scripts `offboard` and `offboard:restore`, through
+  `gq sigillo run operations`. **Existing sites:** `gq sync` adds them and
+  updates the three deploy files.
+
 ## 0.14.1 — 2026-10-03
 
 ### Fixed

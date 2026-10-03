@@ -11,6 +11,9 @@ import { z } from "zod";
 export const MANIFEST_FILENAME = "gq.ops.json";
 export const SCHEMA_VERSION = 1;
 export const VARIANTS = ["content", "commerce"];
+// An offboarded Site's phases (ADR 0011): its access cut (`gq offboard`,
+// reversible), then its content archived and its infrastructure deleted.
+export const OFFBOARDING_PHASES = ["cut", "archived"];
 // What a check can require to run locally (see workspace/verify.mjs).
 export const CHECK_REQUIREMENTS = ["php", "ddev"];
 
@@ -124,6 +127,12 @@ export const manifestSchema = z
       .strictObject({ requiredFiles: z.record(path, z.array(path)).optional() })
       .optional()
       .describe("Added to the files the variant requires in each app."),
+    offboarded: z
+      .strictObject({ at: z.iso.datetime(), phase: z.enum(OFFBOARDING_PHASES) })
+      .optional()
+      .describe(
+        "Written by gq offboard: the Site is offboarded, and gq refuses whatever would expose it again.",
+      ),
   })
   .meta({ title: "gq.ops.json", description: "A GETQUICK site's manifest (schema v1)." });
 

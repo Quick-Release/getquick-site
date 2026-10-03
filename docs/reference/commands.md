@@ -64,6 +64,9 @@ gq frontend events check [--url <frontend origin>] [--json]
 gq site check [--url <frontend origin>] [--json]
 gq site check --local [--json]
 
+gq offboard [--dry-run] [--yes]
+gq offboard --restore [--dry-run] [--yes]
+
 gq ci deploy
 gq ci runs
 gq github setup [--dry-run]
@@ -98,9 +101,18 @@ signature, such as the `token` in a site's `deploy_webhook_url`. Booleans and
 nulls stay. The other `ploi` and `cloudflare` commands print only selected,
 non-secret fields.
 The `cloudflare accounts|zones|zone|dns` commands are read-only.
+
+`gq offboard` cuts a Site's public URLs and credentials, deleting nothing, and
+records `offboarded` in `gq.ops.json`; `--restore` reverses it. Both print the
+plan (`✓` done, `-` to cut or `+` to restore, `!` by hand) and need `--yes`
+outside a terminal. While `offboarded` is set, every command that would expose
+the Site again refuses: `cloudflare media|deploy-token|ci|releases`,
+`github setup`, `ci deploy`, `ploi provision|events|media|release`, a
+`ploi api` operation that writes (unless `--dry-run`), `release push|tag` and
+`frontend refresh|secrets`. See [Offboarding a Site](../guides/offboarding.md).
 `gq skills update` works from any Git repository and is documented in the
 [agent skills guide](../guides/skills.md).
 
 See [release and version behavior](release.md), [local development](../guides/local-development.md),
-[provisioning](../guides/provisioning.md), and [secret injection](../guides/secrets.md)
+[provisioning](../guides/provisioning.md), [offboarding](../guides/offboarding.md), and [secret injection](../guides/secrets.md)
 for detailed command behavior.
