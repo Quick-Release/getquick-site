@@ -101,7 +101,10 @@ no network, credentials, or provider accounts.
 The Frontend skeleton's own tests run in a generated site:
 `scripts/smoke/frontend-check.sh` generates a disposable content site, installs
 its Frontend dependencies (the networked step) and runs its tests,
-`astro check`, lint and format check. `scripts/smoke/frontend-runtime.sh` is
+`astro check`, lint and format check. These generated sites install
+`@getquick/site` from this checkout, packed into a tarball
+(`scripts/smoke/this-checkout.sh`), not from npm, so a release push is tested
+before npm serves the release. `scripts/smoke/frontend-runtime.sh` is
 the durable published content runtime proof (see
 [Durable published content](guides/provisioning.md#durable-published-content));
 `scripts/smoke/cms-events.sh` adds a real WordPress for publication and
