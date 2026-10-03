@@ -45,6 +45,12 @@ import {
   runFrontendCommand,
 } from "../frontend/commands.mjs";
 import {
+  isSiteCommand,
+  runSiteCommand,
+  siteCommandOptions,
+  SITE_USAGE,
+} from "../site/commands.mjs";
+import {
   isWorkspaceCommand,
   runWorkspaceCommand,
   WORKSPACE_USAGE,
@@ -176,6 +182,10 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
 
   if (isFrontendCommand(parsed.command)) {
     return runFrontendCommand({ context, parsed, env, fetch, exec, io, interactive });
+  }
+
+  if (isSiteCommand(parsed.command)) {
+    return runSiteCommand({ argv: effectiveArguments, context, parsed, env, fetch, exec, io });
   }
 
   if (provider === "context" && resource === "show") {
@@ -349,7 +359,8 @@ function validateCommand(parsed) {
           cloudflareWorkflowOptions(parsed.command) ??
           ciCommandOptions(parsed.command) ??
           mediaCommandOptions(parsed.command) ??
-          frontendCommandOptions(parsed.command),
+          frontendCommandOptions(parsed.command) ??
+          siteCommandOptions(parsed.command),
       };
   if (!allowedOptions) throw new Error(`Unknown command: ${command}. Run gq --help.`);
 
@@ -469,6 +480,9 @@ ${MEDIA_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Frontend (published content):
 ${FRONTEND_USAGE.map((usage) => `  ${usage}`).join("\n")}
+
+Site readiness:
+${SITE_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Cloudflare CI:
 ${CI_USAGE.map((usage) => `  ${usage}`).join("\n")}
