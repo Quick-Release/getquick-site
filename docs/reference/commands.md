@@ -105,7 +105,8 @@ The `cloudflare accounts|zones|zone|dns` commands are read-only.
 
 `gq offboard` records `offboarded` in `gq.ops.json`, then cuts a Site's public
 URLs and credentials, deleting nothing; it needs the managed deploy files as
-`gq sync` writes them. `--restore` reverses what the cut recorded. Both print the
+`gq sync` writes them, the Ploi site running as `ploi.systemUser`, its `.env`
+naming `ploi.database`, and gh 2.48 or later. `--restore` reverses what the cut recorded. Both print the
 plan (`✓` done, `-` to cut or `+` to restore, `!` by hand) and need `--yes`
 outside a terminal. While `offboarded` is set, every command that would expose
 the Site again refuses: `cloudflare media|deploy-token|ci|releases`,
@@ -116,7 +117,7 @@ is recorded) archives the Site's content to
 `r2://offboarded-clients/<project>/<UTC date>/`, reads it all back, and only
 then deletes its Ploi site, Workers, D1 stores, buckets, its own backups,
 Artifacts repository, its own DNS records and its tokens (only what is named
-as the project's own), archives its GitHub repository, and
+exactly as gq names the project's own), archives its GitHub repository, and
 records `offboarded.phase: "archived"`; in a terminal it asks for the
 project's name, elsewhere `--yes`. See
 [Offboarding a Site](../guides/offboarding.md).

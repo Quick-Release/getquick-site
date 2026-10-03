@@ -30,9 +30,13 @@ async function accountRequest(
   return data;
 }
 
-// Every page of a listing (`result_info`), 50 at a time, as one array.
+// Every page of a listing (`result_info`), 50 at a time, as one array. A
+// listing without page totals ends at a page shorter than the page size it
+// reports, or, reporting none (it may cap pages below 50), at an empty one;
+// one that ignores paging hands out the same page again, which ends it too.
 async function listAllPages(options, path, requestOptions) {
   const items = [];
+  let previous;
   for (let page = 1; page <= 100; page += 1) {
     const separator = path.includes("?") ? "&" : "?";
     const data = await accountRequest(
@@ -43,12 +47,18 @@ async function listAllPages(options, path, requestOptions) {
       requestOptions,
     );
     const result = data?.result ?? [];
+    const signature = JSON.stringify(result);
+    if (page > 1 && result.length > 0 && signature === previous) return items;
+    previous = signature;
     items.push(...result);
     const info = data?.result_info ?? {};
+    const perPage = Number(info.per_page) || 0;
     const pages =
       Number(info.total_pages) ||
-      Math.ceil((Number(info.total_count) || 0) / (Number(info.per_page) || 50));
-    if (pages ? page >= pages : result.length < 50) return items;
+      (info.total_count !== undefined && perPage
+        ? Math.ceil(Number(info.total_count) / perPage)
+        : 0);
+    if (pages ? page >= pages : result.length === 0 || result.length < perPage) return items;
   }
   throw new Error(`Cloudflare GET ${path} has more than 100 pages.`);
 }

@@ -14,13 +14,33 @@ It has two phases:
    one archive, which is verified, and only then is the live infrastructure
    deleted. It needs the cut recorded first.
 
+## Before you start
+
+- **Work from the deploy branch, up to date.** Check out the branch CI
+  deploys (usually `main`), pull it, and make sure the working tree is clean.
+  The `offboarded` record the cut writes is what stops CI and your teammates'
+  checkouts from deploying the Site again, but only once it is committed and
+  pushed to that branch: written on a feature branch or a stale checkout, it
+  guards nothing but your own copy.
+- **gh 2.48 or later**, logged in with admin on the repository (`gh --version`;
+  the webhooks are listed with `gh api --paginate --slurp`). An older gh fails
+  while the plan is read, before anything changes.
+- Ask the team not to push while the cut runs; the cut silences CI first, but
+  a push already under way can still deploy.
+
 ## Cut a Site's access
 
 ```sh
 pnpm offboard --dry-run       # the plan, nothing changed
 pnpm offboard                 # the plan, then a prompt
-git add gq.ops.json && git commit -m "chore: offboard the Site"
+git add gq.ops.json && git commit -m "chore: offboard the Site" && git push
+pnpm offboard --dry-run       # every line ✓ (or !): nothing came back
 ```
+
+Commit and push `gq.ops.json` straight away, then run `--dry-run` again and
+expect every line to be `✓` (or `!`, by hand). A `-` line means something was
+exposed again while the cut ran (a CI release already under way, say): run
+`pnpm offboard` again to cut it.
 
 `pnpm offboard` runs `gq offboard` through `gq sigillo run operations`, for
 the account's token-manager token. Ploi's token and the releases bucket's R2
@@ -28,7 +48,7 @@ key are read from Sigillo staging, and the GitHub webhook goes through your
 `gh` login (it needs admin on the repository). Outside a terminal, pass
 `--yes`.
 
-Two checks come first, and stop the run before anything changes:
+These checks come first, and stop the run before anything changes:
 
 - **The deploy files are current.** `infra/frontend.run.ts`,
   `infra/scripts/deploy-frontend.mjs` and `scripts/ci-release.mjs` must be as
@@ -36,26 +56,33 @@ Two checks come first, and stop the run before anything changes:
   deploy from exposing the Site again. Run `gq sync` (`gq sync --check` shows
   what it changes) and commit, then offboard.
 - **`ploi.siteId` is the Site's CMS.** The Ploi site it names must be
-  `domains.admin`; a stale or copied ID would suspend another client's site.
+  `domains.admin`, running as `ploi.systemUser`; a stale or copied ID would
+  suspend another client's site.
+- **`ploi.database` is the Site's database.** The site's `.env` (read, never
+  written) must have `DB_NAME` equal to `ploi.database`: Ploi doesn't link
+  databases to sites, so a copied name would back up, archive and delete
+  another client's database.
 
 The plan marks each item `✓` (already done), `-` (to cut) or `!` (by hand),
 and is applied in this order:
 
-| Part     | What happens                                                                                                                                                                          |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Record   | `offboarded: { "at": …, "phase": "cut" }` is written to `gq.ops.json` first, so the guards hold even if a later step fails. Commit it once the cut is done.                           |
-| Backup   | `gq db backup` of the live database into the backups bucket, before anything is cut.                                                                                                  |
-| CMS      | The retry crontab is deleted and the Ploi site suspended ("offboarded"); its files, `.env` and database stay.                                                                         |
-| Frontend | The Worker's custom domains are detached and its workers.dev and preview URLs switched off, and its other stages' (`<project>-fe-<stage>`) too. The Workers and their D1 stores stay. |
-| Media    | The media bucket's custom domain is disabled. The bucket and its uploads stay.                                                                                                        |
-| CI       | The GitHub push webhook is deactivated and the CI Worker's workers.dev switched off.                                                                                                  |
-| Tokens   | Every `GETQUICK <PROJECT> …` Cloudflare token is disabled, last, since the steps before need them. The token-manager token is never touched.                                          |
+| Part     | What happens                                                                                                                                                                                                                                                   |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Record   | `offboarded: { "at": …, "phase": "cut" }` is written to `gq.ops.json` first, so the guards hold even if a later step fails. Commit and push it once the cut is done.                                                                                           |
+| Backup   | `gq db backup` of the live database into the backups bucket, before anything is cut.                                                                                                                                                                           |
+| CI       | The GitHub push webhook is deactivated and the CI Worker's workers.dev switched off, first, so a push from then on can't deploy the Frontend again. A CI Worker not named `<project>-ci` may serve other repositories: it is listed for you (`!`) and left on. |
+| CMS      | The retry crontab is deleted and the Ploi site suspended ("offboarded"); its files, `.env` and database stay.                                                                                                                                                  |
+| Frontend | The Worker's custom domains are detached and its workers.dev and preview URLs switched off, and its other stages' too. The Workers and their D1 stores stay.                                                                                                   |
+| Media    | The media bucket's custom domain is disabled. The bucket and its uploads stay. A media bucket not named `<project>-media` may serve other clients: it is listed for you (`!`) and its domain left on.                                                          |
+| Tokens   | Every `GETQUICK <PROJECT> …` Cloudflare token is disabled, last, since the steps before need them. The token-manager token is never touched.                                                                                                                   |
 
-As it goes, the cut notes in `offboarded.cut` each thing it changes (the
+As it goes, the cut notes in `offboarded.cut` each thing it has changed (the
 crontab, the suspension, each detached domain, each Worker's workers.dev
 setting as it was, the media domain, the webhook and each token it disabled):
-restore brings back those and nothing else. Commit `gq.ops.json`: it is what
-keeps gq, the deploy scripts and CI from exposing the Site again.
+restore brings back those and nothing else. A change that failed isn't
+noted, so restore never undoes something the cut didn't do. Commit and push
+`gq.ops.json`: it is what keeps gq, the deploy scripts and CI from exposing
+the Site again.
 
 Two things are yours to do by hand, and the plan says so:
 
@@ -70,9 +97,12 @@ nothing.
 Running `pnpm offboard` again cuts only what is still exposed, so a run that
 failed halfway is finished by running it again. A failure before the tokens
 step leaves every token active, and the record already guards the Site.
-A Worker named like a Frontend stage but with more hyphens
-(`<project>-fe-shop-fe`) may be another project's: the plan lists it for you
-to check, and leaves it alone. Once the Ploi site is suspended the backup
+A Frontend stage is a Worker named `<project>-fe-<stage>` whose
+`PUBLICATION_DB` binding is the D1 store `<project>-fe-publications-<stage>`:
+that binding is what ties it to the project. Any other Worker named like one
+(`<project>-fe-fe`, project `<project>-fe`'s production Worker; a
+hand-deployed `<project>-fe-redirects`; `<project>-fe-shop-fe`) may not be
+the Site's: the plan lists it for you to check, and leaves it alone. Once the Ploi site is suspended the backup
 counts as done: a suspended CMS can't change its database, so the backup
 taken before it is the final one.
 
@@ -103,12 +133,13 @@ git add gq.ops.json && git commit -m "chore: restore the Site"
 ```
 
 `gq offboard --restore` reverses what the cut recorded in `offboarded.cut`,
-tokens first: it re-enables the tokens the cut disabled (never creating new
-ones; a token that was disabled before stays so, and the plan says it),
-puts each Worker's workers.dev and preview URLs back as they were,
-reactivates the webhook, re-enables the media domain, re-attaches every
-domain the cut detached, resumes the Ploi site, re-adds the retry crontab if
-the cut deleted one, and removes `offboarded`. Add back by hand a DNS record
+in the reverse order, tokens first: it re-enables the tokens the cut disabled
+(never creating new ones; a token that was disabled before stays so, and the
+plan says it), re-enables the media domain, re-attaches every domain the cut
+detached and puts each Frontend Worker's workers.dev and preview URLs back as
+they were, resumes the Ploi site, re-adds the retry crontab if the cut
+deleted one, puts the CI Worker's workers.dev back and reactivates the
+webhook, and removes `offboarded`. Add back by hand a DNS record
 you removed. Then release and deploy as usual, and run `pnpm site:check`.
 
 Restore refuses once the Site's archive is recorded.
@@ -135,14 +166,14 @@ Everything goes to the private R2 bucket `offboarded-clients`, shared by every
 former client (created if missing, with no public domain), under
 `<project>/<UTC date>/`:
 
-| File               | What it is                                                                                                                      |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `uploads.zip`      | Every object of the media bucket, keys kept as paths. Streamed from the bucket to the archive, never held in memory or on disk. |
-| `database.sql.gz`  | A fresh dump of the CMS database (still there, on the suspended site).                                                          |
-| `publications.sql` | The Frontend's D1 publication store, exported (and `publications-<stage>.sql` for each other stage's).                          |
-| `backups/`         | Copies of the Site's own database backups (`<backups.prefix><database>/`), the cut's final backup among them.                   |
-| `gq.ops.json`      | The Site's manifest as it was.                                                                                                  |
-| `manifest.json`    | Each file's size and sha256, and where everything came from: buckets, Ploi IDs, Workers, the D1 store, the repository's HEAD.   |
+| File               | What it is                                                                                                                                                                                                                                               |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `uploads.zip`      | Every object of the media bucket, keys kept as paths. Streamed from the bucket to the archive, never held in memory or on disk. Only a media bucket named `<project>-media` is archived: another may hold other clients' uploads, and is listed for you. |
+| `database.sql.gz`  | A fresh dump of the CMS database (still there, on the suspended site).                                                                                                                                                                                   |
+| `publications.sql` | The Frontend's D1 publication store, exported (and `publications-<stage>.sql` for each other stage's). A Site without one (no durable delivery) can't be archived yet.                                                                                   |
+| `backups/`         | Copies of the Site's own database backups (`<backups.prefix><database>/`), the cut's final backup among them. When the backups bucket is deleted whole (it is the project's releases bucket, as is usual), everything under `backups.prefix` instead.    |
+| `gq.ops.json`      | The Site's manifest as it was.                                                                                                                                                                                                                           |
+| `manifest.json`    | Each file's size and sha256, and where everything came from: buckets, Ploi IDs, Workers, the D1 store, the repository's HEAD.                                                                                                                            |
 
 Each media object and backup must hold as many bytes as its bucket lists.
 Then every file is read back and checked against `manifest.json`, and
@@ -153,11 +184,13 @@ and `manifest.json`'s sha256).
 
 A new archive refuses to start, before writing anything, when:
 
+- the Ploi site isn't `domains.admin` running as `ploi.systemUser`, or its
+  `.env` names another database than `ploi.database` (as for the cut);
 - something under `<project>/<UTC date>/` is there already: gq never archives
   over it. Move unverified files aside; if they are a verified archive whose
   record was lost, put `offboarded.archive` back in `gq.ops.json` instead;
 - a source is gone (the Ploi site or database, the Frontend Worker, its D1
-  store, the media bucket) while no archive is recorded: a new archive would
+  store, the project's media bucket) while no archive is recorded: a new archive would
   miss it, so the record of the one that was made must come back;
 - the final backup the cut took isn't in the backups bucket.
 
@@ -183,11 +216,25 @@ Site's own hosts, a subdomain of them included. Other record types at those
 hosts (MX, TXT, CAA: perhaps the client's mail or verification) and every
 record at the zone's apex are listed for you instead.
 
-Some of what `gq.ops.json` names may be shared, so the archive deletes only
-what is named as the project's own: a bucket, Worker, Workflow, container
-application, D1 store or Artifacts repository is deleted only when its name is
-the project's or starts with `<project>-`. Anything else is listed for you
-(`!`) and left alone.
+Some of what `gq.ops.json` names may be shared, or copied from another Site,
+so the archive deletes only what is named exactly as gq names the project's
+own:
+
+| Resource              | gq's name                                                       |
+| --------------------- | --------------------------------------------------------------- |
+| Buckets               | `<project>-media`, `<project>-releases`, `<project>-ci-backups` |
+| Workers               | `<project>-fe`, `<project>-ci`                                  |
+| Workflows             | `<project>-ci`, `<project>-mirror`                              |
+| Container application | `<project>-ci-cisandbox`                                        |
+| D1 store              | `<project>-fe-publications`                                     |
+| Artifacts repository  | `<project>`                                                     |
+
+Other stages' Workers and D1 stores go only when the `PUBLICATION_DB` binding
+ties them together (see the cut). Anything else, a sibling project's
+`<project>-shop-media` included, is listed for you (`!`) and left alone; so
+are the custom domain and DNS records of a media bucket that isn't the
+project's own. A resource is reported deleted (`✓`) only once an exact lookup
+finds it gone, never because a listing left it out.
 
 The run ends by printing where everything is: the archive's prefix and
 `manifest.json`'s sha256, the archived repository, and the Sigillo project,
@@ -199,6 +246,19 @@ Run it again. A recorded archive is never written again (its `manifest.json`
 must still match the recorded sha256, or nothing more is deleted), and only
 what is still there is deleted. Until the run finishes, `gq offboard` and
 every guarded command point you back at `pnpm offboard:archive`, and
-`--restore` refuses. A run that failed before verification leaves its files
-under that day's prefix, which the next run won't write over: move them aside
-first.
+`--restore` refuses.
+
+A run that failed before its archive was verified (a source read short, or
+the verification itself) has deleted nothing, but leaves its files under
+`r2://offboarded-clients/<project>/<UTC date>/`, and the next run that day
+won't write over them. To clear them:
+
+1. List them: in the Cloudflare dashboard (R2 → `offboarded-clients`), or
+   with any S3 client and a key for that bucket.
+2. Move every object under `<project>/<UTC date>/` to another prefix, such as
+   `<project>/<UTC date>-unverified/`, or delete them: the Site's content is
+   all still in place, so the next run archives it anew.
+3. Run `pnpm offboard:archive` again.
+
+The next UTC day's prefix starts empty, so a run then needs nothing moved
+(the leftovers stay, unverified, until you delete them).

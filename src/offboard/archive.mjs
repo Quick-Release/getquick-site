@@ -19,14 +19,8 @@ import { readFile } from "node:fs/promises";
 import { webhookUrl } from "../ci/github-setup.mjs";
 import { updateManifest } from "../manifest/manifest.mjs";
 import { VERSION } from "../version.mjs";
-import {
-  frontendStages,
-  frontendWorker,
-  isOwn as isOwnName,
-  publicationsStages,
-  publicationsStore,
-} from "./names.mjs";
-import { assertOwnPloiSite } from "./steps.mjs";
+import { frontendWorker, isOwn as isOwnName, ownName, publicationsStore } from "./names.mjs";
+import { assertOwnDatabase, assertOwnPloiSite, frontendStages, unclearStage } from "./steps.mjs";
 import { ZIP_TAIL_BYTES, zipEntryCount, zipStream } from "./zip.mjs";
 
 // The private bucket every offboarded client's archive goes to.
@@ -44,24 +38,42 @@ const DELETE_CONCURRENCY = 8;
 export async function inspectArchive(providers, { now = () => new Date() } = {}) {
   const { ops, cloudflare, ploi, github } = providers;
   const site = await ploi.existingSite();
-  if (site) assertOwnPloiSite(ops, site);
+  if (site) {
+    assertOwnPloiSite(ops, site);
+    await assertOwnDatabase(ops, ploi);
+  }
   const frontend = frontendWorker(ops.project);
   const d1Name = publicationsStore(ops.project);
   const workers = await cloudflare.workers();
-  const workflows = await cloudflare.workflows();
+  const frontendExists = await cloudflare.workerExists(frontend);
   const containerName = `${ops.ci.worker}-cisandbox`;
   // The buckets deleted whole. The backups bucket isn't one of them unless
   // it is also one of these: it may hold other Sites' backups.
   const buckets = [];
-  const names = [ops.media.bucket, ops.releases.bucket, ops.ci.backupBucket];
-  for (const name of new Set(names)) {
-    buckets.push({ name, exists: await cloudflare.bucketExists(name), own: isOwn(ops, name) });
+  const roles = [
+    ["mediaBucket", ops.media.bucket],
+    ["releasesBucket", ops.releases.bucket],
+    ["ciBackupBucket", ops.ci.backupBucket],
+  ];
+  for (const name of new Set(roles.map(([, bucket]) => bucket))) {
+    const named = roles.filter(([, bucket]) => bucket === name).map(([role]) => role);
+    buckets.push({
+      name,
+      exists: await cloudflare.bucketExists(name),
+      // Own when gq names it so in any role gq.ops.json gives it.
+      own: named.some((role) => isOwn(ops, role, name)),
+      role: named[0],
+    });
   }
   const mediaExists = buckets.find(({ name }) => name === ops.media.bucket).exists;
+  // A media bucket that isn't the project's own may hold other clients'
+  // uploads and serve them at its domain: it is neither archived nor
+  // detached, and its domain's records stay.
+  const mediaOwn = isOwn(ops, "mediaBucket", ops.media.bucket);
   // The records at the Site's own hosts; none at the zone's apex, which
   // carries the zone's own (mail, verification) whatever serves it.
   const zoneName = await cloudflare.zoneName();
-  const hosts = [ops.domains.admin, ops.domains.frontend, ops.media.domain];
+  const hosts = [ops.domains.admin, ops.domains.frontend, ...(mediaOwn ? [ops.media.domain] : [])];
   const apexHosts = hosts.filter((host) => host.toLowerCase() === zoneName.toLowerCase());
   const records = [];
   for (const host of hosts.filter((host) => !apexHosts.includes(host))) {
@@ -70,20 +82,26 @@ export async function inspectArchive(providers, { now = () => new Date() } = {})
   const ciUrl = webhookUrl(ops.ci.worker, await cloudflare.accountSubdomain());
   const database = (await ploi.databases()).find(({ name }) => name === ops.ploi.database);
   const d1 = await cloudflare.d1(d1Name);
-  const { stages, unclear } = frontendStages(ops.project, workers);
+  const { stages, unclear, unbound } = await frontendStages(cloudflare, ops.project, workers);
   // What a new archive reads from, so it can't be gone already.
   const sources = [
     [site, `the Ploi site ${ops.domains.admin}`],
     [database, `the database ${ops.ploi.database}`],
-    [workers.includes(frontend), `the Frontend Worker ${frontend}`],
+    [frontendExists, `the Frontend Worker ${frontend}`],
     [d1, `the D1 store ${d1Name}`],
-    [mediaExists, `the media bucket ${ops.media.bucket}`],
+    ...(mediaOwn ? [[mediaExists, `the media bucket ${ops.media.bucket}`]] : []),
   ];
   const gone = sources.filter(([present]) => !present).map(([, source]) => source);
+  const backups = await inspectBackups(providers, buckets);
 
   return {
     ops,
-    archive: await inspectContents(providers, { now, gone }),
+    archive: await inspectContents(providers, {
+      now,
+      gone,
+      wholeBackups: backups.withBucket,
+      mediaOwn,
+    }),
     ploi: {
       site,
       database,
@@ -96,31 +114,33 @@ export async function inspectArchive(providers, { now = () => new Date() } = {})
     },
     frontend: {
       worker: frontend,
-      exists: workers.includes(frontend),
+      exists: frontendExists,
       d1,
       d1Name,
-      // Its other stages: their Workers, and their D1 stores by stage
-      // (whether or not the Worker is left).
+      // Its other stages: their Workers, and their D1 stores by stage.
       stages: stages.map(({ worker }) => worker),
       unclear,
-      stores: publicationsStages(ops.project, await cloudflare.d1Stores(`${d1Name}-`)),
+      stores: stages.map(({ stage, d1 }) => ({ stage, d1 })),
+      unbound,
     },
     ci: {
       worker: ops.ci.worker,
-      exists: workers.includes(ops.ci.worker),
-      workflows: [ops.ci.worker, `${ops.project}-mirror`].filter((name) =>
-        workflows.includes(name),
+      exists: await cloudflare.workerExists(ops.ci.worker),
+      workflows: await existing([ops.ci.worker, ownName(ops.project, "mirrorWorkflow")], (name) =>
+        cloudflare.workflowExists(name),
       ),
       container: (await cloudflare.containerApplications()).find(
         ({ name }) => name.toLowerCase() === containerName,
       ),
       hook: (await github.hooks()).find((hook) => hook.config?.url === ciUrl),
     },
-    mediaDomain: mediaExists
-      ? await cloudflare.bucketDomain(ops.media.bucket, ops.media.domain)
-      : undefined,
+    mediaOwn,
+    mediaDomain:
+      mediaExists && mediaOwn
+        ? await cloudflare.bucketDomain(ops.media.bucket, ops.media.domain)
+        : undefined,
     buckets,
-    backups: await inspectBackups(providers, buckets),
+    backups,
     artifacts: await cloudflare.artifactsRepository(ops.artifacts.namespace, ops.artifacts.repo),
     records,
     apexHosts,
@@ -128,6 +148,13 @@ export async function inspectArchive(providers, { now = () => new Date() } = {})
     tokens: await cloudflare.projectTokens(),
     repositoryArchived: await github.archived(),
   };
+}
+
+// Those of `names` that `exists(name)` finds, in order.
+async function existing(names, exists) {
+  const found = [];
+  for (const name of names) if (await exists(name)) found.push(name);
+  return found;
 }
 
 // The Site's own database backups (`gq db backup` writes them under
@@ -149,16 +176,18 @@ function ownBackupsPrefix(ops) {
   return `${ops.backups.prefix ?? "db/"}${ops.ploi.database}/`;
 }
 
-function isOwn(ops, name) {
-  return isOwnName(ops.project, name);
+function isOwn(ops, role, name) {
+  return isOwnName(ops.project, role, name);
 }
 
 // The archive recorded in gq.ops.json (whose manifest.json must still be
 // there, unchanged), or what a new one would hold. A new one starts only
 // when every source it reads (`gone` names those missing) is still there and
 // nothing is under its prefix yet: either would mean an archive whose record
-// was lost, which a new one would overwrite or miss content from.
-async function inspectContents(providers, { now, gone }) {
+// was lost, which a new one would overwrite or miss content from. Its
+// backups/ holds the Site's own backups, or everything under backups.prefix
+// when the backups bucket goes whole (`wholeBackups`).
+async function inspectContents(providers, { now, gone, wholeBackups, mediaOwn }) {
   const { ops, cloudflare, github } = providers;
   const recorded = ops.offboarded?.archive;
   if (recorded) {
@@ -186,8 +215,10 @@ async function inspectContents(providers, { now, gone }) {
     );
   }
   const backupsPrefix = ops.backups.prefix ?? "db/";
-  const backups = await (await providers.r2(ops.backups.bucket)).list(ownBackupsPrefix(ops));
-  if (backups.length === 0 && ops.offboarded?.cut?.backup) {
+  const backupsFrom = wholeBackups ? backupsPrefix : ownBackupsPrefix(ops);
+  const backups = await (await providers.r2(ops.backups.bucket)).list(backupsFrom);
+  const own = backups.filter(({ key }) => key.startsWith(ownBackupsPrefix(ops)));
+  if (own.length === 0 && ops.offboarded?.cut?.backup) {
     throw new Error(
       `There is no database backup under r2://${ops.backups.bucket}/${ownBackupsPrefix(ops)}, though gq offboard took a final one there: ${stop}`,
     );
@@ -195,9 +226,10 @@ async function inspectContents(providers, { now, gone }) {
   return {
     prefix,
     bucketExists,
-    media: await (await providers.r2(ops.media.bucket)).list(),
+    media: mediaOwn ? await (await providers.r2(ops.media.bucket)).list() : undefined,
     backups,
     backupsPrefix,
+    backupsFrom,
     head: await github.headCommit(),
   };
 }
@@ -210,7 +242,7 @@ const todo = (area, text, apply) => ({ area, state: "todo", text, apply });
 // archive once the plan is applied.
 export function archivePlan(site, { configPath, now = () => new Date() }) {
   const { ops, archive } = site;
-  const session = {};
+  const session = { files: [] };
   const items = [
     ...archiveItems(site, { configPath, now, session }),
     ...deletionItems(site, { configPath }),
@@ -257,13 +289,18 @@ function archiveItems(site, { configPath, now, session }) {
       : todo("Archive", `create the private bucket ${ARCHIVE_BUCKET} (no custom domain)`, (p) =>
           p.cloudflare.createBucket(ARCHIVE_BUCKET),
         ),
-    todo(
-      "Archive",
-      `${at}uploads.zip ← the ${archive.media.length} objects of ${ops.media.bucket}, keys kept`,
-      async (p) => {
-        session.files = [await archiveUploads(p, archive)];
-      },
-    ),
+    archive.media
+      ? todo(
+          "Archive",
+          `${at}uploads.zip ← the ${archive.media.length} objects of ${ops.media.bucket}, keys kept`,
+          async (p) => {
+            session.files.push(await archiveUploads(p, archive));
+          },
+        )
+      : manual(
+          "Archive",
+          `the bucket ${ops.media.bucket} isn't ${ops.project}'s own (gq names it ${ownName(ops.project, "mediaBucket")}): none of its objects is archived; archive ${ops.project}'s uploads by hand`,
+        ),
     todo("Archive", `${at}database.sql.gz ← a fresh dump of ${ops.ploi.database}`, async (p) => {
       const bucket = await p.r2(ARCHIVE_BUCKET);
       const dump = await p.dumpDatabase(
@@ -285,16 +322,16 @@ function archiveItems(site, { configPath, now, session }) {
     ),
     todo(
       "Archive",
-      `${at}backups/ ← the ${archive.backups.length} database backups in r2://${ops.backups.bucket}/${ownBackupsPrefix(ops)}`,
+      `${at}backups/ ← the ${archive.backups.length} database backups in r2://${ops.backups.bucket}/${archive.backupsFrom}`,
       async (p) => {
         const source = await p.r2(ops.backups.bucket);
         const bucket = await p.r2(ARCHIVE_BUCKET);
-        for (const backup of await source.list(ownBackupsPrefix(ops))) {
+        for (const backup of await source.list(archive.backupsFrom)) {
           const path = `backups/${backup.key.slice(archive.backupsPrefix.length)}`;
           const response = await source.get(backup.key);
           const stored = await bucket.upload(
             `${archive.prefix}${path}`,
-            listedBytes(response.body, backup, ops.backups.bucket),
+            listedBytes(response.body, backup, ops.backups.bucket, archive.prefix),
             "application/gzip",
           );
           session.files.push({ path, ...stored });
@@ -324,7 +361,7 @@ function archiveItems(site, { configPath, now, session }) {
     ),
     todo(
       "Verify",
-      `re-read every archived file against manifest.json, and count uploads.zip's entries against ${ops.media.bucket}; nothing is deleted unless all match, then gq.ops.json records the archive`,
+      `re-read every archived file against manifest.json${archive.media ? `, and count uploads.zip's entries against ${ops.media.bucket}` : ""}; nothing is deleted unless all match, then gq.ops.json records the archive`,
       async (p) => {
         await verifyArchive(p, archive.prefix, session);
         session.recorded = {
@@ -349,7 +386,8 @@ async function archiveUploads(providers, archive) {
     objects.map((object) => ({
       name: object.key,
       modified: object.lastModified,
-      open: async () => listedBytes((await media.get(object.key)).body, object, ops.media.bucket),
+      open: async () =>
+        listedBytes((await media.get(object.key)).body, object, ops.media.bucket, archive.prefix),
     })),
   );
   const bucket = await providers.r2(ARCHIVE_BUCKET);
@@ -359,8 +397,9 @@ async function archiveUploads(providers, archive) {
 
 // An object's `body`, which throws at its end unless it held as many bytes
 // as `object`'s listing in `bucket` says: a body cut short without an error
-// must not be archived (and verified) as if it were whole.
-async function* listedBytes(body, object, bucket) {
+// must not be archived (and verified) as if it were whole. What the run
+// already wrote under the archive's `prefix` blocks a rerun until moved.
+async function* listedBytes(body, object, bucket, prefix) {
   let size = 0;
   for await (const chunk of body ?? []) {
     size += chunk.length;
@@ -368,7 +407,7 @@ async function* listedBytes(body, object, bucket) {
   }
   if (size !== object.size) {
     throw new Error(
-      `${object.key} read ${size} bytes, but r2://${bucket} lists ${object.size}: stopping before anything is deleted.`,
+      `${object.key} read ${size} bytes, but r2://${bucket} lists ${object.size}: stopping before anything is deleted. Move what this run wrote under r2://${ARCHIVE_BUCKET}/${prefix} aside, then run gq offboard --archive again.`,
     );
   }
 }
@@ -385,7 +424,7 @@ function manifestOf(site, files, date) {
     files,
     sources: {
       media: { bucket: ops.media.bucket, domain: ops.media.domain },
-      backups: { bucket: ops.backups.bucket, prefix: archive.backupsPrefix },
+      backups: { bucket: ops.backups.bucket, prefix: archive.backupsFrom },
       releases: { bucket: ops.releases.bucket },
       ciBackups: { bucket: ops.ci.backupBucket },
       ploi: {
@@ -483,13 +522,13 @@ async function readBack(bucket, key, { tail = false } = {}) {
 // then GitHub. Whatever isn't named as the project's own is left, as manual.
 function deletionItems(site, { configPath }) {
   const { ops, ploi, frontend, ci, backups } = site;
-  // `item` deletes `what` only when `name` is the project's own.
-  const own = (area, what, name, item, howTo = "delete it by hand") =>
-    isOwn(ops, name)
+  // `item` deletes `what` only when `name` is the project's own in `role`.
+  const own = (area, what, role, name, item, howTo = "delete it by hand") =>
+    isOwn(ops, role, name)
       ? item
       : manual(
           area,
-          `${what} isn't named as ${ops.project}'s own (${ops.project}-…); ${howTo} if it should go`,
+          `${what} isn't ${ops.project}'s own (gq names it ${ownName(ops.project, role)}); ${howTo} if it should go`,
         );
   return [
     ploi.site
@@ -527,6 +566,7 @@ function deletionItems(site, { configPath }) {
       ? own(
           "Frontend",
           `the Worker ${frontend.worker}`,
+          "frontendWorker",
           frontend.worker,
           todo("Frontend", `delete the Worker ${frontend.worker}`, (p) =>
             p.cloudflare.deleteWorker(frontend.worker),
@@ -537,40 +577,34 @@ function deletionItems(site, { configPath }) {
       ? own(
           "Frontend",
           `the D1 store ${frontend.d1.name}`,
+          "publicationsStore",
           frontend.d1.name,
           todo("Frontend", `delete the D1 store ${frontend.d1.name} (${frontend.d1.uuid})`, (p) =>
             p.cloudflare.deleteD1(frontend.d1.uuid),
           ),
         )
       : done("Frontend", `the D1 store ${frontend.d1Name} is deleted`),
+    // Its other stages, each tied to the project by its publication store.
     ...frontend.stages.map((worker) =>
-      own(
-        "Frontend",
-        `the Worker ${worker}`,
-        worker,
-        todo("Frontend", `delete the Worker ${worker}`, (p) => p.cloudflare.deleteWorker(worker)),
-      ),
+      todo("Frontend", `delete the Worker ${worker}`, (p) => p.cloudflare.deleteWorker(worker)),
     ),
     ...frontend.stores.map(({ d1 }) =>
-      own(
-        "Frontend",
-        `the D1 store ${d1.name}`,
-        d1.name,
-        todo("Frontend", `delete the D1 store ${d1.name} (${d1.uuid})`, (p) =>
-          p.cloudflare.deleteD1(d1.uuid),
-        ),
+      todo("Frontend", `delete the D1 store ${d1.name} (${d1.uuid})`, (p) =>
+        p.cloudflare.deleteD1(d1.uuid),
       ),
     ),
-    ...frontend.unclear.map((worker) =>
+    ...frontend.unclear.map((worker) => unclearStage("Frontend", ops.project, worker)),
+    ...frontend.unbound.map((d1) =>
       manual(
         "Frontend",
-        `the Worker ${worker} is named like one of ${ops.project}'s Frontend stages, but not as ${frontend.worker}-<stage>; check it by hand`,
+        `the D1 store ${d1.name} is named like one of ${ops.project}'s stages' publication stores, but no ${frontend.worker}-<stage> Worker binds it; check it by hand`,
       ),
     ),
     ci.exists
       ? own(
           "CI",
           `the Worker ${ci.worker}`,
+          "ciWorker",
           ci.worker,
           todo("CI", `delete the Worker ${ci.worker}`, (p) => p.cloudflare.deleteWorker(ci.worker)),
         )
@@ -580,6 +614,7 @@ function deletionItems(site, { configPath }) {
           own(
             "CI",
             `the Workflow ${name}`,
+            name === ops.ci.worker ? "ciWorkflow" : "mirrorWorkflow",
             name,
             todo("CI", `delete the Workflow ${name}`, (p) => p.cloudflare.deleteWorkflow(name)),
           ),
@@ -589,6 +624,7 @@ function deletionItems(site, { configPath }) {
       ? own(
           "CI",
           `the container application ${ci.container.name}`,
+          "ciContainer",
           ci.container.name,
           todo(
             "CI",
@@ -597,18 +633,24 @@ function deletionItems(site, { configPath }) {
           ),
         )
       : done("CI", "no container application is left"),
-    site.mediaDomain
-      ? todo(
+    !site.mediaOwn
+      ? manual(
           "Media",
-          `remove the custom domain ${ops.media.domain} from ${ops.media.bucket}`,
-          (p) => p.cloudflare.removeBucketDomain(ops.media.bucket, ops.media.domain),
+          `the custom domain ${ops.media.domain} stays on ${ops.media.bucket}, which isn't ${ops.project}'s own (gq names it ${ownName(ops.project, "mediaBucket")}); remove it by hand if it should go`,
         )
-      : done("Media", `the custom domain ${ops.media.domain} is removed`),
-    ...site.buckets.map(({ name, exists }) =>
+      : site.mediaDomain
+        ? todo(
+            "Media",
+            `remove the custom domain ${ops.media.domain} from ${ops.media.bucket}`,
+            (p) => p.cloudflare.removeBucketDomain(ops.media.bucket, ops.media.domain),
+          )
+        : done("Media", `the custom domain ${ops.media.domain} is removed`),
+    ...site.buckets.map(({ name, exists, role }) =>
       exists
         ? own(
             "R2",
             `the bucket ${name}`,
+            role,
             name,
             todo("R2", `empty ${name} (with a key scoped to it) and delete it`, async (p) => {
               await deleteObjects(await p.r2(name), await (await p.r2(name)).list());
@@ -633,6 +675,7 @@ function deletionItems(site, { configPath }) {
       ? own(
           "Artifacts",
           `the repository ${ops.artifacts.namespace}/${ops.artifacts.repo}`,
+          "artifactsRepository",
           ops.artifacts.repo,
           todo(
             "Artifacts",
@@ -651,6 +694,14 @@ function deletionItems(site, { configPath }) {
     ),
     // The zone is shared (other Sites' hosts live in it): only the records
     // that serve this Site's hosts, named exactly as them, go.
+    ...(site.mediaOwn
+      ? []
+      : [
+          manual(
+            "DNS",
+            `${ops.media.domain} stays: it serves ${ops.media.bucket}, which isn't ${ops.project}'s own; delete its record by hand if it should go`,
+          ),
+        ]),
     ...site.apexHosts.map((host) =>
       manual(
         "DNS",

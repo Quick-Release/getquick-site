@@ -15,6 +15,7 @@ import {
   fakeAccount,
   offboardingSite,
   OPS,
+  publicationBinding,
   RETRY_CRONTAB,
   STAGING,
 } from "../support/offboarding.mjs";
@@ -35,6 +36,8 @@ test("offboard --dry-run plans every cut in order and changes nothing", async ()
   assert.deepEqual(plan, [
     "  - Record: write offboarded to gq.ops.json first, so gq refuses to expose the Site from then on (commit it)",
     "  - Backup: back up fixture_db to r2://fixture-releases/db/ before anything is cut",
+    "  - CI: deactivate the GitHub push webhook 99 on Example/fixture",
+    "  - CI: switch the CI Worker fixture-ci's workers.dev off",
     "  - CMS: delete the retry crontab (fixture: wp gq-events retry-due)",
     '  - CMS: suspend the Ploi site fixture-cms.example.test (reason "offboarded"); its files, .env and database stay',
     "  ! CMS: Ploi's API can't disable the site's deploy webhook; the suspension is what stops it",
@@ -42,8 +45,6 @@ test("offboard --dry-run plans every cut in order and changes nothing", async ()
     "  - Frontend: detach fixture-fe.example.test from the Worker fixture-fe",
     "  - Frontend: switch the Worker fixture-fe's workers.dev and preview URLs off (the Worker and its D1 store stay)",
     "  - Media: disable https://fixture-media.example.test on the bucket fixture-media (the bucket and its objects stay)",
-    "  - CI: deactivate the GitHub push webhook 99 on Example/fixture",
-    "  - CI: switch the CI Worker fixture-ci's workers.dev off",
     "  - Tokens: disable GETQUICK FIXTURE Staging Alchemy",
     "  - Tokens: disable GETQUICK FIXTURE Releases R2",
     "  - Tokens: disable GETQUICK FIXTURE Media R2",
@@ -69,13 +70,13 @@ test("offboard --yes cuts in order, tokens last, and records offboarded", async 
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(state.log, [
     "database backed up",
+    "github hook 99 inactive",
+    'workers.dev fixture-ci {"enabled":false,"previews_enabled":false}',
     "crontab 7 deleted",
     "ploi site suspended (offboarded)",
     "worker domain wd-1 detached",
     'workers.dev fixture-fe {"enabled":false,"previews_enabled":false}',
     "media domain fixture-media.example.test disabled",
-    "github hook 99 inactive",
-    'workers.dev fixture-ci {"enabled":false,"previews_enabled":false}',
     "token t-alchemy disabled",
     "token t-releases disabled",
     "token t-media disabled",
@@ -108,6 +109,33 @@ test("offboard --yes cuts in order, tokens last, and records offboarded", async 
   assert.match(result.stdout, /Offboarded fixture\. Commit gq\.ops\.json/u);
 });
 
+test("offboard silences CI right after the backup, so no push mid-cut can deploy the Frontend again", async () => {
+  const fixture = await offboardingSite();
+  const account = fakeAccount();
+  const { state } = account;
+  let atDetach;
+  const fetch = recordingFetch((request) => {
+    if (request.method === "DELETE" && request.url.endsWith("/workers/domains/wd-1")) {
+      atDetach = {
+        hook: state.hooks.find(({ id }) => id === 99).active,
+        ciWorkersDev: state.subdomains["fixture-ci"].enabled,
+        backedUp: state.log.includes("database backed up"),
+      };
+    }
+    return account.fetch(request.url, request);
+  });
+
+  const result = await fixture.run(["offboard", "--yes"], { env: ENV, fetch, exec: account.exec });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(atDetach, { hook: false, ciWorkersDev: false, backedUp: true });
+  assert.deepEqual(state.log.slice(0, 3), [
+    "database backed up",
+    "github hook 99 inactive",
+    'workers.dev fixture-ci {"enabled":false,"previews_enabled":false}',
+  ]);
+});
+
 test("offboard leaves what isn't the Site's alone: other Workers, hooks, crontabs and tokens", async () => {
   const fixture = await offboardingSite();
   const { fetch, exec, state } = fakeAccount();
@@ -131,6 +159,37 @@ test("offboard leaves what isn't the Site's alone: other Workers, hooks, crontab
     state.tokens.every(({ id }) => !id.startsWith("temp-")),
     "the temporary token is deleted",
   );
+});
+
+test("offboard leaves a CI Worker or media bucket that isn't the project's own for the operator", async () => {
+  // One CI Worker and one media bucket serving several clients.
+  const ops = {
+    ...OPS,
+    ci: { worker: "team-ci", backupBucket: "fixture-ci-backups" },
+    media: { bucket: "team-media", domain: "team-media.example.test" },
+  };
+  const fixture = await offboardingSite({ ops });
+  const exposed = fakeAccount().state;
+  const { fetch, exec, state } = fakeAccount({
+    subdomains: { ...exposed.subdomains, "team-ci": { enabled: true, previews_enabled: true } },
+    bucketDomains: { "team-media": [{ domain: "team-media.example.test", enabled: true }] },
+  });
+
+  const result = await fixture.run(["offboard", "--yes"], { env: ENV, fetch, exec });
+
+  assert.equal(result.code, 0, result.stderr);
+  const plan = result.stdout.split("\n").filter((line) => /^ {2}[-✓!] /u.test(line));
+  for (const expected of [
+    "  ! CI: the CI Worker team-ci isn't fixture's own (gq names it fixture-ci): its workers.dev stays on; switch it off by hand if only fixture uses it",
+    "  ! Media: the bucket team-media isn't fixture's own (gq names it fixture-media): https://team-media.example.test stays enabled; disable it by hand if only fixture uses it",
+  ]) {
+    assert.ok(plan.includes(expected), `${expected}\n${plan.join("\n")}`);
+  }
+  assert.deepEqual(state.subdomains["team-ci"], { enabled: true, previews_enabled: true });
+  assert.equal(state.bucketDomains["team-media"][0].enabled, true);
+  const { cut } = (await readOps(fixture)).offboarded;
+  assert.equal(cut.workersDev["team-ci"], undefined);
+  assert.equal(cut.mediaDomain, undefined);
 });
 
 test("offboard again changes nothing once everything is cut", async () => {
@@ -172,7 +231,7 @@ test("offboard after a failed run cuts only what is still exposed, without a new
   );
   assert.match(result.stdout, /✓ CMS: the Ploi site fixture-cms\.example\.test is suspended/u);
   assert.deepEqual(state.scripts, [], "no backup of a suspended CMS");
-  assert.equal(state.log[0], "worker domain wd-1 detached");
+  assert.equal(state.log[0], "github hook 99 inactive");
   assert.equal(state.log.at(-1), "token t-deploy disabled");
   assert.equal((await readOps(fixture)).offboarded.phase, "cut");
 });
@@ -216,6 +275,51 @@ test("offboard and --restore refuse when ploi.siteId is another site than domain
   assert.equal((await readOps(fixture)).offboarded, undefined);
 });
 
+test("offboard refuses when the Ploi site runs as another system user than ploi.systemUser", async () => {
+  const fixture = await offboardingSite();
+  const { fetch, exec, state } = fakeAccount({
+    site: { id: 34, domain: "fixture-cms.example.test", status: "active", system_user: "other" },
+  });
+
+  const result = await fixture.run(["offboard", "--yes"], { env: ENV, fetch, exec });
+
+  assert.equal(result.code, 1);
+  assert.match(
+    result.stderr,
+    /The Ploi site 34 \(gq\.ops\.json ploi\.siteId\) runs as other, not fixture \(ploi\.systemUser\): stopping before anything changes\./u,
+  );
+  assert.deepEqual(state.log, []);
+  assert.equal((await readOps(fixture)).offboarded, undefined);
+});
+
+test("offboard refuses when the site's .env names another database than ploi.database", async () => {
+  const fixture = await offboardingSite();
+  for (const [siteEnv, found] of [
+    ["WP_ENV=production\nDB_NAME=other_db\n", "DB_NAME other_db"],
+    ["WP_ENV=production\n", "no DB_NAME"],
+  ]) {
+    const { fetch, exec, state } = fakeAccount({ siteEnv });
+
+    for (const argv of [
+      ["offboard", "--dry-run"],
+      ["offboard", "--yes"],
+    ]) {
+      const result = await fixture.run(argv, { env: ENV, fetch, exec });
+
+      assert.equal(result.code, 1);
+      assert.match(
+        result.stderr,
+        new RegExp(
+          `The Ploi site fixture-cms\\.example\\.test's \\.env has ${found}, not fixture_db \\(gq\\.ops\\.json ploi\\.database\\): stopping before anything changes\\.`,
+          "u",
+        ),
+      );
+    }
+    assert.deepEqual(state.log, []);
+    assert.equal((await readOps(fixture)).offboarded, undefined);
+  }
+});
+
 test("offboard disables, and --restore re-enables, every project token however many pages list them", async () => {
   const fixture = await offboardingSite();
   const exposed = fakeAccount().state;
@@ -240,6 +344,25 @@ test("offboard disables, and --restore re-enables, every project token however m
   const restore = await fixture.run(["offboard", "--restore", "--yes"], { env: ENV, ...account });
   assert.equal(restore.code, 0, restore.stderr);
   assert.deepEqual(own(), ["active", "active", "active", "active"]);
+});
+
+test("offboard reads every page of a listing that comes without page totals", async () => {
+  const fixture = await offboardingSite();
+  const exposed = fakeAccount().state;
+  const account = fakeAccount({
+    tokens: [exposed.tokens[0], ...structuredClone(CROWDED_TOKENS), ...exposed.tokens.slice(1)],
+    bareListings: true,
+  });
+
+  const cut = await fixture.run(["offboard", "--yes"], { env: ENV, ...account });
+
+  assert.equal(cut.code, 0, cut.stderr);
+  assert.deepEqual(
+    account.state.tokens
+      .filter(({ name }) => name.startsWith("GETQUICK FIXTURE "))
+      .map(({ status }) => status),
+    ["disabled", "disabled", "disabled", "disabled"],
+  );
 });
 
 test("offboard finds the CI webhook and the retry crontab however many pages list them", async () => {
@@ -274,13 +397,13 @@ test("offboard --restore brings back everything the cut took, in reverse, and re
     "token t-releases active",
     "token t-media active",
     "token t-deploy active",
-    'workers.dev fixture-ci {"enabled":true,"previews_enabled":false}',
-    "github hook 99 active",
     "media domain fixture-media.example.test enabled",
     "worker domain fixture-fe.example.test attached to fixture-fe",
     'workers.dev fixture-fe {"enabled":false,"previews_enabled":true}',
     "ploi site resumed",
     `crontab added: ${RETRY_CRONTAB.command}`,
+    'workers.dev fixture-ci {"enabled":true,"previews_enabled":false}',
+    "github hook 99 active",
   ]);
   const attached = account.state.workerDomains.find(({ service }) => service === "fixture-fe");
   assert.deepEqual(
@@ -395,6 +518,8 @@ test("offboard cuts the Frontend's other stages too, and --restore brings them b
       "fixture-fe-shop-fe": { enabled: true, previews_enabled: true },
       "other-fe-staging": { enabled: true, previews_enabled: true },
     },
+    d1: [...exposed.d1, { uuid: "d1-staging", name: "fixture-fe-publications-staging" }],
+    bindings: { "fixture-fe-staging": publicationBinding("d1-staging") },
   });
 
   const cut = await fixture.run(["offboard", "--yes"], { env: ENV, ...account });
@@ -406,7 +531,7 @@ test("offboard cuts the Frontend's other stages too, and --restore brings them b
   );
   assert.match(
     cut.stdout,
-    /! Frontend: the Worker fixture-fe-shop-fe is named like one of fixture's Frontend stages, but not as fixture-fe-<stage>; check it by hand/u,
+    /! Frontend: the Worker fixture-fe-shop-fe is named like one of fixture's Frontend stages, but no PUBLICATION_DB binding to fixture-fe-publications-<stage> ties it to fixture; check it by hand/u,
   );
   assert.deepEqual(account.state.subdomains["fixture-fe-staging"], {
     enabled: false,
@@ -425,6 +550,58 @@ test("offboard cuts the Frontend's other stages too, and --restore brings them b
     enabled: true,
     previews_enabled: true,
   });
+});
+
+test("offboard leaves a Worker named like a stage alone unless its publication store ties it to the project", async () => {
+  const exposed = fakeAccount().state;
+  const fixture = await offboardingSite();
+  const open = { enabled: true, previews_enabled: true };
+  const account = fakeAccount({
+    // Project fixture-fe's production Worker, a hand-deployed Worker, and a
+    // stage bound to another project's store.
+    workers: [...exposed.workers, "fixture-fe-fe", "fixture-fe-redirects", "fixture-fe-preview"],
+    subdomains: {
+      ...exposed.subdomains,
+      "fixture-fe-fe": { ...open },
+      "fixture-fe-redirects": { ...open },
+      "fixture-fe-preview": { ...open },
+    },
+    workerDomains: [
+      ...exposed.workerDomains,
+      {
+        id: "wd-sibling",
+        hostname: "fixture-fe.example.org",
+        service: "fixture-fe-fe",
+        zone_id: "zone-2",
+        environment: "production",
+      },
+    ],
+    d1: [
+      ...exposed.d1,
+      { uuid: "d1-sibling", name: "fixture-fe-fe-publications" },
+      { uuid: "d1-preview", name: "fixture-fe-publications-preview" },
+    ],
+    bindings: {
+      "fixture-fe-fe": publicationBinding("d1-sibling"),
+      "fixture-fe-preview": publicationBinding("d1-sibling"),
+    },
+  });
+
+  const cut = await fixture.run(["offboard", "--yes"], { env: ENV, ...account });
+
+  assert.equal(cut.code, 0, cut.stderr);
+  for (const worker of ["fixture-fe-fe", "fixture-fe-redirects", "fixture-fe-preview"]) {
+    assert.match(
+      cut.stdout,
+      new RegExp(
+        `! Frontend: the Worker ${worker} is named like one of fixture's Frontend stages, but no PUBLICATION_DB binding to fixture-fe-publications-<stage> ties it to fixture; check it by hand`,
+        "u",
+      ),
+    );
+    assert.deepEqual(account.state.subdomains[worker], open, worker);
+  }
+  assert.ok(account.state.workerDomains.some(({ id }) => id === "wd-sibling"));
+  assert.ok(!account.state.log.some((entry) => entry.includes("fixture-fe-")), account.state.log);
 });
 
 test("offboard --restore on a live Site has nothing to do", async () => {
@@ -522,6 +699,38 @@ test("a cut that fails leaves the tokens active and the guards on, so a rerun ca
   const rerun = await fixture.run(["offboard", "--yes"], { env: ENV, ...account });
   assert.equal(rerun.code, 0, rerun.stderr);
   assert.equal((await readOps(fixture)).offboarded.phase, "cut");
+});
+
+test("a change the cut failed to make isn't recorded, so --restore never undoes it", async () => {
+  const fixture = await offboardingSite();
+  const account = fakeAccount();
+  const failing = recordingFetch((request) => {
+    if (request.method === "PUT" && request.url.endsWith("/tokens/t-releases")) {
+      return new Response(JSON.stringify({ success: false, errors: [{ message: "boom" }] }), {
+        status: 500,
+      });
+    }
+    return account.fetch(request.url, request);
+  });
+  const cut = await fixture.run(["offboard", "--yes"], {
+    env: ENV,
+    fetch: failing,
+    exec: account.exec,
+  });
+  assert.equal(cut.code, 1);
+  assert.deepEqual((await readOps(fixture)).offboarded.cut.tokens, ["t-alchemy"]);
+
+  // The token leaked meanwhile: someone disables it on purpose.
+  account.state.tokens.find(({ id }) => id === "t-releases").status = "disabled";
+  const restore = await fixture.run(["offboard", "--restore", "--yes"], { env: ENV, ...account });
+
+  assert.equal(restore.code, 0, restore.stderr);
+  assert.equal(account.state.tokens.find(({ id }) => id === "t-releases").status, "disabled");
+  assert.equal(account.state.tokens.find(({ id }) => id === "t-alchemy").status, "active");
+  assert.match(
+    restore.stdout,
+    /! Tokens: GETQUICK FIXTURE Releases R2 stays disabled: gq offboard didn't disable it/u,
+  );
 });
 
 test("offboard reads Ploi's token and the R2 key from Sigillo staging and prints no secret", async () => {

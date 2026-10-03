@@ -8,23 +8,93 @@
 //
 // The cut writes gq.ops.json `offboarded` before anything else, so the
 // guards hold while it is half done, and notes in `offboarded.cut` each
-// change just before making it; --restore brings back only those.
+// change once made; --restore brings back only those.
 
 import { webhookUrl } from "../ci/github-setup.mjs";
+import { parseDotenv } from "../dotenv-text.mjs";
 import { retryCrontab } from "../ploi/events.mjs";
 import { updateManifest } from "../manifest/manifest.mjs";
-import { frontendStages, frontendWorker } from "./names.mjs";
+import {
+  frontendWorker,
+  isOwn,
+  ownName,
+  PUBLICATION_BINDING,
+  publicationsStages,
+  publicationsStore,
+  stageCandidates,
+} from "./names.mjs";
 
 export const SUSPEND_REASON = "offboarded";
 
 // Throws unless the Ploi site gq.ops.json's ploi.siteId names is the Site's
-// CMS: a stale or copied id would suspend or delete another client's site.
+// CMS, running as its system user: a stale or copied id (or user) would
+// suspend or delete another client's site (or user).
 export function assertOwnPloiSite(ops, site) {
+  const id = `The Ploi site ${ops.ploi.siteId} (gq.ops.json ploi.siteId)`;
   if (site.domain !== ops.domains.admin) {
     throw new Error(
-      `The Ploi site ${ops.ploi.siteId} (gq.ops.json ploi.siteId) is ${site.domain ?? "unnamed"}, not ${ops.domains.admin} (domains.admin): stopping before anything changes.`,
+      `${id} is ${site.domain ?? "unnamed"}, not ${ops.domains.admin} (domains.admin): ${STOP}`,
     );
   }
+  if (site.system_user !== ops.ploi.systemUser) {
+    throw new Error(
+      `${id} runs as ${site.system_user ?? "no system user"}, not ${ops.ploi.systemUser} (ploi.systemUser): ${STOP}`,
+    );
+  }
+}
+
+// Throws unless the site's .env (read, never written) names gq.ops.json's
+// ploi.database: Ploi's databases aren't linked to sites, so a copied name
+// would back up, archive and delete another client's database.
+export async function assertOwnDatabase(ops, ploi) {
+  const name = parseDotenv(await ploi.siteEnv()).DB_NAME?.trim();
+  if (name !== ops.ploi.database) {
+    throw new Error(
+      `The Ploi site ${ops.domains.admin}'s .env has ${name ? `DB_NAME ${name}` : "no DB_NAME"}, not ${ops.ploi.database} (gq.ops.json ploi.database): ${STOP}`,
+    );
+  }
+}
+
+const STOP = "stopping before anything changes.";
+
+// The Frontend's non-production stages among the account's `workers`
+// ([{ stage, worker, d1 }]): a Worker named `<project>-fe-<stage>` whose
+// PUBLICATION_DB binding is the D1 store `<project>-fe-publications-<stage>`,
+// which ties it to the project; a name alone could be another project's or
+// a hand-deployed Worker's. The rest named like one are `unclear`, and the
+// stores named like a stage's that no stage Worker binds are `unbound`.
+export async function frontendStages(cloudflare, project, workers) {
+  const { candidates, unclear } = stageCandidates(project, workers);
+  const stores = publicationsStages(
+    project,
+    await cloudflare.d1Stores(`${publicationsStore(project)}-`),
+  );
+  const stages = [];
+  for (const { stage, worker } of candidates) {
+    const store = stores.find((candidate) => candidate.stage === stage)?.d1;
+    const bound = (await cloudflare.workerBindings(worker)).some(
+      (binding) =>
+        binding.type === "d1" &&
+        binding.name === PUBLICATION_BINDING &&
+        store !== undefined &&
+        (binding.database_id ?? binding.id) === store.uuid,
+    );
+    if (bound) stages.push({ stage, worker, d1: store });
+    else unclear.push(worker);
+  }
+  const unbound = stores
+    .filter(({ stage }) => !stages.some((tied) => tied.stage === stage))
+    .map(({ d1 }) => d1);
+  return { stages, unclear, unbound };
+}
+
+// The plan line for a Worker named like one of the project's Frontend stages
+// that nothing ties to it.
+export function unclearStage(area, project, worker) {
+  return manual(
+    area,
+    `the Worker ${worker} is named like one of ${project}'s Frontend stages, but no ${PUBLICATION_BINDING} binding to ${publicationsStore(project)}-<stage> ties it to ${project}; check it by hand`,
+  );
 }
 
 // Everything the Site exposes now, read through `providers`
@@ -34,8 +104,8 @@ export async function inspectSite(providers) {
   const site = await ploi.site();
   assertOwnPloiSite(ops, site);
   const crontab = retryCrontab({
-    systemUser: site.system_user ?? ops.ploi.systemUser,
-    domain: site.domain ?? ops.domains.admin,
+    systemUser: ops.ploi.systemUser,
+    domain: ops.domains.admin,
   });
   const existingCrontab = (await ploi.crontabs()).find(
     (entry) => entry.user === crontab.user && entry.command === crontab.command,
@@ -43,7 +113,11 @@ export async function inspectSite(providers) {
   const ciUrl = webhookUrl(ops.ci.worker, await cloudflare.accountSubdomain());
   const hooks = await github.hooks();
   // The production Frontend first, then its other stages.
-  const { stages, unclear } = frontendStages(ops.project, await cloudflare.workers());
+  const { stages, unclear } = await frontendStages(
+    cloudflare,
+    ops.project,
+    await cloudflare.workers(),
+  );
   const frontends = [];
   for (const worker of [frontendWorker(ops.project), ...stages.map((stage) => stage.worker)]) {
     frontends.push({
@@ -85,19 +159,26 @@ const workersDev = (subdomain) => ({
 });
 
 // Cutting a Site's public access, in order: the record first (the guards
-// hold from then on), the final backup before anything is cut, then the CMS,
-// the Frontend (every stage), media and CI, and the project's tokens last,
-// since the steps before them may need what they grant.
+// hold from then on), the final backup before anything is cut, then CI (so
+// no push mid-cut can deploy the Frontend again), the CMS, the Frontend
+// (every stage) and media, and the project's tokens last, since the steps
+// before them may need what they grant.
 export function cutPlan(site, { configPath, now = () => new Date() }) {
   const { ops, cms, frontends, media, ci, tokens } = site;
   const backups = `r2://${ops.backups.bucket}/${ops.backups.prefix ?? "db/"}`;
-  // A todo that notes `change` in offboarded.cut, then applies.
-  const cut = (area, text, note, apply) =>
+  // A todo that applies, then notes its change in offboarded.cut: a change
+  // that failed is never undone by --restore. With `before`, the note (an
+  // original state, kept by ??= from the first run) goes first instead, so
+  // it survives a change that half happened.
+  const noteCut = (note) =>
+    updateManifest(configPath, (manifest) => {
+      note((manifest.offboarded.cut ??= {}));
+    });
+  const cut = (area, text, note, apply, { before = false } = {}) =>
     todo(area, text, async (providers) => {
-      await updateManifest(configPath, (manifest) => {
-        note((manifest.offboarded.cut ??= {}));
-      });
+      if (before) await noteCut(note);
       await apply(providers);
+      if (!before) await noteCut(note);
     });
   return [
     site.record
@@ -122,6 +203,38 @@ export function cutPlan(site, { configPath, now = () => new Date() }) {
           },
           (providers) => providers.backupDatabase(),
         ),
+    // CI first: a push from now on can deploy nothing (the record isn't
+    // committed yet, so CI would not refuse).
+    ci.hook?.active
+      ? cut(
+          "CI",
+          `deactivate the GitHub push webhook ${ci.hook.id} on ${ops.github.repository}`,
+          (record) => {
+            record.webhook = ci.hook.id;
+          },
+          (p) => p.github.updateHook(ci.hook.id, { active: false }),
+        )
+      : done("CI", `no active GitHub push webhook to ${ci.webhookUrl}`),
+    !isOwn(ops.project, "ciWorker", ci.worker)
+      ? manual(
+          "CI",
+          `the CI Worker ${ci.worker} isn't ${ops.project}'s own (gq names it ${ownName(ops.project, "ciWorker")}): its workers.dev stays on; switch it off by hand if only ${ops.project} uses it`,
+        )
+      : ci.subdomain.enabled || ci.subdomain.previews_enabled
+        ? cut(
+            "CI",
+            `switch the CI Worker ${ci.worker}'s workers.dev off`,
+            (record) => {
+              (record.workersDev ??= {})[ci.worker] ??= workersDev(ci.subdomain);
+            },
+            (p) =>
+              p.cloudflare.setWorkerSubdomain(ci.worker, {
+                enabled: false,
+                previewsEnabled: false,
+              }),
+            { before: true },
+          )
+        : done("CI", `the CI Worker ${ci.worker}'s workers.dev is off`),
     cms.existingCrontab
       ? cut(
           "CMS",
@@ -183,46 +296,29 @@ export function cutPlan(site, { configPath, now = () => new Date() }) {
                 enabled: false,
                 previewsEnabled: false,
               }),
+            { before: true },
           )
         : done("Frontend", `the Worker ${frontend.worker}'s workers.dev and preview URLs are off`),
     ]),
-    ...site.unclearStages.map((worker) =>
-      manual(
-        "Frontend",
-        `the Worker ${worker} is named like one of ${ops.project}'s Frontend stages, but not as ${frontendWorker(ops.project)}-<stage>; check it by hand`,
-      ),
-    ),
-    media.attached?.enabled
-      ? cut(
+    ...site.unclearStages.map((worker) => unclearStage("Frontend", ops.project, worker)),
+    !isOwn(ops.project, "mediaBucket", media.bucket)
+      ? manual(
           "Media",
-          `disable https://${media.domain} on the bucket ${media.bucket} (the bucket and its objects stay)`,
-          (record) => {
-            record.mediaDomain = media.domain;
-          },
-          (p) => p.cloudflare.setBucketDomain(media.bucket, media.domain, false),
+          `the bucket ${media.bucket} isn't ${ops.project}'s own (gq names it ${ownName(ops.project, "mediaBucket")}): https://${media.domain} stays enabled; disable it by hand if only ${ops.project} uses it`,
         )
-      : done("Media", `https://${media.domain} is ${media.attached ? "disabled" : "not attached"}`),
-    ci.hook?.active
-      ? cut(
-          "CI",
-          `deactivate the GitHub push webhook ${ci.hook.id} on ${ops.github.repository}`,
-          (record) => {
-            record.webhook = ci.hook.id;
-          },
-          (p) => p.github.updateHook(ci.hook.id, { active: false }),
-        )
-      : done("CI", `no active GitHub push webhook to ${ci.webhookUrl}`),
-    ci.subdomain.enabled || ci.subdomain.previews_enabled
-      ? cut(
-          "CI",
-          `switch the CI Worker ${ci.worker}'s workers.dev off`,
-          (record) => {
-            (record.workersDev ??= {})[ci.worker] ??= workersDev(ci.subdomain);
-          },
-          (p) =>
-            p.cloudflare.setWorkerSubdomain(ci.worker, { enabled: false, previewsEnabled: false }),
-        )
-      : done("CI", `the CI Worker ${ci.worker}'s workers.dev is off`),
+      : media.attached?.enabled
+        ? cut(
+            "Media",
+            `disable https://${media.domain} on the bucket ${media.bucket} (the bucket and its objects stay)`,
+            (record) => {
+              record.mediaDomain = media.domain;
+            },
+            (p) => p.cloudflare.setBucketDomain(media.bucket, media.domain, false),
+          )
+        : done(
+            "Media",
+            `https://${media.domain} is ${media.attached ? "disabled" : "not attached"}`,
+          ),
     ...tokens.map((token) =>
       token.status === "active"
         ? cut(
@@ -240,9 +336,10 @@ export function cutPlan(site, { configPath, now = () => new Date() }) {
 }
 
 // Bringing a cut Site back, in the reverse order, and only what the cut
-// changed (gq.ops.json offboarded.cut): its tokens first, then CI, media,
-// the Frontend's domains and workers.dev as they were, and the CMS; then
-// gq.ops.json loses `offboarded`. Tokens are re-enabled, never recreated.
+// changed (gq.ops.json offboarded.cut): its tokens first, then media, the
+// Frontend's domains and workers.dev as they were, the CMS, and CI (its
+// Worker before the webhook that reaches it); then gq.ops.json loses
+// `offboarded`. Tokens are re-enabled, never recreated.
 export function restorePlan(site, { configPath }) {
   const { ops, cms, frontends, media, ci, tokens } = site;
   const cut = site.record?.cut ?? {};
@@ -295,22 +392,6 @@ export function restorePlan(site, { configPath }) {
           `the token ${id} the cut disabled is gone: the gq command that made it makes it again`,
         ),
       ),
-    ...(cut.workersDev?.[ci.worker]
-      ? [restoredWorkersDev("CI", ci.worker, cut.workersDev[ci.worker], ci.subdomain)]
-      : []),
-    ...(cut.webhook === undefined
-      ? []
-      : !hook
-        ? [manual("CI", `the GitHub push webhook ${cut.webhook} is gone: run pnpm github:setup`)]
-        : hook.active
-          ? [done("CI", `the GitHub push webhook ${hook.id} is active`)]
-          : [
-              todo(
-                "CI",
-                `reactivate the GitHub push webhook ${hook.id} on ${ops.github.repository}`,
-                (p) => p.github.updateHook(hook.id, { active: true }),
-              ),
-            ]),
     ...(!cut.mediaDomain
       ? []
       : !media.attached
@@ -362,6 +443,22 @@ export function restorePlan(site, { configPath }) {
         ]
       : []),
     manual("CMS", `if you removed the DNS record for ${ops.domains.admin}, add it back by hand`),
+    ...(cut.workersDev?.[ci.worker]
+      ? [restoredWorkersDev("CI", ci.worker, cut.workersDev[ci.worker], ci.subdomain)]
+      : []),
+    ...(cut.webhook === undefined
+      ? []
+      : !hook
+        ? [manual("CI", `the GitHub push webhook ${cut.webhook} is gone: run pnpm github:setup`)]
+        : hook.active
+          ? [done("CI", `the GitHub push webhook ${hook.id} is active`)]
+          : [
+              todo(
+                "CI",
+                `reactivate the GitHub push webhook ${hook.id} on ${ops.github.repository}`,
+                (p) => p.github.updateHook(hook.id, { active: true }),
+              ),
+            ]),
     site.record
       ? todo("Record", "remove offboarded from gq.ops.json (commit it)", () =>
           updateManifest(configPath, (manifest) => {

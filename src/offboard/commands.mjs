@@ -19,7 +19,7 @@ import { planManagedFiles } from "../sync/managed-files.mjs";
 import { archivePlan, inspectArchive } from "./archive.mjs";
 import { runPlan } from "./plan.mjs";
 import { withOffboardingProviders } from "./providers.mjs";
-import { cutPlan, inspectSite, restorePlan } from "./steps.mjs";
+import { assertOwnDatabase, cutPlan, inspectSite, restorePlan } from "./steps.mjs";
 
 // Command → [usage, the options it accepts, runner].
 const OFFBOARD_COMMANDS = new Map([
@@ -106,6 +106,7 @@ async function runOffboard(dependencies) {
         finished: `Restored ${ops.project}. Commit gq.ops.json, then deploy as usual.`,
       });
     }
+    await assertOwnDatabase(ops, providers.ploi);
     return runPlan(cutPlan(site, options), providers, {
       ui,
       parsed,

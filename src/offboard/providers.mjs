@@ -42,11 +42,14 @@ import {
 
 // What the run's temporary token may do: detach and attach Workers custom
 // domains and switch workers.dev, and toggle the media bucket's domain.
+// D1 Read finds the publication stores that tie the Frontend's other stages
+// to the project.
 export const offboardingAccountPermissions = [
   "Workers Scripts Read",
   "Workers Scripts Write",
   "Workers Routes Write",
   "Workers R2 Storage Write",
+  "D1 Read",
 ];
 export const offboardingZonePermissions = ["Zone Read", "DNS Write", "Workers Routes Write"];
 // The archive also deletes: Workers (and their Workflows), container
@@ -54,7 +57,6 @@ export const offboardingZonePermissions = ["Zone Read", "DNS Write", "Workers Ro
 // repositories; and deletes DNS records with the zone permissions above.
 export const archiveAccountPermissions = [
   ...offboardingAccountPermissions,
-  "D1 Read",
   "D1 Write",
   "Workers Containers Read",
   "Workers Containers Write",
@@ -243,6 +245,9 @@ function scopedKeys({ manager, accountId, project, groups, fetch }) {
 
 function cloudflareOperations({ manager, cloudflare, zone, managerId, project, fetch }) {
   const prefix = tokenName(project, "");
+  // A Worker's settings (its bindings), or null when it is gone.
+  const workerSettings = (script) =>
+    cloudflare("GET", `/workers/scripts/${script}/settings`, undefined, GONE);
   return {
     // The project's own tokens ("GETQUICK <PROJECT> …"), without the
     // temporary ones gq mints and deletes, and never the manager token.
@@ -277,6 +282,10 @@ function cloudflareOperations({ manager, cloudflare, zone, managerId, project, f
         zone_id: zoneId,
         environment: "production",
       }),
+    // A Worker's bindings (none once it is gone).
+    async workerBindings(script) {
+      return (await workerSettings(script))?.bindings ?? [];
+    },
     workerSubdomain: (script) => cloudflare("GET", `/workers/scripts/${script}/subdomain`),
     // `previewsEnabled` left out keeps Cloudflare's default for it.
     setWorkerSubdomain: (script, { enabled, previewsEnabled }) =>
@@ -294,21 +303,32 @@ function cloudflareOperations({ manager, cloudflare, zone, managerId, project, f
       cloudflare("DELETE", `/r2/buckets/${bucket}/domains/custom/${domain}`, undefined, GONE),
     deleteToken: (token) => manager("DELETE", `/tokens/${token.id}`),
 
-    // What the archive reads, exports and deletes.
+    // What the archive reads, exports and deletes. Whether something is
+    // there is an exact lookup wherever Cloudflare has one: a listing may
+    // miss it, and the plan must not say it is deleted.
     async workers() {
-      return (await cloudflare("GET", "/workers/scripts")).map((script) => script.id);
+      const scripts = await cloudflare("GET", "/workers/scripts", undefined, { paginate: true });
+      return [...new Set(scripts.map((script) => script.id))];
+    },
+    async workerExists(script) {
+      return (await workerSettings(script)) !== null;
     },
     deleteWorker: (name) => cloudflare("DELETE", `/workers/scripts/${name}`, undefined, GONE),
-    async workflows() {
-      const workflows = await cloudflare("GET", "/workflows", undefined, { paginate: true });
-      return workflows.map(({ name }) => name);
+    async workflowExists(name) {
+      return (await cloudflare("GET", `/workflows/${name}`, undefined, GONE)) !== null;
     },
     deleteWorkflow: (name) => cloudflare("DELETE", `/workflows/${name}`, undefined, GONE),
-    containerApplications: () => cloudflare("GET", "/containers/applications"),
+    containerApplications: () =>
+      cloudflare("GET", "/containers/applications", undefined, { paginate: true }),
     deleteContainerApplication: (id) =>
       cloudflare("DELETE", `/containers/applications/${id}`, undefined, GONE),
     async d1(name) {
-      const found = await cloudflare("GET", `/d1/database?name=${encodeURIComponent(name)}`);
+      const found = await cloudflare(
+        "GET",
+        `/d1/database?name=${encodeURIComponent(name)}`,
+        undefined,
+        { paginate: true },
+      );
       return found.find((database) => database.name === name);
     },
     // Every D1 store whose name starts with `prefix`.
@@ -344,11 +364,7 @@ function cloudflareOperations({ manager, cloudflare, zone, managerId, project, f
       throw new Error("The D1 export did not finish within 15 minutes.");
     },
     async bucketExists(name) {
-      const { buckets = [] } = await cloudflare(
-        "GET",
-        `/r2/buckets?name_contains=${encodeURIComponent(name)}`,
-      );
-      return buckets.some((bucket) => bucket.name === name);
+      return (await cloudflare("GET", `/r2/buckets/${name}`, undefined, GONE)) !== null;
     },
     createBucket: (name) => cloudflare("POST", "/r2/buckets", { name }),
     deleteBucket: (name) => cloudflare("DELETE", `/r2/buckets/${name}`, undefined, GONE),
@@ -383,6 +399,13 @@ function ploiOperations(client, siteId) {
       return (
         (await client.request("GET", sitePath, undefined, { allowNotFound: true }))?.data ?? null
       );
+    },
+    // The site's .env file, as text ("" without one).
+    async siteEnv() {
+      const response = await client.request("GET", `${sitePath}/env`, undefined, {
+        allowNotFound: true,
+      });
+      return String(response?.data ?? response?.env ?? response?.content ?? "");
     },
     deleteSite: () => client.request("DELETE", sitePath, undefined, GONE),
     // Every site on the server.

@@ -45,6 +45,8 @@ export function createPloiServerClient({ token, serverId, fetch }) {
         ? new URL(url).pathname.replace(`/api/servers/${serverId}`, "") + new URL(url).search
         : null;
     }
+    // A listing cut short would look complete.
+    if (next) throw new Error(`Ploi GET ${path} has more than 50 pages.`);
     return items;
   }
 

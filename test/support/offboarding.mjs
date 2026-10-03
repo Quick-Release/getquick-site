@@ -129,6 +129,11 @@ const object = (body, lastModified = "2026-09-01T10:00:00.000Z") => ({
   lastModified,
 });
 
+// A Frontend stage Worker's binding to its publication store `uuid`.
+export const publicationBinding = (uuid) => [
+  { type: "d1", name: "PUBLICATION_DB", database_id: uuid },
+];
+
 // A Site with everything still exposed, unless `overrides` says otherwise.
 export function exposedState() {
   return {
@@ -169,6 +174,8 @@ export function exposedState() {
       status: "active",
       system_user: "fixture",
     },
+    // The site's .env, as Ploi hands it out.
+    siteEnv: "WP_ENV=production\nDB_NAME=fixture_db\nDB_USER=fixture\n",
     // The server's other sites, besides `site`.
     otherSites: [{ id: 35, domain: "other-cms.example.test", system_user: "other" }],
     crontabs: [
@@ -183,6 +190,13 @@ export function exposedState() {
     staging: { ...STAGING },
     // What the archive (phase 2) reads and deletes.
     workers: ["fixture-fe", "fixture-ci", "other-fe"],
+    // Each Worker's bindings (its settings), by name.
+    bindings: {},
+    // Names the account's listings leave out (an exact lookup still finds
+    // them), and whether its token listings come bare (20 at most, without
+    // result_info).
+    unlisted: [],
+    bareListings: false,
     d1: [
       { uuid: "d1-fixture", name: "fixture-fe-publications" },
       { uuid: "d1-other", name: "other-fe-publications" },
@@ -296,7 +310,9 @@ export function fakeAccount(overrides = {}) {
     if (path.startsWith("/tokens")) {
       assert.equal(bearer, "manager-secret", `${method} ${path} uses the manager token`);
       const tokenPage = /^\/tokens\?(.*)$/u.exec(path)?.[1];
-      if (method === "GET" && tokenPage) return paged(state.tokens, new URLSearchParams(tokenPage));
+      if (method === "GET" && tokenPage) {
+        return paged(state.tokens, new URLSearchParams(tokenPage), state.bareListings);
+      }
       if (method === "GET" && path === "/tokens/verify") return ok({ id: "manager" });
       if (method === "GET" && path === "/tokens/permission_groups") return ok(PERMISSION_GROUPS);
       if (method === "POST" && path === "/tokens") {
@@ -357,8 +373,15 @@ export function fakeAccount(overrides = {}) {
         return ok(state.subdomains[script]);
       }
     }
-    if (method === "GET" && path === "/workers/scripts") {
-      return ok(state.workers.map((name) => ({ id: name })));
+    const settings = /^\/workers\/scripts\/([^/?]+)\/settings$/u.exec(path)?.[1];
+    if (method === "GET" && settings) {
+      if (!state.workers.includes(settings)) return notFound();
+      return ok({ bindings: state.bindings[settings] ?? [] });
+    }
+    // Cloudflare lists every Worker at once, whatever page is asked for,
+    // without result_info.
+    if (method === "GET" && /^\/workers\/scripts(?:\?.*)?$/u.test(path)) {
+      return ok(listed(state.workers).map((name) => ({ id: name })));
     }
     const worker = /^\/workers\/scripts\/([^/?]+)$/u.exec(path)?.[1];
     if (method === "DELETE" && worker) {
@@ -394,32 +417,26 @@ export function fakeAccount(overrides = {}) {
       state.log.push(`d1 ${d1} deleted`);
       return ok(null);
     }
-    const workflowPage = /^\/workflows\?(.*)$/u.exec(path)?.[1];
-    if (method === "GET" && workflowPage) {
-      const workflows = state.workflows.map((name) => ({ id: `wf-${name}`, name }));
-      return paged(workflows, new URLSearchParams(workflowPage));
+    const workflow = /^\/workflows\/([^/?]+)$/u.exec(path)?.[1];
+    if (method === "GET" && workflow) {
+      return state.workflows.includes(workflow) ? ok({ name: workflow }) : notFound();
     }
-    const workflow = /^\/workflows\/([^/]+)$/u.exec(path)?.[1];
     if (method === "DELETE" && workflow) {
       if (!state.workflows.includes(workflow)) return notFound();
       state.workflows = state.workflows.filter((name) => name !== workflow);
       state.log.push(`workflow ${workflow} deleted`);
       return ok(null);
     }
-    if (method === "GET" && path === "/containers/applications") return ok(state.containers);
+    const containerPage = /^\/containers\/applications(?:\?(.*))?$/u.exec(path);
+    if (method === "GET" && containerPage) {
+      const containers = state.containers.filter(({ name }) => !state.unlisted.includes(name));
+      return paged(containers, new URLSearchParams(containerPage[1] ?? ""));
+    }
     const container = /^\/containers\/applications\/([^/]+)$/u.exec(path)?.[1];
     if (method === "DELETE" && container) {
       state.containers = state.containers.filter(({ id }) => id !== container);
       state.log.push(`container application ${container} deleted`);
       return ok(null);
-    }
-    const contains = /^\/r2\/buckets\?name_contains=(.+)$/u.exec(path)?.[1];
-    if (method === "GET" && contains) {
-      return ok({
-        buckets: Object.keys(state.buckets)
-          .filter((name) => name.includes(contains))
-          .map((name) => ({ name })),
-      });
     }
     if (method === "POST" && path === "/r2/buckets") {
       assert.equal(state.buckets[data.name], undefined, "the bucket is created once");
@@ -427,7 +444,9 @@ export function fakeAccount(overrides = {}) {
       state.log.push(`bucket ${data.name} created`);
       return ok({ name: data.name });
     }
-    const bucket = /^\/r2\/buckets\/([^/]+)$/u.exec(path)?.[1];
+    const bucket = /^\/r2\/buckets\/([^/?]+)$/u.exec(path)?.[1];
+    if (method === "GET" && bucket)
+      return state.buckets[bucket] ? ok({ name: bucket }) : notFound();
     if (method === "DELETE" && bucket) {
       if (!state.buckets[bucket]) return notFound();
       if (Object.keys(state.buckets[bucket]).length > 0) {
@@ -468,6 +487,11 @@ export function fakeAccount(overrides = {}) {
     }
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
+
+  // What a listing shows of `names`.
+  function listed(names) {
+    return names.filter((name) => !state.unlisted.includes(name));
+  }
 
   // R2's S3 API: a key reaches a bucket only through a live token scoped to
   // it (Sigillo staging's R2 key is `state.stagingBucket`'s own).
@@ -594,6 +618,9 @@ export function fakeAccount(overrides = {}) {
     const route = `${method} ${path}`;
     if (route === "GET /sites/34") {
       return state.site ? { data: state.site } : json({ message: "Not found" }, 404);
+    }
+    if (route === "GET /sites/34/env") {
+      return state.site ? { data: state.siteEnv } : json({ message: "Not found" }, 404);
     }
     if (route === "POST /sites/34/suspend") {
       state.site = { ...state.site, status: "suspended" };
@@ -733,13 +760,16 @@ export function fakeAccount(overrides = {}) {
   return { fetch, exec, state };
 }
 
-// One page of a Cloudflare listing: 20 items unless asked, at most 50.
-function paged(items, query) {
-  const size = Math.min(Number(query.get("per_page") ?? 20), 50);
+// One page of a Cloudflare listing: 20 items unless asked, at most 50;
+// `bare`, at most 20 and without result_info.
+function paged(items, query, bare = false) {
+  const size = Math.min(Number(query.get("per_page") ?? 20), bare ? 20 : 50);
   const page = Number(query.get("page") ?? 1);
+  const result = items.slice((page - 1) * size, page * size);
+  if (bare) return { success: true, result };
   return {
     success: true,
-    result: items.slice((page - 1) * size, page * size),
+    result,
     result_info: {
       page,
       per_page: size,

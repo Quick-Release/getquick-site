@@ -11,24 +11,30 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   ([ADR 0011](docs/adr/0011-offboard-a-site-by-cutting-access-before-archiving.md),
   [Offboarding a Site](docs/guides/offboarding.md)). It first records
   `offboarded` in `gq.ops.json` (new in the schema; commit it), so the guards
-  hold even if a later step fails. Then: a final database backup, the CMS's
-  retry crontab and the Ploi site (suspended), the custom domains, workers.dev
-  and preview URLs of the Frontend Worker and of its other stages
-  (`<project>-fe-<stage>`), the media bucket's domain, the GitHub push webhook
-  and the CI Worker's workers.dev, and last every `GETQUICK <PROJECT> …`
-  Cloudflare token (disabled), however many pages the account lists them on.
-  It notes each change in `offboarded.cut`. It prints the plan (`✓` done, `-`
-  to cut, `!` by hand), needs `--yes` outside a terminal, supports
-  `--dry-run`, and only cuts what is still exposed, so a failed run is
-  finished by running it again. It refuses to start unless the managed deploy
-  files are as `gq sync` writes them, or when `ploi.siteId` names a Ploi site
-  other than `domains.admin`.
-- `gq offboard --restore` reverses exactly what the cut recorded: it
-  re-enables the tokens the cut disabled (never creating them again; one
-  disabled before stays so), each Worker's workers.dev and preview URLs as
-  they were, the webhook, the media domain, every detached Worker domain, the
-  Ploi site, and the retry crontab if the cut deleted one, and removes
-  `offboarded`.
+  hold even if a later step fails. Then: a final database backup, the GitHub
+  push webhook and the CI Worker's workers.dev (so no push mid-cut deploys),
+  the CMS's retry crontab and the Ploi site (suspended), the custom domains,
+  workers.dev and preview URLs of the Frontend Worker and of its other stages
+  (each a `<project>-fe-<stage>` Worker whose `PUBLICATION_DB` binding is
+  `<project>-fe-publications-<stage>`), the media bucket's domain, and last
+  every `GETQUICK <PROJECT> …` Cloudflare token (disabled), however many pages
+  the account lists them on. A CI Worker or media bucket not named
+  `<project>-ci` or `<project>-media` may be shared, so it is left for the
+  operator. It notes each change in `offboarded.cut` once made. It prints the
+  plan (`✓` done, `-` to cut, `!` by hand), needs `--yes` outside a terminal,
+  supports `--dry-run`, and only cuts what is still exposed, so a failed run
+  is finished by running it again. It refuses to start unless the managed
+  deploy files are as `gq sync` writes them, when `ploi.siteId` names a Ploi
+  site other than `domains.admin` or one not running as `ploi.systemUser`, or
+  when the site's `.env` names another database than `ploi.database`. Run it
+  from an up-to-date deploy branch with gh 2.48 or later, and push
+  `gq.ops.json` straight after.
+- `gq offboard --restore` reverses exactly what the cut recorded, in the
+  reverse order: it re-enables the tokens the cut disabled (never creating
+  them again; one disabled before stays so), the media domain, every detached
+  Worker domain, each Worker's workers.dev and preview URLs as they were, the
+  Ploi site, the retry crontab if the cut deleted one, and the webhook, and
+  removes `offboarded`.
 - While `offboarded` is set, every command that would expose the Site again
   refuses and names `gq offboard --restore`: `cloudflare media`,
   `deploy-token`, `ci`, `releases`, `github setup`, `ci deploy`,
@@ -43,15 +49,19 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   refuses a Site whose cut isn't recorded. It asks for the project's name in a
   terminal (`--yes` elsewhere), and supports `--dry-run`. It archives to the
   private, shared R2 bucket `offboarded-clients` under
-  `<project>/<UTC date>/`: `uploads.zip` (every media object, keys kept,
-  streamed), `database.sql.gz` (a fresh dump), `publications.sql` (the D1
-  store's export, and one per other stage), `backups/` (the Site's own),
+  `<project>/<UTC date>/`: `uploads.zip` (every object of the project's own
+  media bucket, keys kept, streamed), `database.sql.gz` (a fresh dump),
+  `publications.sql` (the D1 store's export, and one per other stage),
+  `backups/` (the Site's own, or everything under `backups.prefix` when the
+  backups bucket goes whole),
   `gq.ops.json` and `manifest.json` (each file's size and sha256, and the
   source resources). Each media object and backup must hold the bytes its
-  bucket lists. It reads every file back and stops before deleting anything
+  bucket lists, or the run stops and says to move what it wrote aside. It
+  reads every file back and stops before deleting anything
   if one differs, or if `uploads.zip` doesn't hold every media object. It
   won't start a new archive over objects already under its prefix, once a
-  source is gone, or without the cut's final backup. Then, in gq-smoke-down's
+  source is gone, without the cut's final backup, or when the Ploi site or
+  its `.env` database isn't the Site's. Then, in gq-smoke-down's
   order, it deletes the Ploi site (forgetting `ploi.siteId`), database and
   system user (kept while another site runs as it), the Frontend Workers and
   their D1 stores (every stage), the CI Worker, Workflows and container
@@ -60,15 +70,21 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   bucket itself stays: other Sites may share it), the Artifacts repository,
   only the `A`, `AAAA` and `CNAME` records of the Site's own hosts on the
   shared zone (never at its apex), then the project's tokens. It deletes
-  nothing whose name isn't the project's or `<project>-…`, listing it for the
-  operator instead. Last, it deletes the GitHub webhook and archives the
+  nothing not named exactly as gq names the project's own (`<project>-media`,
+  `-releases`, `-ci-backups`, `-fe`, `-fe-publications`, `-ci`, `-mirror`,
+  `-ci-cisandbox`, and the Artifacts repository `<project>`) or tied to it by
+  a stage's binding, listing it for the operator instead, with a shared media
+  bucket's domain and DNS records. It says something is deleted only once an
+  exact lookup finds it gone. Last, it deletes the GitHub webhook and archives the
   repository. It records
   `offboarded: { phase: "archived", archive: { bucket, prefix, manifestSha256 } }`
   (new in the schema), and a rerun after a failure resumes without archiving
   again. `gq offboard --restore` refuses once the archive is recorded.
 - The Cloudflare commands find their tokens across every page of the
   account's listing: `gq cloudflare deploy-token`, `ci` and `releases` no
-  longer create a duplicate of a token that isn't among the first 50.
+  longer create a duplicate of a token that isn't among the first 50. A
+  listing without page totals is read until an empty page, and Ploi listings
+  past 50 pages fail instead of stopping silently.
 - Managed `package.json` scripts `offboard`, `offboard:restore` and
   `offboard:archive`, through `gq sigillo run operations`. **Existing sites:**
   `gq sync` adds them and updates the three deploy files.
