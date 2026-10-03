@@ -23,7 +23,8 @@ pnpm cf:releases          # the CMS release bucket
 pnpm cf:media             # the media bucket on its own public domain
 pnpm ploi:media           # the CMS's .env points S3 Uploads at it
 pnpm cf:ci                # Artifacts, CI backups, the CI deploy token
-pnpm github:setup         # the push webhook
+pnpm github:setup         # the push webhook (an Artifacts-only Site: nothing to do)
+pnpm git:artifacts setup  # an Artifacts-only Site: origin is Artifacts
 pnpm frontend:secrets     # FRONTEND_REFRESH_TOKEN, PUBLICATION_EVENT_SECRET
 pnpm ci:deploy            # the CI Worker, with both, so releases bind them
 pnpm ploi:events          # the CMS's event key and its every-minute crontab
@@ -219,6 +220,24 @@ these commands deploy and connect it:
   host, and drops the Artifacts push URL older setups added to `origin`. As
   the helper, `get` answers that host only with a read-only git token that
   expires in an hour; nothing is stored.
+
+### Artifacts-only Sites
+
+A Site without `github.repository` keeps its code in its Artifacts repository
+only ([ADR 0012](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0012-keep-a-sites-code-in-artifacts-when-it-has-no-github-repository.md)).
+Pushes to it start CI directly; there is no webhook, mirror or commit status.
+
+- `gq sync` renders the CI Worker's `GITHUB_REPOSITORY` empty, and the Worker
+  answers `/github/webhook` with a 404.
+- `cloudflare ci` creates the Artifacts repository as for any Site;
+  `ci deploy` doesn't need `GITHUB_CI_TOKEN` or `GITHUB_WEBHOOK_SECRET`, and
+  `github setup` has nothing to do.
+- `git artifacts setup` also adds the Artifacts repository as `origin` when
+  the checkout has none, and exits 1 when `origin` points elsewhere. Its
+  credential helper hands out one-hour **write** tokens, so `git push` and
+  `pnpm push` work. `gq doctor` checks both.
+- `gq offboard` doesn't support an Artifacts-only Site yet: it needs
+  `github.repository`.
 
 ## Independent media
 

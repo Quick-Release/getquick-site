@@ -1,9 +1,10 @@
 {
   // Lombardi CI on Cloudflare: pushes to the Artifacts repository (gq.ops.json
   // artifacts) start the CI Workflow (cloudflare.ci.ts), whose steps run in
-  // sandbox containers built from ./Dockerfile. GitHub pushes reach Artifacts
-  // through the GitHub webhook (workers.dev URL, HMAC-verified) and the Mirror
-  // Workflow (mirror.ts). Deployed with `pnpm ci:deploy`.
+  // sandbox containers built from ./Dockerfile. A site on GitHub has its pushes
+  // reach Artifacts through the GitHub webhook (workers.dev URL, HMAC-verified)
+  // and the Mirror Workflow (mirror.ts); an Artifacts-only site, with an empty
+  // GITHUB_REPOSITORY, pushes to Artifacts itself. Deployed with `pnpm ci:deploy`.
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "lombardi-ci",
   "main": "src/index.ts",

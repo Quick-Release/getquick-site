@@ -14,8 +14,7 @@ import { join } from "node:path";
 export const DEFAULT_CI_DIRECTORY = "infra/ci";
 
 // Worker secret ← secret-store secret. R2_* are the CI SDK's snapshot
-// credentials; the releases bucket key goes in as RELEASES_R2_*. GITHUB_*
-// feed the GitHub → Artifacts mirror and commit statuses (`gq github setup`).
+// credentials; the releases bucket key goes in as RELEASES_R2_*.
 export const workerSecrets = Object.freeze({
   CF_TOKEN: "CLOUDFLARE_API_TOKEN",
   R2_ACCESS_KEY_ID: "CI_BACKUP_R2_ACCESS_KEY_ID",
@@ -23,10 +22,16 @@ export const workerSecrets = Object.freeze({
   PLOI_API_TOKEN: "PLOI_API_TOKEN",
   RELEASES_R2_ACCESS_KEY_ID: "R2_ACCESS_KEY_ID",
   RELEASES_R2_SECRET_ACCESS_KEY: "R2_SECRET_ACCESS_KEY",
-  GITHUB_CI_TOKEN: "GITHUB_CI_TOKEN",
-  GITHUB_WEBHOOK_SECRET: "GITHUB_WEBHOOK_SECRET",
   // The site's login to the GETQUICK Composer registry.
   COMPOSER_AUTH: "COMPOSER_AUTH",
+});
+
+// The GitHub → Artifacts mirror and commit statuses (`gq github setup`), for
+// a site whose code lives on GitHub (gq.ops.json `github.repository`). An
+// Artifacts-only site pushes to Artifacts itself and needs neither.
+export const githubWorkerSecrets = Object.freeze({
+  GITHUB_CI_TOKEN: "GITHUB_CI_TOKEN",
+  GITHUB_WEBHOOK_SECRET: "GITHUB_WEBHOOK_SECRET",
 });
 
 // The release step hands these to the Frontend deploy when they are set, so a
@@ -38,8 +43,9 @@ export const optionalWorkerSecrets = Object.freeze({
   PUBLICATION_EVENT_SECRET: "PUBLICATION_EVENT_SECRET",
 });
 
-export function secretsPayload(environment) {
-  const missing = Object.values(workerSecrets).filter((name) => !environment[name]);
+export function secretsPayload(environment, { github = true } = {}) {
+  const required = { ...workerSecrets, ...(github ? githubWorkerSecrets : {}) };
+  const missing = Object.values(required).filter((name) => !environment[name]);
   if (missing.length > 0) {
     throw new Error(
       `Missing in the secret store: ${missing.join(", ")} (see gq cloudflare ci / cloudflare releases / github setup).`,
@@ -50,10 +56,7 @@ export function secretsPayload(environment) {
   );
   return JSON.stringify(
     Object.fromEntries(
-      [...Object.entries(workerSecrets), ...optional].map(([key, from]) => [
-        key,
-        environment[from],
-      ]),
+      [...Object.entries(required), ...optional].map(([key, from]) => [key, environment[from]]),
     ),
   );
 }
@@ -105,7 +108,9 @@ async function wrangler(exec, target, args, options) {
 // `gq ci deploy`. Resolves to an exit code.
 export async function runCiDeploy({ context, env, exec, io }) {
   const target = ciTarget(context, env);
-  const payload = secretsPayload(context.env);
+  const payload = secretsPayload(context.env, {
+    github: Boolean(context.config.github?.repository),
+  });
   await wrangler(exec, target, ["deploy"], { stdio: "inherit" });
   await wrangler(exec, target, ["secret", "bulk"], {
     input: payload,

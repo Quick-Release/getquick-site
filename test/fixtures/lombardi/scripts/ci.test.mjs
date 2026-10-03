@@ -38,20 +38,20 @@ test("verifies GitHub webhook signatures", async () => {
 
 test("mirrors branch and tag pushes of the configured repository only", async () => {
   const { parsePushEvent } = await import("../infra/ci/github.ts");
-  const push = (ref, repository = "Quick-Release/lombardi") =>
+  const push = (ref, repository = "example/site") =>
     JSON.stringify({ ref, repository: { full_name: repository } });
-  assert.deepEqual(parsePushEvent(push("refs/heads/main"), "Quick-Release/lombardi"), {
+  assert.deepEqual(parsePushEvent(push("refs/heads/main"), "example/site"), {
     ref: "refs/heads/main",
   });
-  assert.deepEqual(parsePushEvent(push("refs/tags/v0.2.0"), "Quick-Release/lombardi"), {
+  assert.deepEqual(parsePushEvent(push("refs/tags/v0.2.0"), "example/site"), {
     ref: "refs/tags/v0.2.0",
   });
   assert.equal(
-    parsePushEvent(push("refs/heads/main", "someone/else"), "Quick-Release/lombardi"),
+    parsePushEvent(push("refs/heads/main", "someone/else"), "example/site"),
     null,
   );
-  assert.equal(parsePushEvent(push("refs/pull/1/head"), "Quick-Release/lombardi"), null);
-  assert.equal(parsePushEvent(push("refs/heads/a:b"), "Quick-Release/lombardi"), null);
+  assert.equal(parsePushEvent(push("refs/pull/1/head"), "example/site"), null);
+  assert.equal(parsePushEvent(push("refs/heads/a:b"), "example/site"), null);
 });
 
 test("the mirror script converges Artifacts on GitHub's refs", async () => {

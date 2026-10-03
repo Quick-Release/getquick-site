@@ -79,7 +79,9 @@ function templateValues(manifest) {
     "cloudflare.accountId": manifest.cloudflare?.accountId,
     "domains.admin": manifest.domains?.admin,
     "domains.frontend": manifest.domains?.frontend,
-    "github.repository": manifest.github?.repository,
+    // Optional: a site without one keeps its code in Artifacts only, so it
+    // renders empty rather than as a placeholder to fill in.
+    "github.repository": manifest.github?.repository ?? "",
   };
 }
 

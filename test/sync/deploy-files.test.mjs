@@ -122,7 +122,8 @@ test("a gq new site's deploy files hold placeholders until gq.ops.json has the v
   const wrangler = await readSite(site.root, "infra/ci/wrangler.jsonc");
   assert.match(wrangler, /^ {2}"name": "<ci\.worker>",$/mu);
   assert.match(wrangler, /^ {4}"CLOUDFLARE_ACCOUNT_ID": "<cloudflare\.accountId>",$/mu);
-  assert.match(wrangler, /^ {4}"GITHUB_REPOSITORY": "<github\.repository>",$/mu);
+  // GitHub is optional: without a repository the site is Artifacts-only.
+  assert.match(wrangler, /^ {4}"GITHUB_REPOSITORY": "",$/mu);
 
   await fillManifest(site.root);
   const check = await site.run(["sync", "--check"]);
@@ -132,7 +133,6 @@ test("a gq new site's deploy files hold placeholders until gq.ops.json has the v
     [
       "gq.ops.json: up to date (schema v1).",
       "infra/ci/wrangler.jsonc: pending, gq sync would update it.",
-      "scripts/ci.test.mjs: pending, gq sync would update it.",
       "gq.lock.json: pending, gq sync would update it.",
       "",
     ].join("\n"),

@@ -38,19 +38,21 @@ export class CI extends CIWorkflow<CloudflareArtifacts, Bindings> {
     const params = event.payload;
     const run = event.instanceId.slice(0, 8);
 
-    // Branch pushes report a cloudflare-ci commit status to GitHub (PR checks,
-    // branch protection). Tags don't: an annotated tag's sha is the tag
-    // object, which GitHub can't attach a status to. Reporting never fails
+    // Branch pushes of a site on GitHub report a cloudflare-ci commit status
+    // to GitHub (PR checks, branch protection). Tags don't: an annotated tag's
+    // sha is the tag object, which GitHub can't attach a status to. An
+    // Artifacts-only site has no GitHub to report to. Reporting never fails
     // the pipeline.
+    const { GITHUB_CI_TOKEN: token, GITHUB_REPOSITORY: repository } = this.env;
     const report = async (state: CommitState, description: string) => {
-      if (params.trigger !== "push") return;
+      if (params.trigger !== "push" || !token || !repository) return;
       try {
         await step.do(
           `github status ${state}`,
           { retries: { limit: 3, delay: 5_000, backoff: "exponential" }, timeout: 60_000 },
           () =>
             postCommitStatus(
-              { token: this.env.GITHUB_CI_TOKEN, repository: this.env.GITHUB_REPOSITORY },
+              { token, repository },
               params.sha,
               state,
               `${description} · run ${run}`,

@@ -25,6 +25,7 @@ const OPS = {
   },
   cloudflare: { accountId: "account-1" },
   artifacts: { namespace: "fixture-ns", repo: "fixture" },
+  github: { repository: "example/fixture" },
 };
 
 const ARTIFACTS_REMOTE = "https://account-1.artifacts.cloudflare.net/git/fixture-ns/fixture.git";
@@ -220,8 +221,9 @@ test("gq verify takes its own options only", async () => {
 
 // --- gq doctor ---------------------------------------------------------------
 
-async function healthySite(files = {}) {
+async function healthySite(files = {}, ops = OPS) {
   const fixture = await site({
+    ops,
     files: {
       "apps/cms/vendor/autoload.php": "",
       "apps/cms/.env": "",
@@ -293,6 +295,29 @@ test("gq doctor warns, without failing, about drift from the pins", async () => 
   assert.match(result.stdout, /⚠ Node\.js 24\.1\.0 is running but \.mise\.toml pins 24\.21\.0/u);
   assert.match(result.stdout, /⚠ pnpm 11\.0\.0 is running but package\.json pins 12\.6\.0/u);
   assert.match(result.stdout, /⚠ origin still pushes to Cloudflare Artifacts too/u);
+});
+
+test("gq doctor wants an Artifacts-only site to push to Artifacts through gq's helper", async () => {
+  const fixture = await healthySite({}, { ...OPS, github: undefined });
+  const helper = `credential.https://account-1.artifacts.cloudflare.net.helper !"${fixture.path("node_modules/.bin/gq")}" sigillo run staging -- "${fixture.path("node_modules/.bin/gq")}" git artifacts`;
+  const helpers = { "git config --local --get-regexp ^credential\\..*\\.helper$": `${helper}\n` };
+
+  const pushing = await fixture.run(["doctor"], {
+    exec: machine({ pushUrls: [ARTIFACTS_REMOTE], stdout: helpers }),
+  });
+  assert.match(pushing.stdout, /✓ origin pushes to Cloudflare Artifacts \(no GitHub repository\)/u);
+
+  const onGithub = await fixture.run(["doctor"], { exec: machine({ stdout: helpers }) });
+  const noHelper = await fixture.run(["doctor"], {
+    exec: machine({ pushUrls: [ARTIFACTS_REMOTE] }),
+  });
+  for (const result of [onGithub, noHelper]) {
+    assert.equal(result.code, 0, result.stdout);
+    assert.match(
+      result.stdout,
+      /⚠ origin doesn't push to Cloudflare Artifacts through gq's credential helper .+ run: pnpm git:artifacts setup/u,
+    );
+  }
 });
 
 test("gq doctor reads the Node pin from .nvmrc when there is no .mise.toml", async () => {

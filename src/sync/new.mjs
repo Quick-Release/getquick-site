@@ -109,9 +109,18 @@ function reportProvisioning(io, { project, directory }) {
   io.out(`  cd ${directory}`);
   io.out("  pnpm install");
   io.out("  # Fill in gq.ops.json (sigillo, domains, ploi, releases, media, backups,");
-  io.out("  # cloudflare, artifacts, ci, github), then regenerate the managed files:");
+  io.out("  # cloudflare, artifacts, ci, github), then regenerate the managed files.");
+  io.out("  # Leave github out to keep the code in Cloudflare Artifacts only:");
   io.out("  pnpm exec gq sync");
-  for (const script of PROVISIONING) io.out(scriptLine(script));
+  for (const script of PROVISIONING) {
+    io.out(scriptLine(script));
+    // An Artifacts-only site pushes to Artifacts instead of connecting GitHub.
+    if (script === "github:setup") {
+      io.out(
+        `  ${"pnpm git:artifacts setup".padEnd(24)}  # or, without github: origin is Artifacts`,
+      );
+    }
+  }
   io.out("  # Release (pnpm push minor), install WordPress, then release again so the CMS");
   io.out("  # deploy activates the plugins and theme and applies the event key. CI releases");
   io.out("  # deploy the Frontend with its publication store. Then prepare the Site (until");

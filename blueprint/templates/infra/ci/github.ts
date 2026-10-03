@@ -1,7 +1,9 @@
-// GitHub side of the CI: GitHub stays the home of the code, issues and PRs;
+// GitHub side of the CI, for a site on GitHub (gq.ops.json
+// `github.repository`): GitHub stays the home of the code, issues and PRs;
 // its pushes reach the Artifacts repository through the mirror Workflow
-// (mirror.ts), and CI results go back as commit statuses. Plain functions (no
-// Workers-only imports) so Node can test them (scripts/ci.test.mjs).
+// (mirror.ts), and CI results go back as commit statuses. An Artifacts-only
+// site uses none of it. Plain functions (no Workers-only imports) so Node can
+// test them (scripts/ci.test.mjs).
 
 const encoder = new TextEncoder();
 
@@ -39,7 +41,7 @@ export type MirrorParams = { ref: string };
 // null for anything else, which the webhook acknowledges and ignores.
 export function parsePushEvent(body: string, repository: string): MirrorParams | null {
   const event = JSON.parse(body) as { ref?: unknown; repository?: { full_name?: unknown } };
-  if (event.repository?.full_name !== repository) return null;
+  if (!repository || event.repository?.full_name !== repository) return null;
   if (typeof event.ref !== "string" || !/^refs\/(heads|tags)\/[^\s:]+$/u.test(event.ref)) {
     return null;
   }
