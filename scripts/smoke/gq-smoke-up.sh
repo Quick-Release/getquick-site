@@ -196,16 +196,21 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# gq-smoke, up: the phase 2 gate (#7). Generates the throwaway content site
-# gq-smoke with the published `gq new`, verifies it, provisions it with the
-# existing gq commands, and releases it from a `v*` tag through its CI Worker.
+# gq-smoke, up: the phase 2 gate (#7) and spec #38's live acceptance (#48).
+# Generates the throwaway content site gq-smoke with the published `gq new`,
+# verifies it, provisions it with the existing gq commands (the Frontend's
+# secrets, the CMS's event key and retry crontab, independent media among
+# them), releases it from a `v*` tag through its CI Worker, prepares its
+# publication store, passes `gq site check`, and drives the editor-to-visitor
+# acceptance against the real CMS and Worker: publication, a shared setting,
+# a lost event, a prolonged CMS outage, a withdrawal and a redeploy.
 # Tear it down with scripts/smoke/gq-smoke-down.sh.
 #
 # Run from anywhere: scripts/smoke/gq-smoke-up.sh. Every stage is safe to
 # re-run: the gq commands are idempotent and the rest checks before acting.
 # Secrets only ever go to Sigillo; the state file holds public values only.
 
-TOTAL_STAGES=17
+TOTAL_STAGES=22
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/gq-smoke"
@@ -661,11 +666,16 @@ step "releases: the $PROJECT-releases bucket and its key"
 step "media: the $PROJECT-media bucket on https://$MEDIA_HOST, and its key"
 step "ploi:media: writes the media key into the Ploi site's .env (S3_UPLOADS_*)"
 step "ci: the Artifacts repo, the $PROJECT-ci-backups bucket and the CI deploy token"
+step "frontend:secrets: the Frontend's refresh token and event key, generated into Sigillo staging"
+step "ploi:events: the event key into the Ploi site's .env, and the every-minute retry crontab"
+note "The deploy token includes D1 for the publication store; an older one gains it, keeping its value."
 run pnpm cf:deploy-token
 run pnpm cf:releases
 run pnpm cf:media
 run pnpm ploi:media
 run pnpm cf:ci
+run pnpm frontend:secrets
+run pnpm ploi:events
 pause
 
 # ── 13 ────────────────────────────────────────────────────────────────────
@@ -727,6 +737,12 @@ else
   SECOND_TAG=$(release_tag 2)
 fi
 wait_for_release "$SECOND_TAG"
+say "The Frontend serves only what its publication store holds: until a refresh prepares it,"
+say "its pages are a 503. Preparing the whole Site (front page, chrome, every entry)."
+until site pnpm frontend:refresh; do
+  warn "The refresh didn't store everything (see the report above)."
+  confirm "Retry?" || break
+done
 until check_hosts "$SMOKE_MARKER"; do
   confirm "Re-enter the site title and check again?" || break
   ask SMOKE_MARKER "The Site title (WordPress → Settings → General):"
@@ -761,10 +777,100 @@ else
 fi
 if site pnpm media:check:upload; then
   say "Independent media proven on $SECOND_TAG; keep the output above as the evidence."
-  note "For the outage half, upload an image in the CMS, stop the CMS in Ploi, and"
-  note "curl -I its https://$MEDIA_HOST URL: it still answers 200. Then start the CMS again."
+  note "Its outage half runs in stage 21, with an image the acceptance post uses."
 else
   SKIPPED+=("pnpm media:check:upload reported the media prerequisite not ready")
+fi
+pause
+
+# The live acceptance helper, through Sigillo staging (the CMS check user and
+# the event key); its state file keeps only public values between stages.
+ACCEPTANCE="$REPO_ROOT/scripts/smoke/live-acceptance.mjs"
+accept() {
+  printf '  %s$ live-acceptance %s%s\n' "$DIM" "$*" "$RESET"
+  site env GQ_SMOKE_ACCEPTANCE="$STATE_DIR/acceptance.json" \
+    pnpm --silent exec gq sigillo run staging -- node "$ACCEPTANCE" "$@"
+}
+# acceptance LABEL ARGS...: an acceptance step, offering a retry; a failure
+# that isn't retried is carried into the closing summary.
+acceptance() {
+  local label="$1"
+  shift
+  until accept "$@"; do
+    warn "$label: not as expected (✗ above)."
+    confirm "Retry this check?" || { SKIPPED+=("live acceptance: $label failed"); return 1; }
+  done
+}
+ploi_site() { site pnpm --silent ops ploi api "sites.$1-site" --yes >/dev/null; }
+
+# ── 18 ────────────────────────────────────────────────────────────────────
+stage "Readiness gate (gq site check)"
+say "One gate for the resilience guarantee: the CMS's WPGraphQL schema, the Frontend's"
+say "bindings and prepared store, the CMS's scheduler reconciling, the CMS's event key and"
+say "crontab, and independent media with an upload. A running Worker or HTTP 200 isn't enough."
+note "The first reconciliation comes with the cron's next minute after the second release."
+until site pnpm site:check; do
+  warn "Not ready yet: each ✗ above says what to run."
+  confirm "Check again (after fixing, or a minute for the scheduler)?" || {
+    SKIPPED+=("gq site check didn't report ready")
+    break
+  }
+done
+pause
+
+# ── 19 ────────────────────────────────────────────────────────────────────
+stage "Live acceptance: invalid events, a publication, a shared setting"
+say "Invalid events and an unauthenticated refresh are refused by the real Worker; then the"
+say "media-check Author uploads an image and publishes a post with it through the REST API."
+acceptance "invalid events" refused
+acceptance "publication" publish
+TAGLINE="Acceptance tagline $(date +%H%M%S)"
+open_url "https://$ADMIN_HOST/wp/wp-admin/options-general.php"
+step "Settings → General → Tagline: $TAGLINE → Save Changes."
+pause "Press any key once it's saved"
+acceptance "shared setting" setting "$TAGLINE"
+pause
+
+# ── 20 ────────────────────────────────────────────────────────────────────
+stage "Live acceptance: a lost event, caught by reconciliation"
+say "A change made with WordPress's publication hook removed sends no event; the CMS's"
+say "every-minute scheduler has the Frontend reconcile, within the five-minute target."
+step "SSH to the server as the site's user (Ploi → Servers → SSH), then run exactly:"
+accept lost || SKIPPED+=("live acceptance: couldn't prepare the lost event")
+pause "Press any key right after running it"
+acceptance "lost-event reconciliation" lost-wait
+pause
+
+# ── 21 ────────────────────────────────────────────────────────────────────
+stage "Live acceptance: a prolonged CMS outage"
+OUTAGE_MINUTES="${GQ_SMOKE_OUTAGE_MINUTES:-15}"
+say "Suspends the Ploi site $ADMIN_HOST: the CMS stops answering. Pages, the post and its"
+say "image stay served; a page never stored is a 503. Checked again after $OUTAGE_MINUTES minutes"
+say "(GQ_SMOKE_OUTAGE_MINUTES), longer than any ordinary cache age; then the CMS is resumed."
+confirm "Suspend the CMS now?" || exit 1
+ploi_site suspend
+acceptance "CMS outage" outage
+note "Waiting $OUTAGE_MINUTES minutes; the Frontend reads nothing from the CMS meanwhile."
+sleep $((OUTAGE_MINUTES * 60))
+acceptance "prolonged outage" prolonged "$OUTAGE_MINUTES"
+ploi_site resume
+printf '  %s✓%s resumed %s\n' "$GREEN" "$RESET" "$ADMIN_HOST"
+pause
+
+# ── 22 ────────────────────────────────────────────────────────────────────
+stage "Live acceptance: withdrawal, outage and redeploy"
+say "Unpublishing the post makes it a 404 at once; it stays one with the CMS suspended"
+say "again and after a Frontend redeploy, which keeps the store. Then the post is deleted."
+acceptance "withdrawal" withdraw
+ploi_site suspend
+acceptance "withdrawal during an outage" withdrawn
+ploi_site resume
+run pnpm deploy:frontend
+acceptance "redeploy preservation" preserved
+accept cleanup || SKIPPED+=("delete the acceptance post and image in the CMS by hand")
+if (( ${#SKIPPED[@]} == 0 )); then
+  say "Spec #38's live acceptance passed on $SECOND_TAG. Record it in the issue, then tear down:"
+  note "scripts/smoke/gq-smoke-down.sh"
 fi
 pause
 

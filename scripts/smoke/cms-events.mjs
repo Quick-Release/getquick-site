@@ -44,17 +44,27 @@
 //   crontab `gq ploi events` installs: it retries a missed publication, and
 //   brings a change no event was recorded for to visitors within five minutes.
 //
+//   Readiness (gq site check, ADR 0010), on the same real runtimes: WordPress
+//   served over HTTP is not ready while it is uninstalled (its installer is
+//   named), installed without WPGraphQL, or with WPGraphQL (the real public
+//   plugin) but without the GETQUICK fields, which real WPGraphQL's own
+//   validation names; every other field the Frontend reads is valid on it.
+//   The Worker answering is not ready either until a refresh has prepared its
+//   store and the CMS's scheduler has had it reconcile; then the Frontend and
+//   its delivery are ready, during a CMS outage too.
+//
 // The Frontend reads published content from a stub WordPress that this proof
 // keeps in step with what it publishes, since the GETQUICK GraphQL schema
 // comes from private packages. Nothing reaches Cloudflare or a live CMS.
 //
 //   node scripts/smoke/cms-events.mjs <generated site directory> <download cache>
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { retryCrontab } from "../../src/ploi/events.mjs";
+import { cmsReadiness, frontendReadiness, SCHEMA_QUERY } from "../../src/site/readiness.mjs";
 import {
   buildFrontend,
   checker,
@@ -89,6 +99,18 @@ function setUpWordPress() {
   unzip(`wordpress-${version}.zip`, work);
   const plugins = join(wordpress, "wp-content/plugins");
   unzip("sqlite-database-integration.zip", plugins);
+  // The public WPGraphQL plugin, installed but not active: the readiness
+  // checks activate it.
+  unzip("wp-graphql.zip", plugins);
+  // WordPress served over HTTP for gq site check: files as they are, every
+  // other path through WordPress (pretty permalinks, /graphql).
+  writeFileSync(
+    join(work, "router.php"),
+    `<?php $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+if ($path !== '/' && is_file($_SERVER['DOCUMENT_ROOT'] . $path)) { return false; }
+$_SERVER['SCRIPT_NAME'] = '/index.php';
+require $_SERVER['DOCUMENT_ROOT'] . '/index.php';\n`,
+  );
   const sqlite = join(plugins, "sqlite-database-integration");
   writeFileSync(
     join(wordpress, "wp-content/db.php"),
@@ -175,12 +197,47 @@ async function settingsEvent(setting) {
   }
 }
 
+/** WordPress over HTTP (PHP's built-in server), for the readiness checks; resolves to the server. */
+async function serveWordPress(port) {
+  const server = spawn(
+    "php",
+    [
+      "-d",
+      "display_errors=stderr",
+      "-S",
+      `127.0.0.1:${port}`,
+      "-t",
+      wordpress,
+      join(work, "router.php"),
+    ],
+    { stdio: "ignore" },
+  );
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      await fetch(`http://127.0.0.1:${port}/wp-includes/version.php`);
+      return server;
+    } catch {
+      await new Promise((done) => setTimeout(done, 100));
+    }
+  }
+  server.kill();
+  throw new Error("PHP's built-in server didn't start");
+}
+
+/** The readiness checks by name, with a failure's details for the proof's log. */
+function byName(checks) {
+  return Object.fromEntries(checks.map((entry) => [entry.name, entry]));
+}
+const describeChecks = (checks) =>
+  checks.map(({ name, status, detail }) => `${name}=${status} (${detail})`).join("; ");
+
 /** Every page visitors get: the homepage and the entry, with the CMS down. */
 async function everyPage(port) {
   return Promise.all(["/", "/launch/"].map((path) => visit(port, path)));
 }
 
 let worker;
+let wpServer;
 try {
   setUpWordPress();
   await cms.start();
@@ -197,10 +254,25 @@ try {
     "--dbpass=wordpress",
     "--skip-check",
   ]);
+
+  // --- Readiness: a running CMS isn't a ready one ---
+  const wpPort = await freePort();
+  const wpOrigin = `http://127.0.0.1:${wpPort}`;
+  const graphqlUrl = `${wpOrigin}/graphql`;
+  wpServer = await serveWordPress(wpPort);
+  const uninstalled = byName(await cmsReadiness({ graphqlUrl, fetch }));
+  check(
+    "gq site check: WordPress running but not installed is not ready, and its installer is named",
+    uninstalled.wordpress?.status === "not-ready" &&
+      /WordPress isn't installed/u.test(uninstalled.wordpress.detail) &&
+      /install\.php/u.test(uninstalled.wordpress.action),
+    JSON.stringify(uninstalled),
+  );
+
   await wpOrFail([
     "core",
     "install",
-    "--url=http://cms.example.test",
+    `--url=${wpOrigin}`,
     "--title=Acme",
     "--admin_user=editor",
     "--admin_password=editor-password",
@@ -208,6 +280,47 @@ try {
     "--skip-email",
   ]);
   await wpOrFail(["rewrite", "structure", "/%postname%/"]);
+
+  const withoutGraphql = byName(await cmsReadiness({ graphqlUrl, fetch }));
+  check(
+    "gq site check: WordPress installed without WPGraphQL active is not ready",
+    withoutGraphql.wordpress?.status === "not-ready" &&
+      /isn't a WPGraphQL endpoint/u.test(withoutGraphql.wordpress.detail),
+    JSON.stringify(withoutGraphql),
+  );
+  await wpOrFail(["plugin", "activate", "wp-graphql"]);
+  await wpOrFail(["rewrite", "flush"]);
+  const realSchema = byName(await cmsReadiness({ graphqlUrl, fetch }));
+  // What real WPGraphQL's own validation says of the fields the Frontend
+  // reads: only those the GETQUICK plugins add may be missing.
+  const validation = await fetch(graphqlUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query: SCHEMA_QUERY }),
+  }).then((response) => response.json());
+  const unexpected = (validation.errors ?? []).filter(
+    ({ message }) =>
+      !/designTokens|siteLogo|siteIcon|"blocks"|"attributes"|"htmlContent"|"dynamicContent"|"postTemplate"/u.test(
+        message,
+      ),
+  );
+  check(
+    "gq site check: real WPGraphQL without the GETQUICK plugins is not ready, naming what adds the missing fields",
+    realSchema.wordpress?.status === "ok" &&
+      realSchema["wpgraphql-schema"]?.status === "not-ready" &&
+      /GETQUICK Design \(gq-design\)/u.test(realSchema["wpgraphql-schema"].detail) &&
+      /WPGraphQL Blocks/u.test(realSchema["wpgraphql-schema"].detail) &&
+      !/getquick-theme/u.test(realSchema["wpgraphql-schema"].detail),
+    JSON.stringify(realSchema),
+  );
+  check(
+    "and every other field the Frontend reads is valid on real WPGraphQL",
+    (validation.errors ?? []).length > 0 && unexpected.length === 0,
+    JSON.stringify(unexpected),
+  );
+  // The rest of the proof runs as before: WordPress without WPGraphQL, read
+  // by the Frontend through the stub that stands in for the GETQUICK schema.
+  await wpOrFail(["plugin", "deactivate", "wp-graphql"]);
 
   buildFrontend(join(site, "apps/frontend"), siteUrl, `http://127.0.0.1:${cms.port}/graphql`);
   const local = localWorker({
@@ -222,10 +335,39 @@ try {
     migrate.stderr,
   );
   worker = await local.start(port);
+  const readiness = async () =>
+    frontendReadiness({
+      origin: new URL(siteUrl),
+      project: "acme",
+      env: { PUBLICATION_EVENT_SECRET: eventKey, FRONTEND_REFRESH_TOKEN: token },
+      fetch,
+    });
+  const answering = await readiness();
+  const startedBy = byName(answering);
+  check(
+    "gq site check: the Worker answering, with its secrets bound, is not ready before a refresh prepares it",
+    startedBy["frontend-events"]?.status === "ok" &&
+      startedBy["frontend-refresh"]?.status === "ok" &&
+      startedBy["publication-store"]?.status === "not-ready" &&
+      /never prepared/u.test(startedBy["publication-store"].detail) &&
+      startedBy.homepage?.status === "not-ready" &&
+      startedBy.reconciliation?.status === "not-ready",
+    describeChecks(answering),
+  );
   const prepared = await runGq(site, ["frontend", "refresh", "--url", siteUrl, "--json"], {
     FRONTEND_REFRESH_TOKEN: token,
   });
   check("the Site is prepared", prepared.code === 0, prepared.stdout + prepared.stderr);
+  const preparedOnly = await readiness();
+  const preparedBy = byName(preparedOnly);
+  check(
+    "gq site check: prepared but never reconciled by the CMS's scheduler is still not ready",
+    preparedBy["publication-store"]?.status === "ok" &&
+      preparedBy.homepage?.status === "ok" &&
+      preparedBy.reconciliation?.status === "not-ready" &&
+      /never reconciled/u.test(preparedBy.reconciliation.detail),
+    describeChecks(preparedOnly),
+  );
 
   const checked = await wp(["gq-events", "check"], cmsEnv);
   check(
@@ -959,6 +1101,14 @@ try {
       caughtUp[3].html.includes('<meta name="description" content="Quietly better things">'),
     `${reconciledRun.stdout}${reconciledRun.stderr} ${JSON.stringify(afterRun)} ${caughtUp.map(({ status }) => status)}`,
   );
+  // The CMS is still down: the Frontend and its delivery are ready anyway.
+  const reconciledReadiness = await readiness();
+  check(
+    "gq site check: once the scheduler has reconciled, the Frontend and its delivery are ready, through the CMS outage",
+    reconciledReadiness.every(({ status }) => status !== "not-ready") &&
+      byName(reconciledReadiness).reconciliation?.status === "ok",
+    describeChecks(reconciledReadiness),
+  );
 
   // The CMS the Frontend reads is down: the reconciliation fails, is reported,
   // and every page keeps its last good version.
@@ -1107,6 +1257,7 @@ try {
   results.failures += 1;
 } finally {
   await stopWorker(worker);
+  wpServer?.kill();
   if (cms.server?.listening) await cms.stop();
   rmSync(work, { recursive: true, force: true });
 }

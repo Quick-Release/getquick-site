@@ -10,10 +10,12 @@
 //   cold store → 503 for the homepage and an entry; unauthenticated refresh →
 //   401; gq frontend refresh → homepage and entry with menu, logo and design
 //   presets; CMS down → both still served, an uncached entry is a 503 and a
-//   failed refresh keeps them; Worker restart and a rebuilt redeploy → still
-//   served; CMS back → a cold entry is looked up, a made-up one is a 404, a
+//   failed refresh keeps them; Worker restart with every row aged by a year
+//   (no age limit) and a rebuilt redeploy → still served; CMS back → a cold entry is looked up, a made-up one is a 404, a
 //   change, a new publication and a moved entry are refreshed; the Worker's
-//   event secret accepts this Site's signed events and refuses another key's;
+//   event secret accepts this Site's signed events and refuses another key's,
+//   and another Site's, malformed, unsupported and stale events change and
+//   read nothing;
 //   a signed withdrawal is a 404 at once with the CMS down, through a Worker
 //   restart, a delayed older publication and a refresh from a CMS that still
 //   returns the entry, until a later republication; a signed reconcile event
@@ -177,10 +179,16 @@ try {
   check("and the homepage is still served", served((await visit(port)).html));
 
   await stopWorker(worker);
+  // A prolonged outage: everything stored was read a year ago. No age limit
+  // expires it.
+  const aged = local.execute(
+    "UPDATE publications SET promoted_at = promoted_at - 31536000000, read_started_at = read_started_at - 31536000000",
+  );
+  check("the store's rows are aged by a year", aged.status === 0, aged.stderr);
   worker = await local.start(port);
   const restarted = await visit(port);
   check(
-    "after a Worker restart, with the CMS still down, it is still served",
+    "after a Worker restart, with the CMS still down and its content a year old, it is still served",
     restarted.status === 200 && served(restarted.html),
     `HTTP ${restarted.status}`,
   );
@@ -268,6 +276,48 @@ try {
     "and refuses events signed with another key",
     refused.code === 1 && refused.json?.status === 401,
     refused.stdout + refused.stderr,
+  );
+
+  // Invalid events change nothing and read nothing: another Site's (signed
+  // with this Site's key), malformed, unsupported and stale ones.
+  const requestsBefore = cms.requests;
+  const other = await deliverEvent(port, eventKey, {
+    site: "beta",
+    id: randomUUID(),
+    action: "withdraw",
+    occurredAt: Date.now(),
+    entry: { id: "page-80", uri: "/news/" },
+  });
+  const malformed = await deliverEvent(port, eventKey, {
+    site: "acme",
+    id: "x",
+    action: "publish",
+    occurredAt: Date.now(),
+    entry: { id: "page-80", uri: "news" },
+  });
+  const unsupported = await deliverEvent(port, eventKey, {
+    site: "acme",
+    id: randomUUID(),
+    action: "purge",
+    occurredAt: Date.now(),
+  });
+  const expired = await deliverEvent(
+    port,
+    eventKey,
+    { site: "acme", id: randomUUID(), action: "check", occurredAt: Date.now() - 3_600_000 },
+    Math.floor(Date.now() / 1000) - 3600,
+  );
+  const stillServed = await visit(port, "/news/");
+  check(
+    "another Site's, malformed, unsupported and stale events are refused, changing and reading nothing",
+    other.status === 403 &&
+      malformed.status === 400 &&
+      unsupported.status === 422 &&
+      expired.status === 401 &&
+      cms.requests === requestsBefore &&
+      stillServed.status === 200 &&
+      stillServed.html.includes("We launched."),
+    [other, malformed, unsupported, expired].map(({ status }) => status).join(" "),
   );
 
   // A withdrawal, as WordPress sends one when /news/ is unpublished, accepted

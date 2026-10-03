@@ -228,6 +228,30 @@ export function localWorker({ site, work, vars }) {
         },
       );
     },
+    // Runs SQL on the local store, as an operator's `wrangler d1 execute`
+    // would on the real one. Only while the Worker is stopped.
+    execute(sql) {
+      return spawnSync(
+        wrangler,
+        [
+          "d1",
+          "execute",
+          "PUBLICATION_DB",
+          "--local",
+          "--persist-to",
+          persist,
+          "--config",
+          config,
+          "--command",
+          sql,
+        ],
+        {
+          env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" },
+          encoding: "utf8",
+          input: "",
+        },
+      );
+    },
     async start(port) {
       const child = spawn(
         wrangler,
@@ -286,12 +310,13 @@ export async function visit(port, path = "/") {
 
 /**
  * Posts an event to the Frontend's /gq/events as the Site's CMS does: signed
- * with `secret` (HMAC-SHA256 of "<timestamp>.<body>"). Resolves to the HTTP
+ * with `secret` (HMAC-SHA256 of "<timestamp>.<body>") at `signedAt` (seconds,
+ * default now). Resolves to the HTTP
  * status and the answer.
  */
-export async function deliverEvent(port, secret, event) {
+export async function deliverEvent(port, secret, event, signedAt = Math.floor(Date.now() / 1000)) {
   const body = JSON.stringify(event);
-  const timestamp = String(Math.floor(Date.now() / 1000));
+  const timestamp = String(signedAt);
   const response = await fetch(`http://127.0.0.1:${port}/gq/events`, {
     method: "POST",
     headers: {
