@@ -32,6 +32,24 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   npm. CI no longer fails on a release push until npm serves the new
   version. The generated site's `package.json` is unchanged, and generation
   stays offline.
+- `gq offboard --archive` now records the Site as archived in `gq.ops.json`
+  before it archives the GitHub repository, and commits and pushes that
+  record itself first. Until now the record was written after
+  `gh repo archive`, and the read-only repository refused the push. gq
+  pushes only from the default branch, with nothing else changed in the
+  checkout, to the repository being archived, and as a fast-forward.
+  Otherwise the plan says why, and the repository stays unarchived until
+  you push `gq.ops.json` and run `gq offboard --archive` again. That rerun
+  needs neither Cloudflare nor Ploi.
+- `gq offboard --archive` no longer stops with
+  `Ploi DELETE /system-users/<id> failed with 422` after deleting the Ploi
+  site. Ploi deletes a site in the background and refuses to delete its
+  system user meanwhile. gq now waits until Ploi no longer shows the site,
+  and retries a refused system-user deletion: 2 s, doubling up to 10 s, for
+  5 minutes at most each. Past that the run stops with Ploi's reasons.
+- Ploi errors now show a refused request's validation `errors` (field by
+  field, redacted), not only "The given data was invalid.". This covers both
+  gq's Ploi clients, `gq ploi api` included.
 
 ## 0.15.1 — 2026-10-03
 

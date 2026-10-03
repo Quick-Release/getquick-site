@@ -6,6 +6,7 @@ import test from "node:test";
 import packageJson from "../../package.json" with { type: "json" };
 import {
   createFixtureSite,
+  json,
   recordingFetch,
   runGq,
   temporaryDirectory,
@@ -139,6 +140,33 @@ test("--data-file resolves against the site root, not the invocation directory",
 
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout).body, { a: 1 });
+});
+
+test("ploi api shows a refused request's validation errors, redacted", async () => {
+  const fixture = await createFixtureSite();
+  const fetch = recordingFetch(() =>
+    json(
+      {
+        message: "The given data was invalid.",
+        errors: {
+          domain: ["The domain has already been taken."],
+          webhook_url: ["https://hooks.example.test/deploy?token=wh-secret is unreachable."],
+        },
+      },
+      422,
+    ),
+  );
+
+  const result = await fixture.run(
+    ["ploi", "api", "sites.update-site", "--data", '{"domain":"taken.example"}', "--yes"],
+    { env: PLOI_TOKEN, fetch },
+  );
+
+  assert.equal(result.code, 1);
+  assert.equal(
+    result.stderr,
+    "gq: The given data was invalid. (domain: The domain has already been taken.; webhook_url: https://hooks.example.test/deploy?token=[redacted] is unreachable.)\n",
+  );
 });
 
 test("ploi api redacts credentials in URL query parameters of a response", async () => {

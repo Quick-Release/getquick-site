@@ -237,11 +237,37 @@ Choices made where the spec left room:
   - The Ploi site is deleted only when `ploi.siteId` names `domains.admin`
     running as `ploi.systemUser`, and the database only when the site's
     `.env` names it.
-    Then GitHub: the push webhook deleted and the repository archived
-    (`gh repo archive`), so the code stays readable. Last, `offboarded.phase`
-    becomes `"archived"` (`at` the archive's date), and the run prints the
+  - Ploi deletes a site in the background and refuses (422) to delete its
+    system user meanwhile. After deleting the site, the run waits until Ploi
+    neither returns nor lists it, before the database and the system user;
+    a system user deletion Ploi still refuses with 422 is retried. Each
+    waits 2 s, doubling up to 10 s, for 5 minutes at most on the run's clock,
+    then fails: the system user with Ploi's validation errors (its 422
+    body's `message` and `errors`, redacted like every Ploi error gq shows).
+    Then GitHub's push webhook is deleted, `offboarded.phase` becomes
+    `"archived"` (`at` the archive's date), and the record is committed and
+    pushed before the repository is archived (below). The run prints the
     archive's prefix, the archived repository and the Sigillo project, which
     is kept.
+- **The record reaches git before the repository is read-only.** An archived
+  repository takes no push, so the run itself commits gq.ops.json (that file
+  alone) and pushes it to the default branch, and archives the repository
+  (`gh repo archive`, so the code stays readable) only once the push
+  succeeded, last of all. It pushes only when that can't surprise the
+  operator, checked when it plans: the checkout is on the repository's
+  default branch, nothing but gq.ops.json is changed or untracked in it, the
+  branch's remote is the repository being archived, and the remote branch
+  (fetched first) has nothing the checkout lacks, so the push is a
+  fast-forward. Otherwise the plan says why in a manual line, to commit and
+  push gq.ops.json by hand, then run the archive again; that run deletes
+  everything else but leaves the repository unarchived. A push the remote
+  still refuses (it moved on mid-run) fails the run before the repository
+  is archived, saying the same. Once `phase` is `"archived"`, a rerun reads
+  only the repository and the checkout (no Sigillo, Cloudflare or Ploi): the
+  record pushed (gq.ops.json unchanged since its commit, and nothing left to
+  push) is `✓`, otherwise it is pushed as above; an archived repository is
+  `✓`, otherwise it is archived. A record never pushed to a repository
+  archived meanwhile by hand is manual: unarchive, push, archive again.
 - **The zone is shared.** It is the team's preview and staging domain for
   every client (`bnq.pt`), so only records named exactly as one of this
   Site's hosts (`domains.admin`, `domains.frontend`, `media.domain`) are
@@ -263,15 +289,17 @@ Choices made where the spec left room:
   verification records nothing; its unverified files must be moved aside
   before the next run archives anew (the size-check failure says so). While the archive is
   recorded but the run unfinished, `gq offboard` and `--restore` refuse, and
-  the guards point at `gq offboard --archive`. Once archived, a rerun has
-  nothing to do and calls no provider.
+  the guards point at `gq offboard --archive`. Once archived, a rerun calls
+  only `git` and `gh`, and has nothing to do once the record is pushed and
+  the repository archived.
 - **Credentials.** `pnpm offboard:archive` runs it through
   `gq sigillo run operations`, like phase 1. Its temporary token can also
   delete Workers, Workflows, container applications, D1 stores, buckets and
   Artifacts repositories, and export a D1 store. R2 objects are read, written
   and deleted with keys scoped to one bucket each, minted for the run as
   1-hour tokens ("GETQUICK <PROJECT> offboarding <bucket> (temporary)") and
-  deleted with it.
+  deleted with it. The record is pushed with the checkout's own git remote
+  and credentials.
 
 Choices made where the spec left room:
 
@@ -334,9 +362,26 @@ Choices made where the spec left room:
 - **Delete every bucket gq.ops.json names.** Rejected: a backups bucket can
   hold every client's backups, and nothing in gq.ops.json says a bucket is
   this Site's alone but its name.
+- **Archive the repository, then write the record**, as gq 0.15.1 did.
+  Rejected: archiving Lombardi left its record unpushable, and the operator
+  had to unarchive the repository, push, and archive it again.
+- **Write the record through GitHub's contents API** rather than the
+  checkout's git. Rejected: it would commit to the default branch whatever
+  the checkout holds, overwrite a gq.ops.json changed on the remote since,
+  and leave the checkout with the same change uncommitted and a branch
+  behind its remote.
+- **Push from whatever the checkout is.** Rejected: a push from another
+  branch doesn't reach the default branch the record must be on, one with
+  other changes or commits publishes what the operator hasn't decided to,
+  and a forced push could drop a teammate's commits.
+- **Give up on Ploi's 422 at once**, for a rerun to finish. Rejected: Lombardi's
+  rerun minutes later worked, so the run waits that long itself.
 
 ## Consequences
 
+- The archive pushes from the operator's checkout: an up-to-date checkout
+  of the default branch with nothing else changed archives the repository
+  in one run; any other needs the record pushed by hand and a second run.
 - An offboarded Site's gq.ops.json must be committed and pushed with its
   record, from the branch CI deploys: an uncommitted record guards only this
   checkout, and CI's release step reads the committed one. The guide says to

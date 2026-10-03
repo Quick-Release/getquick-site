@@ -7,7 +7,8 @@
 // r2://offboarded-clients/<project>/<UTC date>/. It is verified by reading it
 // all back, and recorded in gq.ops.json (`offboarded.archive`) only then;
 // nothing is deleted before. The deletions follow gq-smoke-down's order,
-// with the project's tokens last, then GitHub, then the record.
+// with the project's tokens last, then GitHub's webhook; then the record,
+// committed and pushed before the repository is archived (repository.mjs).
 //
 // A rerun skips a recorded archive (it never archives over a verified one)
 // and deletes only what is still there, so a failed run is finished by
@@ -20,6 +21,7 @@ import { webhookUrl } from "../ci/github-setup.mjs";
 import { updateManifest } from "../manifest/manifest.mjs";
 import { VERSION } from "../version.mjs";
 import { frontendWorker, isOwn as isOwnName, ownName, publicationsStore } from "./names.mjs";
+import { archivesRepository, inspectRepository, repositoryItems } from "./repository.mjs";
 import { assertOwnDatabase, assertOwnPloiSite, frontendStages, unclearStage } from "./steps.mjs";
 import { ZIP_TAIL_BYTES, zipEntryCount, zipStream } from "./zip.mjs";
 
@@ -146,7 +148,7 @@ export async function inspectArchive(providers, { now = () => new Date() } = {})
     apexHosts,
     zoneName,
     tokens: await cloudflare.projectTokens(),
-    repositoryArchived: await github.archived(),
+    repository: await inspectRepository(providers),
   };
 }
 
@@ -239,14 +241,15 @@ const manual = (area, text) => ({ area, state: "manual", text });
 const todo = (area, text, apply) => ({ area, state: "todo", text, apply });
 
 // Archiving, verifying, then deleting, in order. `result()` is the recorded
-// archive once the plan is applied.
+// archive once the plan is applied; `archivesRepository` whether the plan
+// pushes the record and archives the repository too.
 export function archivePlan(site, { configPath, now = () => new Date() }) {
   const { ops, archive } = site;
   const session = { files: [] };
   const items = [
     ...archiveItems(site, { configPath, now, session }),
     ...deletionItems(site, { configPath }),
-    todo("Record", 'offboarded.phase becomes "archived" in gq.ops.json (commit it)', () =>
+    todo("Record", 'offboarded.phase becomes "archived" in gq.ops.json', () =>
       updateManifest(configPath, (manifest) => {
         manifest.offboarded = {
           at: now().toISOString(),
@@ -255,12 +258,17 @@ export function archivePlan(site, { configPath, now = () => new Date() }) {
         };
       }),
     ),
+    ...repositoryItems(site.repository, ops),
     manual(
       "Sigillo",
       `the project ${ops.sigillo?.projectId ?? "(gq.ops.json sigillo.projectId)"} is kept, with the Site's secrets`,
     ),
   ];
-  return { items, result: () => archive.recorded ?? session.recorded };
+  return {
+    items,
+    result: () => archive.recorded ?? session.recorded,
+    archivesRepository: archivesRepository(site.repository),
+  };
 }
 
 function archiveItems(site, { configPath, now, session }) {
@@ -519,7 +527,8 @@ async function readBack(bucket, key, { tail = false } = {}) {
 // is recorded: Ploi, the Workers and their D1 store, Workflows and
 // containers, the buckets (emptied with keys scoped to each) and the Site's
 // own backups, Artifacts, the Site's own DNS records, the project's tokens,
-// then GitHub. Whatever isn't named as the project's own is left, as manual.
+// then GitHub's webhook. Whatever isn't named as the project's own is left,
+// as manual.
 function deletionItems(site, { configPath }) {
   const { ops, ploi, frontend, ci, backups } = site;
   // `item` deletes `what` only when `name` is the project's own in `role`.
@@ -538,6 +547,8 @@ function deletionItems(site, { configPath }) {
           async (p) => {
             await p.ploi.deleteSite();
             await forgetSiteId(configPath);
+            // Ploi refuses to delete the system user until the site is gone.
+            await p.ploi.siteDeleted();
           },
         )
       : ops.ploi.siteId
@@ -730,11 +741,6 @@ function deletionItems(site, { configPath }) {
           p.github.deleteHook(ci.hook.id),
         )
       : done("GitHub", "no push webhook to the CI Worker is left"),
-    site.repositoryArchived
-      ? done("GitHub", `the repository ${ops.github.repository} is archived`)
-      : todo("GitHub", `archive the repository ${ops.github.repository} (it stays readable)`, (p) =>
-          p.github.archive(),
-        ),
   ];
 }
 
