@@ -11,8 +11,8 @@ It has two phases:
    database, the Frontend Worker and its store, the buckets and the code all
    stay.
 2. **Archive** (`gq offboard --archive`, irreversible): all content goes to
-   one archive and the live infrastructure is deleted. It needs the cut
-   recorded first. _Not available yet._
+   one archive, which is verified, and only then is the live infrastructure
+   deleted. It needs the cut recorded first.
 
 ## Cut a Site's access
 
@@ -91,4 +91,74 @@ re-attaches `domains.frontend` and the Frontend's preview URLs as
 retry crontab, and removes `offboarded`. Add back by hand a DNS record you
 removed. Then release and deploy as usual, and run `pnpm site:check`.
 
-Restore refuses once the Site is archived.
+Restore refuses once the Site's archive is recorded.
+
+## Archive a Site
+
+Once the cut is recorded (and committed), and nobody expects the Site back:
+
+```sh
+pnpm offboard:archive --dry-run   # the plan, nothing changed
+pnpm offboard:archive             # the plan, then type the project's name
+git add gq.ops.json && git commit -m "chore: archive the Site"
+```
+
+`pnpm offboard:archive` runs `gq offboard --archive` through
+`gq sigillo run operations`, like the cut. In a terminal it goes on only once
+you type the project's name back; elsewhere it needs `--yes`. **This can't be
+undone**: everything but the archive, the GitHub repository and the Sigillo
+project is deleted.
+
+### What is archived
+
+Everything goes to the private R2 bucket `offboarded-clients`, shared by every
+former client (created if missing, with no public domain), under
+`<project>/<UTC date>/`:
+
+| File               | What it is                                                                                                                      |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `uploads.zip`      | Every object of the media bucket, keys kept as paths. Streamed from the bucket to the archive, never held in memory or on disk. |
+| `database.sql.gz`  | A fresh dump of the CMS database (still there, on the suspended site).                                                          |
+| `publications.sql` | The Frontend's D1 publication store, exported.                                                                                  |
+| `backups/`         | Copies of the database backups in the backups bucket (`db/`), the cut's final backup among them.                                |
+| `gq.ops.json`      | The Site's manifest as it was.                                                                                                  |
+| `manifest.json`    | Each file's size and sha256, and where everything came from: buckets, Ploi IDs, Workers, the D1 store, the repository's HEAD.   |
+
+Then every file is read back and checked against `manifest.json`, and
+`uploads.zip`'s entries are counted against the media bucket's objects. **If
+anything differs, the run stops before deleting anything**; run it again to
+archive anew. Only a verified archive is recorded in `gq.ops.json`
+(`offboarded.archive`: its bucket, prefix and `manifest.json`'s sha256).
+
+### What is deleted
+
+In this order, only after the archive is recorded:
+
+| Part      | What happens                                                                                                                         |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Ploi      | The site (and `ploi.siteId` in `gq.ops.json`), its database and its system user.                                                     |
+| Frontend  | The Worker and its D1 publication store.                                                                                             |
+| CI        | The CI Worker, its Workflows and its container application.                                                                          |
+| Media, R2 | The media bucket's custom domain; then the media, releases and CI backup buckets, each emptied with a key scoped to it, and deleted. |
+| Artifacts | The Artifacts repository. The empty namespace stays (the plan says so).                                                              |
+| DNS       | The records named exactly as the Site's hosts: `domains.admin`, `domains.frontend` and `media.domain`. Each is listed in the plan.   |
+| Tokens    | Every `GETQUICK <PROJECT> …` token, deleted last on Cloudflare.                                                                      |
+| GitHub    | The push webhook is deleted and the repository archived: read-only, its code and history kept.                                       |
+| Record    | `offboarded.phase` becomes `"archived"`. Commit `gq.ops.json`.                                                                       |
+
+The zone is shared with other Sites (`bnq.pt` holds every client's staging
+hosts): it is never deleted, and neither is any record that isn't one of the
+Site's own hosts, a subdomain of them included.
+
+The run ends by printing where everything is: the archive's prefix and
+`manifest.json`'s sha256, the archived repository, and the Sigillo project,
+which is kept with the Site's secrets.
+
+### If it fails halfway
+
+Run it again. A recorded archive is never written again (its `manifest.json`
+must still match the recorded sha256, or nothing more is deleted), and only
+what is still there is deleted. Until the run finishes, `gq offboard` and
+every guarded command point you back at `pnpm offboard:archive`, and
+`--restore` refuses. A run that failed before verification on an earlier
+day leaves its files under that day's prefix; delete them by hand.

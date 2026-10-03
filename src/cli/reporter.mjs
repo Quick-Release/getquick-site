@@ -4,7 +4,8 @@ import * as clack from "@clack/prompts";
 // Clack's intro, spinners, notes and prompts on run()'s stdout in a terminal,
 // and plain lines otherwise (CI logs, tests), where a spinner would only
 // write cursor codes.
-export function createReporter(io, interactive) {
+// `stdin` is where a terminal's answers come from (process.stdin otherwise).
+export function createReporter(io, interactive, stdin) {
   if (interactive) {
     const output = io.stdout;
     return {
@@ -22,6 +23,11 @@ export function createReporter(io, interactive) {
       async confirm(message) {
         const answer = await clack.confirm({ message, initialValue: true, output });
         return !clack.isCancel(answer) && answer === true;
+      },
+      // Resolves to what was typed, or undefined when cancelled.
+      async text(message) {
+        const answer = await clack.text({ message, input: stdin, output });
+        return clack.isCancel(answer) ? undefined : answer;
       },
       // Resolves to what was typed, or undefined when cancelled.
       async password(message) {
@@ -48,6 +54,9 @@ export function createReporter(io, interactive) {
     spinner: () => ({ start: io.out, message: io.out, stop: io.out, error: io.err }),
     async confirm() {
       throw new Error("Cannot ask for confirmation without a terminal.");
+    },
+    async text() {
+      throw new Error("Cannot ask for an answer without a terminal.");
     },
     async password() {
       throw new Error("Cannot ask for a secret without a terminal.");

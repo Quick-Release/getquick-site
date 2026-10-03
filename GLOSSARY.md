@@ -187,8 +187,18 @@ Taking a leaving client's Site down without losing its content or code
 ([ADR 0011](docs/adr/0011-offboard-a-site-by-cutting-access-before-archiving.md)):
 first cutting every public URL and every credential gq made for it
 (`gq offboard`, reversible with `--restore`), then archiving its content to one
-place and deleting its live infrastructure (the archive, irreversible).
+place and deleting its live infrastructure (`gq offboard --archive`,
+irreversible).
 _Avoid_: withdrawal (an editor unpublishing content), teardown, decommission
+
+**Site Archive**:
+Everything kept of an Offboarded Site's content once its live infrastructure
+is gone: its media, its CMS database and backups, its published content and
+its manifest, gathered in one place shared by every former client, with a
+manifest of what each file is and where it came from. It is checked against
+that manifest before anything is deleted. Its code is kept apart, in its
+archived repository.
+_Avoid_: backup (a copy the live Site restores from), export
 
 **Offboarded Site**:
 A Site whose gq.ops.json records `offboarded`: its access is cut (phase

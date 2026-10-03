@@ -128,7 +128,20 @@ export const manifestSchema = z
       .optional()
       .describe("Added to the files the variant requires in each app."),
     offboarded: z
-      .strictObject({ at: z.iso.datetime(), phase: z.enum(OFFBOARDING_PHASES) })
+      .strictObject({
+        at: z.iso.datetime(),
+        phase: z.enum(OFFBOARDING_PHASES),
+        archive: z
+          .strictObject({
+            bucket: name,
+            prefix: path,
+            manifestSha256: z.string().regex(/^[0-9a-f]{64}$/u),
+          })
+          .optional()
+          .describe(
+            "Written by gq offboard --archive once the archive is verified: where it is, and its manifest.json's sha256.",
+          ),
+      })
       .optional()
       .describe(
         "Written by gq offboard: the Site is offboarded, and gq refuses whatever would expose it again.",

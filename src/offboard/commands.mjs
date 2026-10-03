@@ -3,14 +3,19 @@
 // code, and records `offboarded` in gq.ops.json, which turns on the guards
 // (guard.mjs) that keep anything from exposing it again. Reversible:
 // `gq offboard --restore` brings everything back and removes the record.
-// Both print the plan (✓ done, - to cut or + to restore, ! by hand), then act
-// after confirmation, and only on what is still to do, so either can be run
-// again after a failure.
+// Irreversible: `gq offboard --archive` archives all its content to the
+// shared offboarded-clients bucket, verifies it, then deletes its live
+// infrastructure and archives its repository (archive.mjs).
+// Each prints the plan (✓ done, - to do or + to restore, ! by hand), then
+// acts after confirmation, and only on what is still to do, so any of them
+// can be run again after a failure.
 //
 //   gq offboard [--dry-run] [--yes]
 //   gq offboard --restore [--dry-run] [--yes]
+//   gq offboard --archive [--dry-run] [--yes]
 
 import { createReporter } from "../cli/reporter.mjs";
+import { archivePlan, inspectArchive } from "./archive.mjs";
 import { runPlan } from "./plan.mjs";
 import { withOffboardingProviders } from "./providers.mjs";
 import { cutPlan, inspectSite, restorePlan } from "./steps.mjs";
@@ -19,7 +24,11 @@ import { cutPlan, inspectSite, restorePlan } from "./steps.mjs";
 const OFFBOARD_COMMANDS = new Map([
   [
     "offboard",
-    ["gq offboard [--restore] [--dry-run] [--yes]", ["restore", "dryRun", "yes"], runOffboard],
+    [
+      "gq offboard [--restore | --archive] [--dry-run] [--yes]",
+      ["restore", "archive", "dryRun", "yes"],
+      runOffboard,
+    ],
   ],
 ]);
 
@@ -39,16 +48,24 @@ export function runOffboardCommand(command, dependencies) {
   return runner(dependencies);
 }
 
-// `gq offboard [--restore] [--dry-run] [--yes]`. Resolves to an exit code.
+// `gq offboard [--restore | --archive] [--dry-run] [--yes]`. Resolves to an
+// exit code.
 async function runOffboard(dependencies) {
-  const { context, parsed, io, interactive } = dependencies;
+  const { context, parsed, io, interactive, stdin } = dependencies;
   const ops = context.config;
-  if (parsed.restore && ops.offboarded?.phase === "archived") {
+  if (parsed.restore && parsed.archive) {
+    throw new Error("--restore and --archive can't be combined.");
+  }
+  if (parsed.archive) return runArchive(dependencies);
+  const record = ops.offboarded;
+  if (record?.phase === "archived" || record?.archive) {
     throw new Error(
-      `${ops.project} was archived (gq.ops.json offboarded.phase): its infrastructure is deleted, so there is nothing to restore.`,
+      parsed.restore
+        ? `${ops.project} was archived (gq.ops.json offboarded): its infrastructure is deleted, so there is nothing to restore.`
+        : `${ops.project} is being archived (gq.ops.json offboarded.archive): finish it with gq offboard --archive (pnpm offboard:archive).`,
     );
   }
-  const ui = createReporter(io, interactive);
+  const ui = createReporter(io, interactive, stdin);
   ui.intro(`${parsed.restore ? "Restore" : "Offboard"} · ${ops.project}`);
   return withOffboardingProviders(dependencies, async (providers) => {
     const site = await inspectSite(providers);
@@ -72,4 +89,54 @@ async function runOffboard(dependencies) {
       finished: `Offboarded ${ops.project}. Commit gq.ops.json: its offboarded record keeps gq from exposing the Site again.`,
     });
   });
+}
+
+// `gq offboard --archive`: only for a Site whose access is cut and recorded.
+// In a terminal, the project's name typed back confirms it; elsewhere --yes.
+async function runArchive(dependencies) {
+  const { context, parsed, io, interactive, stdin } = dependencies;
+  const ops = context.config;
+  const record = ops.offboarded;
+  if (!record) {
+    throw new Error(
+      `${ops.project} isn't offboarded: run gq offboard first (pnpm offboard), which cuts its access and records it.`,
+    );
+  }
+  const ui = createReporter(io, interactive, stdin);
+  ui.intro(`Archive · ${ops.project}`);
+  if (record.phase === "archived") {
+    ui.outro(
+      `Nothing left to archive: ${ops.project} was archived to r2://${record.archive?.bucket}/${record.archive?.prefix}.`,
+    );
+    return 0;
+  }
+  return withOffboardingProviders(
+    dependencies,
+    async (providers) => {
+      const site = await inspectArchive(providers);
+      const { items, result } = archivePlan(site, { configPath: context.configPath });
+      return runPlan(items, providers, {
+        ui,
+        parsed,
+        todoSymbol: "-",
+        async confirm(prompt) {
+          const typed = await prompt.text(
+            `This deletes ${ops.project}'s live infrastructure for good, once its archive is verified. Type ${ops.project} to go on`,
+          );
+          return typed?.trim() === ops.project;
+        },
+        nothing: `Nothing left to archive: ${ops.project} is archived.`,
+        finished: () => {
+          const { bucket, prefix, manifestSha256 } = result();
+          return [
+            `Archived ${ops.project}. Commit gq.ops.json.`,
+            `  Archive:    r2://${bucket}/${prefix} (manifest.json sha256 ${manifestSha256})`,
+            `  Code:       https://github.com/${ops.github.repository} (archived, read-only)`,
+            `  Secrets:    Sigillo project ${ops.sigillo?.projectId ?? "(gq.ops.json sigillo.projectId)"}, kept`,
+          ].join("\n");
+        },
+      });
+    },
+    { archive: true },
+  );
 }

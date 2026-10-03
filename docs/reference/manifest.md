@@ -33,7 +33,9 @@ command reads (`ploi`, `cloudflare`, `releases`, `media`, `backups`, `local`,
 `artifacts`, `ci`, `github`, `sigillo`, `wordpress.plugins`) are optional;
 a command names the keys it needs. `offboarded` (`at`, `phase`) is written by
 `gq offboard` and turns on the guards of an
-[offboarded Site](../guides/offboarding.md). `$schema` points editors at the JSON
+[offboarded Site](../guides/offboarding.md); `gq offboard --archive` adds
+`offboarded.archive` (`bucket`, `prefix`, `manifestSha256`) once the archive
+is verified. `$schema` points editors at the JSON
 Schema generated from it ([schema/gq.ops.schema.json](../../schema/gq.ops.schema.json)).
 
 A manifest without `schemaVersion` is v0, the shape before versioning. Every

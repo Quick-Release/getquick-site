@@ -5,17 +5,17 @@
 // behavior remain distinct.
 const API_ORIGIN = "https://api.cloudflare.com/client/v4";
 
-// One authenticated JSON request under the account; fails with `label` and
-// Cloudflare's own error messages (or the HTTP status). `allowNotFound`
-// resolves a 404 to null.
+// One authenticated JSON request under the account (or `base`, such as a
+// zone); fails with `label` and Cloudflare's own error messages (or the HTTP
+// status). `allowNotFound` resolves a 404 to null.
 async function accountRequest(
-  { token, accountId, fetch, label },
+  { token, accountId, base = `/accounts/${accountId}`, fetch, label },
   method,
   path,
   body,
   { allowNotFound = false } = {},
 ) {
-  const response = await fetch(`${API_ORIGIN}/accounts/${accountId}${path}`, {
+  const response = await fetch(`${API_ORIGIN}${base}${path}`, {
     method,
     signal: AbortSignal.timeout(60_000),
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -30,9 +30,19 @@ async function accountRequest(
   return data;
 }
 
+// Resolves to the response's `result`; with `{ allowNotFound: true }`, a 404
+// resolves to null.
 export function createCloudflareAccountClient({ token, accountId, fetch }) {
   const options = { token, accountId, fetch, label: "Cloudflare" };
-  return async (method, path, body) => (await accountRequest(options, method, path, body)).result;
+  return async (method, path, body, requestOptions) =>
+    (await accountRequest(options, method, path, body, requestOptions))?.result ?? null;
+}
+
+// The same, for one zone (its DNS records).
+export function createCloudflareZoneClient({ token, zoneId, fetch }) {
+  const options = { token, base: `/zones/${zoneId}`, fetch, label: "Cloudflare" };
+  return async (method, path, body, requestOptions) =>
+    (await accountRequest(options, method, path, body, requestOptions))?.result ?? null;
 }
 
 // Cloudflare Artifacts (namespaces, repositories and repo-scoped git tokens),

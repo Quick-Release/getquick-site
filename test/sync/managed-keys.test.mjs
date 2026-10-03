@@ -65,6 +65,7 @@ const GQ_SCRIPTS = {
   "github:setup": "gq sigillo run staging -- gq github setup",
   offboard: "gq sigillo run operations -- gq offboard",
   "offboard:restore": "gq sigillo run operations -- gq offboard --restore",
+  "offboard:archive": "gq sigillo run operations -- gq offboard --archive",
   "ploi:log": "gq sigillo run staging -- gq ploi api sites.log-site --per-page 5",
   "sigillo:login": "gq sigillo login",
   "sigillo:setup": "gq sigillo setup local",

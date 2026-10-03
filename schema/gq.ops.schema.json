@@ -373,6 +373,30 @@
             "cut",
             "archived"
           ]
+        },
+        "archive": {
+          "description": "Written by gq offboard --archive once the archive is verified: where it is, and its manifest.json's sha256.",
+          "type": "object",
+          "properties": {
+            "bucket": {
+              "type": "string",
+              "minLength": 1
+            },
+            "prefix": {
+              "type": "string",
+              "minLength": 1
+            },
+            "manifestSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "bucket",
+            "prefix",
+            "manifestSha256"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

@@ -200,6 +200,7 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
       env,
       fetch,
       exec,
+      stdin,
       io,
       interactive,
     });
@@ -339,6 +340,7 @@ function parseArguments(argv) {
     "--upload",
     "--local",
     "--restore",
+    "--archive",
   ]);
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -513,7 +515,7 @@ ${FRONTEND_USAGE.map((usage) => `  ${usage}`).join("\n")}
 Site readiness:
 ${SITE_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
-Offboarding (cut and restore a Site's access):
+Offboarding (cut, restore or archive a Site):
 ${OFFBOARD_USAGE.map((usage) => `  ${usage}`).join("\n")}
 
 Cloudflare CI:

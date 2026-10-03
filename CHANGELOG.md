@@ -31,9 +31,29 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   `scripts/ci-release.mjs`, and `infra/frontend.run.ts` drops the domain and
   every workers.dev and preview URL. Checks, `gq db backup` and `ploi api`
   GETs keep working.
-- Managed `package.json` scripts `offboard` and `offboard:restore`, through
-  `gq sigillo run operations`. **Existing sites:** `gq sync` adds them and
-  updates the three deploy files.
+- `gq offboard --archive` archives an offboarded Site, then deletes it
+  ([Offboarding a Site](docs/guides/offboarding.md#archive-a-site)). It
+  refuses a Site whose cut isn't recorded. It asks for the project's name in a
+  terminal (`--yes` elsewhere), and supports `--dry-run`. It archives to the
+  private, shared R2 bucket `offboarded-clients` under
+  `<project>/<UTC date>/`: `uploads.zip` (every media object, keys kept,
+  streamed), `database.sql.gz` (a fresh dump), `publications.sql` (the D1
+  store's export), `backups/`, `gq.ops.json` and `manifest.json` (each file's
+  size and sha256, and the source resources). It reads every file back and
+  stops before deleting anything if one differs, or if `uploads.zip` doesn't
+  hold every media object. Then, in gq-smoke-down's order, it deletes the Ploi
+  site (forgetting `ploi.siteId`), database and system user, the Frontend and
+  CI Workers, the D1 store, the Workflows and container application, the
+  media domain, the media, releases and CI backup buckets (emptied with keys
+  scoped to each), the Artifacts repository, only the Site's own DNS records
+  on the shared zone, then the project's tokens. Last, it deletes the GitHub
+  webhook and archives the repository. It records
+  `offboarded: { phase: "archived", archive: { bucket, prefix, manifestSha256 } }`
+  (new in the schema), and a rerun after a failure resumes without archiving
+  again. `gq offboard --restore` refuses once the archive is recorded.
+- Managed `package.json` scripts `offboard`, `offboard:restore` and
+  `offboard:archive`, through `gq sigillo run operations`. **Existing sites:**
+  `gq sync` adds them and updates the three deploy files.
 
 ## 0.14.1 — 2026-10-03
 

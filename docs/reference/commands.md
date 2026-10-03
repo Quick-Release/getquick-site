@@ -66,6 +66,7 @@ gq site check --local [--json]
 
 gq offboard [--dry-run] [--yes]
 gq offboard --restore [--dry-run] [--yes]
+gq offboard --archive [--dry-run] [--yes]
 
 gq ci deploy
 gq ci runs
@@ -109,7 +110,14 @@ outside a terminal. While `offboarded` is set, every command that would expose
 the Site again refuses: `cloudflare media|deploy-token|ci|releases`,
 `github setup`, `ci deploy`, `ploi provision|events|media|release`, a
 `ploi api` operation that writes (unless `--dry-run`), `release push|tag` and
-`frontend refresh|secrets`. See [Offboarding a Site](../guides/offboarding.md).
+`frontend refresh|secrets`. `--archive` (irreversible, only once `offboarded`
+is recorded) archives the Site's content to
+`r2://offboarded-clients/<project>/<UTC date>/`, reads it all back, and only
+then deletes its Ploi site, Workers, D1 store, buckets, Artifacts repository,
+its own DNS records and its tokens, archives its GitHub repository, and
+records `offboarded.phase: "archived"`; in a terminal it asks for the
+project's name, elsewhere `--yes`. See
+[Offboarding a Site](../guides/offboarding.md).
 `gq skills update` works from any Git repository and is documented in the
 [agent skills guide](../guides/skills.md).
 

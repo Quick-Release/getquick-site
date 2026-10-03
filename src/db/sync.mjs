@@ -197,7 +197,6 @@ function readConfig(ops, { backupOnly }) {
   return {
     bucket: ops.backups.bucket,
     prefix: ops.backups.prefix ?? "db/",
-    marker: exportMarker(ops.project),
     localFrontendUrl: ops.local?.frontendUrl ?? DEFAULT_LOCAL_FRONTEND_URL,
   };
 }
@@ -292,19 +291,7 @@ async function runDatabase({ context, parsed, env, fetch, exec, io, interactive,
 
   try {
     step.start("Backing up the live database to R2");
-    const script = remoteExportScript({
-      path: sitePath({
-        systemUser: ops.ploi.systemUser,
-        domain: ops.domains.admin,
-        projectRoot: ops.ploi.projectRoot,
-      }),
-      uploadUrl: await r2.presignPut(key),
-      marker: config.marker,
-    });
-    const backup = await runExport(client, script, {
-      user: ops.ploi.systemUser,
-      marker: config.marker,
-    });
+    const backup = await exportLiveDatabase(client, ops, await r2.presignPut(key));
     step.stop(
       `Backed up the live database (${(backup.bytes / 1024 / 1024).toFixed(1)} MB) to ${key}`,
     );
@@ -442,6 +429,23 @@ function ddevRunner(exec, cmsRoot, env, io) {
     }
     return result.stdout;
   };
+}
+
+// Dumps the live database on the server (a Ploi one-off script, export only)
+// and uploads it to `uploadUrl`, a presigned PUT; resolves to what the
+// server reports: { prefix, wordpress, bytes, sha256 }.
+export function exportLiveDatabase(client, ops, uploadUrl) {
+  const marker = exportMarker(ops.project);
+  const script = remoteExportScript({
+    path: sitePath({
+      systemUser: ops.ploi.systemUser,
+      domain: ops.domains.admin,
+      projectRoot: ops.ploi.projectRoot,
+    }),
+    uploadUrl,
+    marker,
+  });
+  return runExport(client, script, { user: ops.ploi.systemUser, marker });
 }
 
 async function runExport(client, script, { user, marker, pollMs = 3000, timeoutMs = 900_000 }) {

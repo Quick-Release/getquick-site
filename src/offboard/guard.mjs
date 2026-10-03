@@ -40,7 +40,9 @@ export function refuseWhenOffboarded(parsed, config) {
   const next =
     record.phase === "archived"
       ? "Its infrastructure is deleted."
-      : "If the Site is coming back, run gq offboard --restore first (pnpm offboard:restore).";
+      : record.archive
+        ? "Its archive is under way: finish it with gq offboard --archive (pnpm offboard:archive)."
+        : "If the Site is coming back, run gq offboard --restore first (pnpm offboard:restore).";
   throw new Error(
     `${config.project} is offboarded (gq.ops.json offboarded: ${since}): gq ${parsed.command.join(" ")} would expose it again. ${next}`,
   );

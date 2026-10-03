@@ -5,12 +5,21 @@
 const SYMBOLS = { done: "✓", manual: "!" };
 
 // `todoSymbol` marks what this run would do ("-" to cut, "+" to restore);
-// `question` is the confirmation prompt; `nothing` and `finished` the outros.
-// Resolves to an exit code.
+// `question` is the confirmation prompt, unless `confirm(ui)` asks its own;
+// `nothing` and `finished` the outros (`finished` may be a function, called
+// once everything is applied). Resolves to an exit code.
 export async function runPlan(
   items,
   providers,
-  { ui, parsed, todoSymbol, question, nothing, finished },
+  {
+    ui,
+    parsed,
+    todoSymbol,
+    question,
+    confirm = (prompt) => prompt.confirm(question),
+    nothing,
+    finished,
+  },
 ) {
   ui.note(
     items
@@ -31,7 +40,7 @@ export async function runPlan(
     if (!ui.interactive) {
       throw new Error("Not a TTY: re-run with --yes to apply, or --dry-run to inspect.");
     }
-    if (!(await ui.confirm(question))) {
+    if (!(await confirm(ui))) {
       ui.outro("Nothing changed.");
       return 0;
     }
@@ -40,6 +49,6 @@ export async function runPlan(
     ui.step(`${area}: ${text}`);
     await apply(providers);
   }
-  ui.outro(finished);
+  ui.outro(typeof finished === "function" ? finished() : finished);
   return 0;
 }

@@ -63,6 +63,31 @@ test("an archived Site's guard says there is nothing to restore", async () => {
   );
 });
 
+test("a Site being archived points its guard at finishing the archive", async () => {
+  const fixture = await offboardingSite({
+    ops: {
+      ...OPS,
+      offboarded: {
+        at: "2026-10-02T09:00:00.000Z",
+        phase: "cut",
+        archive: {
+          bucket: "offboarded-clients",
+          prefix: "fixture/2026-10-02/",
+          manifestSha256: "a".repeat(64),
+        },
+      },
+    },
+  });
+
+  const result = await fixture.run(["cloudflare", "media"], { env: STAGING });
+
+  assert.equal(result.code, 1);
+  assert.match(
+    result.stderr,
+    /fixture is offboarded \(gq\.ops\.json offboarded: cut on 2026-10-02\): gq cloudflare media would expose it again\. Its archive is under way: finish it with gq offboard --archive \(pnpm offboard:archive\)\.\n$/u,
+  );
+});
+
 test("a Site that isn't offboarded runs the guarded commands as before", async () => {
   const fixture = await offboardingSite();
 

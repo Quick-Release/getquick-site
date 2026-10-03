@@ -82,8 +82,9 @@ export function bucketTokenSpec({ name, accountId, bucket, accessKeySecret, secr
   };
 }
 
-// Runs `work` with a client for a 1-hour token holding `policies`, and
-// deletes the token afterwards whatever happens.
+// Runs `work(client, token)` with a client for a 1-hour token holding
+// `policies` (and the token itself, for another kind of client), and deletes
+// the token afterwards whatever happens.
 export async function withTemporaryToken(request, { name, accountId, policies, fetch }, work) {
   const temporary = await request("POST", "/tokens", {
     name,
@@ -91,7 +92,10 @@ export async function withTemporaryToken(request, { name, accountId, policies, f
     policies,
   });
   try {
-    return await work(createCloudflareAccountClient({ token: temporary.value, accountId, fetch }));
+    return await work(
+      createCloudflareAccountClient({ token: temporary.value, accountId, fetch }),
+      temporary,
+    );
   } finally {
     await request("DELETE", `/tokens/${temporary.id}`);
   }

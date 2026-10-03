@@ -1,4 +1,10 @@
+import { createHash } from "node:crypto";
+
 import { AwsClient } from "aws4fetch";
+
+// A streamed upload goes up in parts of this size (R2 wants every part but
+// the last to be the same size), so only one part is ever held in memory.
+const PART_SIZE = 16 * 1024 * 1024;
 
 // Minimal R2 (S3 API) client for one bucket (Lombardi's scripts/lib/r2.mjs):
 // release archives are uploaded here and handed to Ploi as short-lived
@@ -13,9 +19,10 @@ export function createR2Client({ accountId, bucket, accessKeyId, secretAccessKey
   }
   const client = new AwsClient({ accessKeyId, secretAccessKey, service: "s3", region: "auto" });
   const origin = `https://${accountId}.r2.cloudflarestorage.com/${bucket}`;
-  const url = (key) => `${origin}/${key.split("/").map(encodeURIComponent).join("/")}`;
-  const send = async (key, { method, body, headers }) => {
-    const signed = await client.sign(url(key), { method, headers });
+  const url = (key, query) =>
+    `${origin}/${key.split("/").map(encodeURIComponent).join("/")}${query ? `?${query}` : ""}`;
+  const send = async (key, { method, body, headers, query }) => {
+    const signed = await client.sign(url(key, query), { method, headers });
     return fetch(signed.url, { method, headers: Object.fromEntries(signed.headers), body });
   };
   const presign = async (method, key, expiresSeconds) => {
@@ -26,7 +33,129 @@ export function createR2Client({ accountId, bucket, accessKeyId, secretAccessKey
     return signed.url;
   };
 
+  const failed = async (what, response) =>
+    new Error(
+      `R2 ${what} failed with ${response.status}: ${(await response.text()).slice(0, 200)}`,
+    );
+
+  async function put(key, body, contentType) {
+    const response = await send(key, {
+      method: "PUT",
+      body,
+      headers: { "Content-Type": contentType },
+    });
+    if (!response.ok) throw await failed(`PUT ${key}`, response);
+  }
+
+  // `source` (an async iterable of bytes) as a multipart upload, part by part.
+  async function uploadParts(key, source, contentType, onChunk) {
+    let uploadId;
+    const etags = [];
+    let buffered = [];
+    let bufferedBytes = 0;
+    const sendPart = async (part) => {
+      if (!uploadId) {
+        const started = await send(key, {
+          method: "POST",
+          query: "uploads=",
+          headers: { "Content-Type": contentType },
+        });
+        if (!started.ok) throw await failed(`multipart upload of ${key}`, started);
+        uploadId = xmlValue(await started.text(), "UploadId");
+      }
+      const number = etags.length + 1;
+      const response = await send(key, {
+        method: "PUT",
+        query: `partNumber=${number}&uploadId=${encodeURIComponent(uploadId)}`,
+        body: part,
+      });
+      if (!response.ok) throw await failed(`part ${number} of ${key}`, response);
+      etags.push(response.headers.get("etag"));
+    };
+    try {
+      for await (const chunk of source) {
+        const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+        onChunk(bytes);
+        buffered.push(bytes);
+        bufferedBytes += bytes.length;
+        while (bufferedBytes >= PART_SIZE) {
+          const all = Buffer.concat(buffered);
+          await sendPart(all.subarray(0, PART_SIZE));
+          buffered = [all.subarray(PART_SIZE)];
+          bufferedBytes -= PART_SIZE;
+        }
+      }
+      const rest = Buffer.concat(buffered);
+      // Small enough for one request.
+      if (!uploadId) return put(key, rest, contentType);
+      if (rest.length > 0) await sendPart(rest);
+      const parts = etags
+        .map(
+          (etag, index) => `<Part><PartNumber>${index + 1}</PartNumber><ETag>${etag}</ETag></Part>`,
+        )
+        .join("");
+      const completed = await send(key, {
+        method: "POST",
+        query: `uploadId=${encodeURIComponent(uploadId)}`,
+        body: `<CompleteMultipartUpload>${parts}</CompleteMultipartUpload>`,
+        headers: { "Content-Type": "application/xml" },
+      });
+      if (!completed.ok) throw await failed(`completing ${key}`, completed);
+    } catch (error) {
+      if (uploadId) {
+        await send(key, {
+          method: "DELETE",
+          query: `uploadId=${encodeURIComponent(uploadId)}`,
+        }).catch(() => {});
+      }
+      throw error;
+    }
+  }
+
   return {
+    // Every object under `prefix`: { key, size, lastModified }.
+    async list(prefix = "") {
+      const objects = [];
+      let continuation;
+      do {
+        const query = new URLSearchParams({ "list-type": "2", "max-keys": "1000" });
+        if (prefix) query.set("prefix", prefix);
+        if (continuation) query.set("continuation-token", continuation);
+        const signed = await client.sign(`${origin}?${query}`, { method: "GET" });
+        const response = await fetch(signed.url, {
+          method: "GET",
+          headers: Object.fromEntries(signed.headers),
+        });
+        if (!response.ok) throw await failed(`listing ${bucket}`, response);
+        const body = await response.text();
+        for (const [, entry] of body.matchAll(/<Contents>([\s\S]*?)<\/Contents>/gu)) {
+          objects.push({
+            key: xmlValue(entry, "Key"),
+            size: Number(xmlValue(entry, "Size")),
+            lastModified: new Date(xmlValue(entry, "LastModified")),
+          });
+        }
+        continuation = /<IsTruncated>true<\/IsTruncated>/u.test(body)
+          ? xmlValue(body, "NextContinuationToken")
+          : undefined;
+      } while (continuation);
+      return objects;
+    },
+    async delete(key) {
+      const response = await send(key, { method: "DELETE" });
+      if (!response.ok && response.status !== 404) throw await failed(`DELETE ${key}`, response);
+    },
+    // Streams `source` (an async iterable of bytes or strings) to `key`,
+    // hashing it on the way; resolves to { size, sha256 }.
+    async upload(key, source, contentType = "application/octet-stream") {
+      const hash = createHash("sha256");
+      let size = 0;
+      await uploadParts(key, source, contentType, (bytes) => {
+        hash.update(bytes);
+        size += bytes.length;
+      });
+      return { size, sha256: hash.digest("hex") };
+    },
     async exists(key) {
       const response = await send(key, { method: "HEAD" });
       if (response.status === 404) return false;
@@ -54,6 +183,17 @@ export function createR2Client({ accountId, bucket, accessKeyId, secretAccessKey
       return presign("PUT", key, expiresSeconds);
     },
   };
+}
+
+// The text of the first <name> element in an S3 XML response, unescaped.
+function xmlValue(xml, name) {
+  const value = new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, "u").exec(xml)?.[1] ?? "";
+  return value
+    .replace(/&lt;/gu, "<")
+    .replace(/&gt;/gu, ">")
+    .replace(/&quot;/gu, '"')
+    .replace(/&apos;/gu, "'")
+    .replace(/&amp;/gu, "&");
 }
 
 // R2's S3 credentials derive from a Cloudflare API token: the access key ID is
