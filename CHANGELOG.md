@@ -5,6 +5,8 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ## Unreleased
 
+## 0.15.0 — 2026-10-03
+
 ### Added
 
 - `gq offboard` cuts a leaving client's Site off, deleting nothing
