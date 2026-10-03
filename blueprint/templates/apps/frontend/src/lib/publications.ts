@@ -134,6 +134,24 @@ export interface ReconciliationState extends Partial<ReconciliationRecord> {
   running: boolean;
 }
 
+/**
+ * What the store holds, in states and counts only (no content): whether the
+ * Site has been prepared, for the signed check. A shared row's state is
+ * "unusable" when it is in a format this Worker doesn't serve, null when
+ * nothing was ever stored there.
+ */
+export interface StoreStatus {
+  home: string | null;
+  chrome: string | null;
+  design: string | null;
+  /** The stored entry routes, by state ("published", "missing", "moved", "withdrawn", "unusable"). */
+  entries: Record<string, number>;
+  /** The withdrawals in force. */
+  withdrawals: number;
+  /** Recorded events whose processing failed: delayed until the CMS delivers them again. */
+  failedEvents: number;
+}
+
 /** The store couldn't be read or written. Says nothing about the content. */
 export class StoreFailure extends Error {}
 
@@ -204,6 +222,8 @@ export interface PublicationStore {
   finishReconciliation(runId: string, record: ReconciliationRecord): Promise<void>;
   /** The last reconciliation, null if none ever ran. */
   reconciliation(): Promise<ReconciliationState | null>;
+  /** What the store holds, in states and counts. */
+  status(): Promise<StoreStatus>;
   /**
    * Records how processing the event ended. A refreshed event supersedes the
    * older ones about the same entry that weren't refreshed, so a retry skips
@@ -644,6 +664,45 @@ export function publicationStore(db: SqlDatabase): PublicationStore {
           : {}),
         ...(row.reason ? { reason: row.reason } : {}),
         ...(row.message ? { message: row.message } : {}),
+      };
+    },
+
+    async status() {
+      const [shared, entries, withdrawals, failed] = await guard("be read", () =>
+        db.batch([
+          db.prepare(
+            "SELECT key, state, format FROM publications WHERE key IN ('home', 'chrome', 'design')",
+          ),
+          db
+            .prepare(
+              `SELECT CASE WHEN format = ?1 THEN state ELSE 'unusable' END AS state, count(*) AS count
+               FROM publications WHERE substr(key, 1, 6) = 'entry:' GROUP BY 1`,
+            )
+            .bind(PUBLICATION_FORMAT),
+          db.prepare("SELECT count(*) AS count FROM withdrawals WHERE republished_at IS NULL"),
+          db.prepare("SELECT count(*) AS count FROM publication_events WHERE status = 'failed'"),
+        ]),
+      );
+      const rows = shared!.results as Array<{ key: string; state: string; format: number }>;
+      const state = (key: string) => {
+        const row = rows.find((candidate) => candidate.key === key);
+        if (!row) return null;
+        return row.format === PUBLICATION_FORMAT ? row.state : "unusable";
+      };
+      const count = (result: { results: unknown[] } | undefined) =>
+        Number((result?.results[0] as { count?: number } | undefined)?.count ?? 0);
+      return {
+        home: state("home"),
+        chrome: state("chrome"),
+        design: state("design"),
+        entries: Object.fromEntries(
+          (entries!.results as Array<{ state: string; count: number }>).map((row) => [
+            row.state,
+            Number(row.count),
+          ]),
+        ),
+        withdrawals: count(withdrawals),
+        failedEvents: count(failed),
       };
     },
 
