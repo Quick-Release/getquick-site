@@ -950,13 +950,21 @@ test("offboard --archive redacts what R2 and gh echo back when they fail", async
       );
     }
   });
+  // uploads.zip is the archive key's first request, so R2's 403 is waited
+  // out as the key's propagation first.
+  const clock = fakeClock();
   const r2Failure = await r2.fixture.run(["offboard", "--archive", "--yes"], {
     env: ENV,
     fetch: failing,
     exec: r2.account.exec,
+    clock,
   });
   assert.equal(r2Failure.code, 1);
   assert.match(r2Failure.stderr, /R2 PUT .*uploads\.zip failed with 403: SignatureDoesNotMatch/u);
+  assert.equal(
+    clock.sleeps.reduce((sum, ms) => sum + ms, 0),
+    90_000,
+  );
   assert.ok(!r2Failure.stderr.includes(signature), r2Failure.stderr);
   assertNoSecret(r2Failure);
 

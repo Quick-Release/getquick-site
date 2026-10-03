@@ -118,6 +118,9 @@ export function recordingExec(respond = () => ({})) {
   return exec;
 }
 
+// gq through run(), as the bin runs it. Its waits (a freshly minted R2 key,
+// Ploi deleting a site) go by `clock`: a fake one unless the test passes its
+// own, so no test sleeps for real.
 export async function runGq(
   argv,
   {
@@ -126,7 +129,7 @@ export async function runGq(
     fetch = recordingFetch(),
     exec = recordingExec(),
     lookup,
-    clock,
+    clock = fakeClock(),
     stdin,
     interactive = false,
   } = {},
