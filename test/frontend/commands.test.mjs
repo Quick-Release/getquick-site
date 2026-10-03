@@ -71,6 +71,21 @@ test("a refresh that kept stored versions reports why and exits 1", async () => 
   assert.match(stdout, /Ready, but not refreshed/u);
 });
 
+test("a record the Site adds to the refresh is reported by its name", async () => {
+  const report = {
+    ...REFRESHED,
+    refreshed: false,
+    patterns: { outcome: "promoted", state: "published" },
+    forms: { outcome: "kept", failure: { reason: "http", message: "HTTP 502" } },
+  };
+  const { code, stdout } = await refresh([], { respond: () => json(report) });
+
+  assert.equal(code, 1);
+  assert.match(stdout, /✓ patterns: promoted \(published\)/u);
+  assert.match(stdout, /✗ forms: kept the stored version \(http\): HTTP 502/u);
+  assert.doesNotMatch(stdout, /\? /u);
+});
+
 test("a Frontend that isn't ready yet exits 1", async () => {
   const report = {
     ready: false,
