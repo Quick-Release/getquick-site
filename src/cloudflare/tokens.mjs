@@ -123,8 +123,22 @@ export function ensureBucketWithTemporaryToken(
   );
 }
 
+// The permission groups a spec lists (`permissions`, by name) that an existing
+// token's policies lack. A listing without policies can't tell: none.
+export function missingPermissions(existing, spec) {
+  if (!existing || !Array.isArray(existing.policies) || !spec.permissions) return [];
+  const granted = new Set(
+    existing.policies.flatMap((policy) =>
+      (policy.permission_groups ?? []).map((group) => group.name),
+    ),
+  );
+  return spec.permissions.filter((name) => !granted.has(name));
+}
+
 // Each spec names a token, the secrets its value feeds, its `policies(groups)`
-// and `values(token)` (secret → value). Resolves to one plan per spec.
+// and `values(token)` (secret → value), and optionally its `permissions` by
+// name. Resolves to one plan per spec: "update" when the token and its value
+// exist but lack some of the permissions (`missing`).
 export async function inspectTokens(request, secrets, specs) {
   const tokens = await request("GET", "/tokens?per_page=50");
   const stored = await secrets.list();
@@ -133,14 +147,24 @@ export async function inspectTokens(request, secrets, specs) {
     const hasSecrets = spec.secrets.every((secret) =>
       new RegExp(`\\b${secret}\\b`, "u").test(stored),
     );
-    return { spec, existing, plan: planToken(existing, hasSecrets) };
+    const plan = planToken(existing, hasSecrets);
+    const missing = plan === "create" ? [] : missingPermissions(existing, spec);
+    return { spec, existing, missing, plan: plan === "ok" && missing.length > 0 ? "update" : plan };
   });
 }
 
-// Creates or rolls one planned token and stores its values; resolves to them
-// (empty when the plan is "ok").
-export async function applyToken(request, secrets, { spec, existing, plan }, groups) {
+// Creates, updates or rolls one planned token and stores its values; resolves
+// to them (empty when the plan is "ok" or "update", which keeps the value).
+export async function applyToken(request, secrets, { spec, existing, plan, missing = [] }, groups) {
   if (plan === "ok") return {};
+  if (plan !== "create" && missing.length > 0) {
+    await request("PUT", `/tokens/${existing.id}`, {
+      name: spec.name,
+      policies: spec.policies(groups),
+      status: "active",
+    });
+  }
+  if (plan === "update") return {};
   const token =
     plan === "create"
       ? await request("POST", "/tokens", { name: spec.name, policies: spec.policies(groups) })

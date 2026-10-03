@@ -157,6 +157,16 @@ read keeps what is stored, and only WordPress confirming an entry missing makes
 it a 404.
 _Avoid_: sync, polling, full refresh (a whole-Site refresh reads every entry)
 
+**Site readiness**:
+Whether a new content Site's resilience guarantee holds, as `gq site check`
+establishes it ([ADR 0010](docs/adr/0010-declare-a-new-content-site-ready-through-one-readiness-gate.md)):
+WordPress installed with every WPGraphQL field the Frontend reads, the
+Frontend's secrets and store bound, its store prepared by a whole-Site
+refresh, the CMS's scheduler having it reconcile, and an upload proving
+independent media. A running Worker, a running DDEV, an HTTP 200 or a matching
+title is not readiness.
+_Avoid_: up, healthy, deployed (for a ready Site)
+
 **Cold lookup**:
 A visit's read of an entry the publication store has never held, the only CMS
 read a visit makes: a published entry is stored and served, a confirmed

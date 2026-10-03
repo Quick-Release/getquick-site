@@ -198,7 +198,7 @@ finish() {
 
 # gq-smoke, down: tears down the infrastructure scripts/smoke/gq-smoke-up.sh
 # provisioned (#7): the Frontend and CI Workers, the GitHub webhook, the R2
-# buckets and Artifacts repo, the Ploi site, database and system user, the
+# buckets, the Frontend's D1 publication store and the Artifacts repo, the Ploi site, database and system user, the
 # CMS DNS record, and the GETQUICK GQ-SMOKE tokens. Keeps the GitHub
 # repository, the Sigillo project and the registry logins for repeat runs.
 #
@@ -269,7 +269,7 @@ write_env SITE_DIR "$SITE_DIR"
 [[ "$(node -p "require('$SITE_DIR/gq.ops.json').project")" == "$PROJECT" ]] || { warn "$SITE_DIR isn't the $PROJECT site."; exit 1; }
 for tool in gh node pnpm; do command -v "$tool" >/dev/null 2>&1 || { warn "Missing: $tool"; exit 1; }; done
 [[ -x "$SITE_DIR/infra/ci/node_modules/.bin/wrangler" ]] || run pnpm install
-warn "This permanently deletes $PROJECT's Workers, buckets (and their objects), Ploi site and"
+warn "This permanently deletes $PROJECT's Workers, buckets (and their objects), D1 store, Ploi site and"
 warn "database, DNS record and tokens. The repository and Sigillo project are kept."
 confirm_default_no "Tear down $PROJECT?" || exit 1
 
@@ -277,6 +277,7 @@ confirm_default_no "Tear down $PROJECT?" || exit 1
 stage "Frontend Worker"
 say "alchemy destroy removes the $PROJECT-fe Worker and its $FRONTEND_HOST domain,"
 say "with the Staging Alchemy token from Sigillo. Alchemy's shared state store is kept."
+note "Its D1 publication store is retained (a prod-stage store always is); stage 6 deletes it."
 run pnpm exec gq sigillo run staging -- env CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" \
   pnpm --dir infra exec alchemy destroy --stage prod --config frontend.run.ts --yes
 pause
@@ -318,11 +319,12 @@ run pnpm exec gq sigillo run staging -- node "$CLEANUP" empty-bucket "$PROJECT-c
 pause
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
-stage "Delete the buckets and the Artifacts repo"
+stage "Delete the buckets, the publication store and the Artifacts repo"
 try wrangler r2 bucket domain remove "$PROJECT-media" --domain "$MEDIA_HOST" --force
 for bucket in "${BUCKETS[@]}"; do
   try wrangler r2 bucket delete "$bucket"
 done
+try wrangler d1 delete "$PROJECT-fe-publications" --skip-confirmation
 try wrangler artifacts repos delete "$PROJECT" --namespace "$PROJECT" --force
 note "The empty Artifacts namespace $PROJECT stays: Wrangler has no command to delete one."
 pause
@@ -388,6 +390,11 @@ if buckets=$(wrangler r2 bucket list 2>/dev/null); then
   leftover "R2 buckets" "$(grep -ci "$PROJECT" <<<"$buckets" || true)"
 else
   warn "Couldn't list the R2 buckets."; SKIPPED+=("check the R2 buckets by hand (listing failed)")
+fi
+if databases=$(wrangler d1 list 2>/dev/null); then
+  leftover "D1 databases" "$(grep -ci "$PROJECT" <<<"$databases" || true)"
+else
+  warn "Couldn't list the D1 databases."; SKIPPED+=("check the $PROJECT-fe-publications D1 database by hand (listing failed)")
 fi
 if tokens=$(site pnpm --silent exec gq sigillo run operations -- node "$CLEANUP" tokens 2>/dev/null); then
   leftover "Cloudflare tokens" "$(grep -c '^found' <<<"$tokens" || true)"

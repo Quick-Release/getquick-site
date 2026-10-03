@@ -58,8 +58,11 @@ gq cloudflare media [--dry-run]
 gq cloudflare ci [--dry-run]
 
 gq media check [--upload | --local] [--json]
+gq frontend secrets [--dry-run]
 gq frontend refresh [--uri <path>]... [--url <frontend origin>] [--json]
 gq frontend events check [--url <frontend origin>] [--json]
+gq site check [--url <frontend origin>] [--json]
+gq site check --local [--json]
 
 gq ci deploy
 gq ci runs

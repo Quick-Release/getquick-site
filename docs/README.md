@@ -4,13 +4,13 @@
 
 ## Site guides
 
-| Document                                              | Use it for                                                                                                                 |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| [Generate and sync a site](guides/sites.md)           | New content sites, managed-file ownership, locks, sync conflicts and create-once files.                                    |
-| [Local site development](guides/local-development.md) | Setup, doctor, verify, DDEV, Composer and a local design-plugin checkout.                                                  |
-| [Sigillo secrets](guides/secrets.md)                  | Per-command secret injection and checkout login without downloading environments.                                          |
-| [Provisioning and deployment](guides/provisioning.md) | Ploi provisioning/releases/media, database backup and live-to-local sync, Cloudflare tokens/buckets, CI and GitHub wiring. |
-| [Agent skills](guides/skills.md)                      | Register, update, lock and safely check upstream agent skills under `.agents/skills`.                                      |
+| Document                                              | Use it for                                                                                                                                                          |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Generate and sync a site](guides/sites.md)           | New content sites, managed-file ownership, locks, sync conflicts and create-once files.                                                                             |
+| [Local site development](guides/local-development.md) | Setup, doctor, verify, DDEV, Composer and a local design-plugin checkout.                                                                                           |
+| [Sigillo secrets](guides/secrets.md)                  | Per-command secret injection and checkout login without downloading environments.                                                                                   |
+| [Provisioning and deployment](guides/provisioning.md) | The new content Site flow and readiness, Ploi provisioning/releases/media, database backup and live-to-local sync, Cloudflare tokens/buckets, CI and GitHub wiring. |
+| [Agent skills](guides/skills.md)                      | Register, update, lock and safely check upstream agent skills under `.agents/skills`.                                                                               |
 
 ## Reference
 
@@ -41,6 +41,8 @@ the installed npm package; decisions are linked, not copied into guides.
 - [ADR 0006: Withdraw publications through signed CMS events](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0006-withdraw-publications-through-signed-cms-events.md): withdrawals.
 - [ADR 0007: Refresh shared settings through settings events](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0007-refresh-shared-settings-through-settings-events.md): settings events.
 - [ADR 0008: Retry event delivery from the CMS on a server cron](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0008-retry-event-delivery-from-the-cms-on-a-server-cron.md): delivery retries and delay reporting.
+- [ADR 0009: Reconcile missed changes on the CMS's scheduler](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0009-reconcile-missed-changes-on-the-cms-scheduler.md): reconciliation every minute.
+- [ADR 0010: Declare a new content Site ready through one readiness gate](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0010-declare-a-new-content-site-ready-through-one-readiness-gate.md): `gq site check`, the new-Site flow and its acceptance gates.
 - [Rollout plan and evidence](https://github.com/Quick-Release/gq-site/blob/main/docs/plans/getquick-blueprint-rollout.md): accepted gates, passed phases and adoption checklist.
 - [Research](https://github.com/Quick-Release/gq-site/tree/main/docs/research): dated inventories and implementation research.
 - [Agent guidance](https://github.com/Quick-Release/gq-site/tree/main/docs/agents): issue tracking, triage and domain-document use.

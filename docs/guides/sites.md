@@ -23,8 +23,10 @@ packages, Workers and DDEV project. `--variant commerce` is refused until
 phase 4, and so is a target directory that isn't empty. It then prints the
 provisioning sequence (fill in `gq.ops.json`, `gq sync`, `ploi provision`,
 `cloudflare deploy-token`/`releases`/`media`/`ci`, `ploi media`,
-`github setup`, `ci deploy`, prove media, deploy the Frontend and refresh its
-homepage) and runs none of it.
+`github setup`, `frontend secrets`, `ci deploy`, `ploi events`, the releases,
+`frontend refresh` to prepare the Site, prove media with an upload, and
+`site check`, the readiness gate) and runs none of it; see
+[A new content Site, end to end](provisioning.md#a-new-content-site-end-to-end).
 
 ## Managed-file ownership
 

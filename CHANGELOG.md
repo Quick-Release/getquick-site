@@ -267,6 +267,60 @@ delays` shows it, and Site Health turns "recommended" after ten minutes
     422, which the CMS records as a failed reconciliation. Stored entries
     have no modification time until read again, so the first runs re-read
     them, 18 per run.
+- `gq site check` (`pnpm site:check`) is the one readiness gate for a new
+  content Site's resilience guarantee
+  ([ADR 0010](docs/adr/0010-declare-a-new-content-site-ready-through-one-readiness-gate.md)).
+  It exits 1 until ready, and says per check what holds and what to run:
+  - CMS: WordPress installed (a redirect to its installer is named),
+    WPGraphQL active, and every field the Frontend reads present, validated
+    by GraphQL itself with each field skipped, so nothing is read. Missing
+    fields name gq-design, wpgraphql-blocks or getquick-theme.
+  - Frontend: the signed check (event key and store bound), the refresh token
+    (proven by a refresh of no routes, refused after authorisation), a
+    prepared store, and a homepage served 200 with `Cache-Control: no-cache`
+    and no edge cache hit.
+  - Event delivery: a reconciliation that matched WordPress within ten
+    minutes (proof that the CMS's cron runs and its events are accepted),
+    failed events as delays, and the Ploi `.env` key and crontab.
+  - Independent media: `gq media check --upload`, always.
+
+  `gq site check --local` (`pnpm site:check:local`) checks this machine's
+  DDEV CMS the same way: a running DDEV isn't a ready CMS.
+
+- The Frontend's signed `check` answer reports the store: the front page's,
+  the chrome's and the design presets' states, entries by state, withdrawals
+  in force and failed events. States and counts only, never content.
+- `gq frontend secrets` (`pnpm frontend:secrets`) generates
+  `FRONTEND_REFRESH_TOKEN` and `PUBLICATION_EVENT_SECRET` into Sigillo
+  staging when missing or shorter than 32 characters, never printing them.
+- `gq new` prints the whole flow in an order that works: `frontend:secrets`
+  before `ci:deploy`, `ploi:events` with the provisioning, then the releases,
+  `frontend:refresh`, `media:check:upload` and `site:check`. The managed root
+  scripts gain `frontend:secrets`, `site:check` and `site:check:local`.
+- Proofs: `scripts/smoke/cms-events.sh` installs the public WPGraphQL plugin
+  and walks `gq site check`'s transitions (uninstalled, without WPGraphQL,
+  without the GETQUICK fields; a Worker unprepared, then unreconciled, then
+  ready) on the real WordPress and workerd. `scripts/smoke/frontend-runtime.sh`
+  serves a store aged by a year and refuses another Site's, malformed,
+  unsupported and stale events. `scripts/smoke/acceptance.sh` runs the local
+  gate in order. CI also runs `frontend-check.sh` and `frontend-runtime.sh`.
+- The gq-smoke wizard provisions the Frontend's secrets and the CMS's events,
+  prepares the store, passes `gq site check`, and drives the live
+  editor-to-visitor acceptance (`scripts/smoke/live-acceptance.mjs`): a
+  publication with an uploaded image, a tagline change, a change with no
+  event, a 15-minute CMS outage, a withdrawal and a redeploy. Teardown deletes
+  the retained D1 store.
+- **Existing sites:** nothing changes until they adopt. A Frontend from before
+  this release is reported by `gq site check` as predating it; copy the
+  updated `src/lib/events.ts`, `src/lib/publications.ts` and
+  `src/events.test.ts` from a newly generated site and deploy.
+
+### Fixed
+
+- The Frontend's deploy token ("Staging Alchemy") can create and migrate the
+  publication store: it gains D1 Read and D1 Write. `pnpm cf:deploy-token`
+  adds a missing permission to an existing token, keeping its value; run it
+  once before the next Frontend deploy.
 
 ## 0.13.5 — 2026-10-02
 

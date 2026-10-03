@@ -3,7 +3,9 @@
 - Status: Accepted; amended by [ADR 0004](0004-serve-entries-from-the-store-with-a-cold-lookup.md)
   (entries, and the cold lookup of an entry the store has never held) and
   [ADR 0005](0005-refresh-publications-through-signed-cms-events.md) (CMS
-  publication events; CI releases bind the refresh token)
+  publication events; CI releases bind the refresh token) and
+  [ADR 0010](0010-declare-a-new-content-site-ready-through-one-readiness-gate.md)
+  (the deploy token's D1 permission; readiness requires a prepared store)
 - Date: 2026-10-02
 
 ## Context

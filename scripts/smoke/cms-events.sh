@@ -4,13 +4,15 @@
 # from this checkout's blueprint, installs its Frontend's and its CI Worker's
 # npm dependencies (the latter for Wrangler's local workerd runtime), sets up a
 # real WordPress (the version the CMS skeleton pins, on SQLite, with WP-CLI)
-# carrying the site's own event and delivery-retry mu-plugins, then runs
+# carrying the site's own event and delivery-retry mu-plugins and the public
+# WPGraphQL plugin (for gq site check's CMS readiness), then runs
 # cms-events.mjs: WordPress publishes through its real hooks, and the Frontend
 # built by Alchemy's Astro Cloudflare build, served in workerd with a local D1
 # publication store, receives the signed events.
 #
 # Generation stays offline and secret-free; only the downloads (npm packages,
-# WordPress, its SQLite integration and WP-CLI, cached in GQ_SMOKE_CACHE) use
+# WordPress, its SQLite integration, WPGraphQL and WP-CLI, cached in
+# GQ_SMOKE_CACHE) use
 # the network. Nothing is provisioned or deployed: no Cloudflare account,
 # token, remote resource or live CMS is used. The site is deleted afterwards
 # unless KEEP=1. Needs php and unzip. The real-cron check runs only when
@@ -31,6 +33,7 @@ fetch wp-cli.phar https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/
 fetch "wordpress-$version.zip" "https://wordpress.org/wordpress-$version.zip"
 fetch sqlite-database-integration.zip \
   https://downloads.wordpress.org/plugin/sqlite-database-integration.latest-stable.zip
+fetch wp-graphql.zip https://downloads.wordpress.org/plugin/wp-graphql.latest-stable.zip
 
 parent=$(mktemp -d "${TMPDIR:-/tmp}/gq-cms-events.XXXXXX")
 if [[ "${KEEP:-}" == 1 ]]; then

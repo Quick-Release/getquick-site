@@ -572,9 +572,72 @@ test("a check event proves the Frontend accepts this Site's events, and changes 
   });
 
   expect(status).toBe(200);
-  expect(body).toEqual({ status: "checked", site: SITE, reconciliation: null });
+  expect(body).toEqual({
+    status: "checked",
+    site: SITE,
+    reconciliation: null,
+    store: {
+      home: null,
+      chrome: null,
+      design: null,
+      entries: {},
+      withdrawals: 0,
+      failedEvents: 0,
+    },
+  });
   expect(fetchMock).not.toHaveBeenCalled();
   expect(await recordedEvents()).toEqual([]);
+});
+
+test("the check says what the store holds, so an unprepared Site isn't mistaken for a ready one", async () => {
+  const check = () =>
+    deliver({ site: SITE, id: randomUUID(), action: "check", occurredAt: Date.now() });
+  // The Worker answers, but nothing was ever stored: pages are a 503.
+  expect((await check()).body.store).toMatchObject({ home: null, chrome: null, entries: {} });
+  expect((await visit("/")).status).toBe(503);
+
+  await prepare();
+  published.set("/news/", { id: "page-80", title: "News", content: "<p>We launched.</p>" });
+  await deliver({
+    site: SITE,
+    id: randomUUID(),
+    action: "withdraw",
+    occurredAt: Date.now(),
+    entry: { id: "page-64", uri: "/about/" },
+  });
+  published.get("/news/")!.content = "<p>Updated.</p>";
+  const failing = wordpress({ entry: () => httpError(502) });
+  await deliver(publication("/news/"));
+  db.exec("UPDATE publications SET format = 99 WHERE key = 'design'");
+  const fetched = failing.mock.calls.length;
+
+  const { status, body } = await check();
+
+  expect(status).toBe(200);
+  expect(body.store).toEqual({
+    home: "published",
+    chrome: "published",
+    design: "unusable",
+    entries: { withdrawn: 1 },
+    withdrawals: 1,
+    failedEvents: 1,
+  });
+  expect(failing.mock.calls.length).toBe(fetched);
+  expect(JSON.stringify(body)).not.toContain("Version 1.");
+});
+
+test("a check on a store that can't be read still proves the key, and says the store is unreadable", async () => {
+  db.unavailable = true;
+
+  const { status, body } = await deliver({
+    site: SITE,
+    id: randomUUID(),
+    action: "check",
+    occurredAt: Date.now(),
+  });
+
+  expect(status).toBe(200);
+  expect(body).toMatchObject({ status: "checked", site: SITE, store: null });
 });
 
 test("an event the store can't record is a 503, for the CMS to deliver again", async () => {

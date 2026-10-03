@@ -108,6 +108,11 @@ overlapping, and the last outcome is kept in `reconciliation`, which the signed
 `check` event reports. A failed read keeps what is stored, and an incomplete
 list removes nothing.
 
+The `check` answer also says what the store holds, in states and counts only
+(the front page's, the chrome's and the design presets' states, entries by
+state, withdrawals in force and failed events), so `pnpm site:check`
+(`gq site check`) can tell a prepared Site from a Worker that merely answers.
+
 `pnpm dev` has no store: it reads the CMS live, as before.
 
 ## Blocks

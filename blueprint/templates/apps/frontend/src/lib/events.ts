@@ -172,17 +172,20 @@ const handlers: Record<string, Handler> = {
 
 /**
  * A check: the Frontend accepts this Site's events. It also says how the last
- * reconciliation went, when the store can tell, so the check shows a Site
- * that has stopped catching up.
+ * reconciliation went and what the store holds (states and counts, no
+ * content), when the store can tell, so the check shows a Site that was never
+ * prepared or has stopped catching up. `store` is null when it can't be read.
  */
 async function handleCheck(store: PublicationStore): Promise<EventAnswer> {
   let reconciliation = null;
+  let status = null;
   try {
     reconciliation = await store.reconciliation();
+    status = await store.status();
   } catch (error) {
     if (!(error instanceof StoreFailure)) throw error;
   }
-  return { status: 200, body: { status: "checked", site: SITE, reconciliation } };
+  return { status: 200, body: { status: "checked", site: SITE, reconciliation, store: status } };
 }
 
 /** The event key when the Worker has one bound, and it is strong enough. */
