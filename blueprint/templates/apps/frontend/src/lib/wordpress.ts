@@ -358,13 +358,26 @@ function normalizeImage(edge: z.infer<typeof imageEdge>): WordPressImage | null 
   return node ? { sourceUrl: node.sourceUrl, altText: node.altText ?? "" } : null;
 }
 
+/**
+ * An entry's URI as a path. A CMS whose permalinks point at the Frontend gives
+ * absolute URIs (`https://acme.example/team/`); only the path is the route.
+ * Percent-encoding and the trailing slash are kept as WordPress gives them.
+ */
+export function uriPath(uri: string) {
+  try {
+    return new URL(uri, "https://frontend.invalid").pathname;
+  } catch {
+    return uri;
+  }
+}
+
 function normalizePost(post: RawEntry): WordPressPost {
   return {
     id: post.id,
     title: post.title ?? "",
     excerpt: post.excerpt ?? "",
     content: post.content ?? "",
-    uri: post.uri,
+    uri: uriPath(post.uri),
     date: post.date ?? "",
     featuredImage: normalizeImage(post.featuredImage),
     hasVideoHero: hasVideoHero(parseWordPressBlocks(post.blocks)),
@@ -591,7 +604,11 @@ export async function getPublishedEntries(): Promise<
       );
       for (const node of contentNodes.nodes) {
         if (!node.uri) continue;
-        entries.push({ id: node.id ?? null, uri: node.uri, modifiedAt: cmsTime(node.modifiedGmt) });
+        entries.push({
+          id: node.id ?? null,
+          uri: uriPath(node.uri),
+          modifiedAt: cmsTime(node.modifiedGmt),
+        });
       }
       if (!contentNodes.pageInfo.hasNextPage) {
         return { kind: "found" as const, content: { entries, requests: page + 1 } };

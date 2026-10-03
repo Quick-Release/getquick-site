@@ -45,6 +45,12 @@ interface Entry {
 // What WordPress publishes, by URI, as an anonymous reader sees it.
 let published: Map<string, Entry>;
 let heading: string;
+// Where WordPress's permalinks point. A GETQUICK CMS points them at the
+// Frontend, and WPGraphQL then gives every entry's uri as an absolute URL.
+let permalinkOrigin: string | null;
+
+/** An entry's uri as WordPress gives it. */
+const cmsUri = (path: string) => (permalinkOrigin ? new URL(path, permalinkOrigin).href : path);
 
 const unreachable = () => Promise.reject(new TypeError("fetch failed"));
 const presets = { colors: [], spacingSizes: [] };
@@ -59,7 +65,7 @@ function entryAnswer({ uri }: Record<string, unknown>) {
           id: entry.id,
           title: entry.title,
           content: entry.content,
-          uri: [...published].find(([, other]) => other === entry)![0],
+          uri: cmsUri([...published].find(([, other]) => other === entry)![0]),
           status: entry.status ?? "publish",
           isRestricted: entry.isRestricted ?? false,
           featuredImage: null,
@@ -83,7 +89,7 @@ function wordpress(handlers: { entry?: Handler; home?: Handler } = {}) {
         designTokens: presets,
       }),
     entry: entryAnswer,
-    routes: () => routes("/", ...published.keys()),
+    routes: () => routes("/", ...[...published.keys()].map(cmsUri)),
     ...handlers,
   });
 }
@@ -117,6 +123,7 @@ beforeEach(() => {
     ["/about/", { id: "page-64", title: "About", content: "<p>Version 1.</p>" }],
   ]);
   heading = "Welcome";
+  permalinkOrigin = null;
   directory = mkdtempSync(join(tmpdir(), "acme-events-"));
   bind(openTestD1(join(directory, "publications.sqlite")));
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -285,6 +292,51 @@ test("a moved entry's event redirects the route it left", async () => {
   expect(body.moved).toEqual({ "/about/": "/about-us/" });
   expect(oldRoute.status).toBe(301);
   expect(oldRoute.location).toBe("/about-us/");
+  expect(newRoute.html).toContain("Moved.");
+});
+
+test("an event for an entry WordPress gives an absolute URI refreshes it at its path", async () => {
+  await prepare();
+  permalinkOrigin = "https://acme-fe.example";
+  published.get("/about/")!.content = "<p>Version 2.</p>";
+  wordpress();
+
+  const { status, body } = await deliver(publication("/about/"));
+  cmsDown();
+  const visited = await visit("/about/");
+
+  expect(status).toBe(200);
+  expect(body).toMatchObject({
+    status: "refreshed",
+    entries: { "/about/": { outcome: "promoted", state: "published" } },
+    moved: {},
+  });
+  expect(visited.status).toBe(200);
+  expect(visited.html).toContain("Version 2.");
+});
+
+test("a moved entry's event on a CMS that gives absolute URIs redirects to its new path", async () => {
+  await prepare();
+  permalinkOrigin = "https://acme-fe.example";
+  const about = published.get("/about/")!;
+  published.delete("/about/");
+  published.set("/about-us/", { ...about, content: "<p>Moved.</p>" });
+  wordpress();
+
+  const { status, body } = await deliver(
+    publication("/about-us/", {
+      entry: { id: about.id, uri: "/about-us/", previousUri: "/about/" },
+    }),
+  );
+  cmsDown();
+  const oldRoute = await visit("/about/");
+  const newRoute = await visit("/about-us/");
+
+  expect(status).toBe(200);
+  expect(body.moved).toEqual({ "/about/": "/about-us/" });
+  expect(oldRoute.status).toBe(301);
+  expect(oldRoute.location).toBe("/about-us/");
+  expect(newRoute.status).toBe(200);
   expect(newRoute.html).toContain("Moved.");
 });
 

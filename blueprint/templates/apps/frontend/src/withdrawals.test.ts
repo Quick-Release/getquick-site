@@ -46,6 +46,12 @@ interface Entry {
 // that still returns it.
 let published: Map<string, Entry>;
 let heading: string;
+// Where WordPress's permalinks point. A GETQUICK CMS points them at the
+// Frontend, and WPGraphQL then gives every entry's uri as an absolute URL.
+let permalinkOrigin: string | null;
+
+/** An entry's uri as WordPress gives it. */
+const cmsUri = (path: string) => (permalinkOrigin ? new URL(path, permalinkOrigin).href : path);
 
 const unreachable = () => Promise.reject(new TypeError("fetch failed"));
 const presets = { colors: [], spacingSizes: [] };
@@ -60,7 +66,7 @@ function entryAnswer({ uri }: Record<string, unknown>) {
           id: entry.id,
           title: entry.title,
           content: entry.content,
-          uri: path,
+          uri: cmsUri(path),
           status: "publish",
           isRestricted: false,
           featuredImage: null,
@@ -88,7 +94,7 @@ function wordpress(handlers: { entry?: Handler; home?: Handler } = {}) {
   return stubWordPress({
     home: homeAnswer,
     entry: entryAnswer,
-    routes: () => routes("/", ...published.keys()),
+    routes: () => routes("/", ...[...published.keys()].map(cmsUri)),
     ...handlers,
   });
 }
@@ -145,6 +151,7 @@ beforeEach(() => {
     ["/contact/", { id: "page-70", title: "Contact", content: "<p>Write to us.</p>" }],
   ]);
   heading = "Welcome";
+  permalinkOrigin = null;
   directory = mkdtempSync(join(tmpdir(), "acme-withdrawals-"));
   bind(openTestD1(join(directory, "publications.sqlite")));
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -573,6 +580,39 @@ test("a moved entry is withdrawn at its old route too, which stops redirecting t
   expect(newRoute.status).toBe(404);
   expect(newRoute.html).not.toContain("Moved.");
   expect(contact.status).toBe(200);
+});
+
+test("on a CMS that gives absolute URIs, a moved entry is withdrawn at both paths and republished at its own", async () => {
+  permalinkOrigin = "https://acme-fe.example";
+  await prepare();
+  const about = published.get("/about/")!;
+  published.delete("/about/");
+  published.set("/about-us/", { ...about, content: "<p>Moved.</p>" });
+  wordpress();
+  await deliver(
+    publication("/about-us/", {
+      entry: { id: about.id, uri: "/about-us/", previousUri: "/about/" },
+    }),
+  );
+  expect((await visit("/about/")).location).toBe("/about-us/");
+  await later();
+
+  const { body: withdrawn } = await deliver(withdrawal("/about-us/"));
+  const afterWithdrawal = await visit("/about-us/");
+  await later();
+  const { body: republished } = await deliver(publication("/about-us/"));
+  cmsDown();
+  const newRoute = await visit("/about-us/");
+
+  expect(withdrawn.withdrawn).toEqual(["/about-us/", "/about/"]);
+  expect(afterWithdrawal.status).toBe(404);
+  expect(republished).toMatchObject({
+    status: "refreshed",
+    entries: { "/about-us/": { outcome: "promoted", state: "published" } },
+    moved: {},
+  });
+  expect(newRoute.status).toBe(200);
+  expect(newRoute.html).toContain("Moved.");
 });
 
 test("an entry whose move never reached the store is withdrawn where it is stored", async () => {

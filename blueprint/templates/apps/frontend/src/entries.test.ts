@@ -47,6 +47,12 @@ interface Entry {
 // restricted.
 let published: Map<string, Entry>;
 let presets: { colors: Array<{ slug: string; color: string }>; spacingSizes: [] };
+// Where WordPress's permalinks point. A GETQUICK CMS points them at the
+// Frontend, and WPGraphQL then gives every entry's uri as an absolute URL.
+let permalinkOrigin: string | null;
+
+/** An entry's uri as WordPress gives it. */
+const cmsUri = (path: string) => (permalinkOrigin ? new URL(path, permalinkOrigin).href : path);
 
 const unreachable = () => Promise.reject(new TypeError("fetch failed"));
 
@@ -57,7 +63,7 @@ function entryAnswer({ uri }: Record<string, unknown>): Answer {
     id: entry.id,
     title: entry.title,
     content: entry.content,
-    uri: [...published].find(([, other]) => other === entry)![0],
+    uri: cmsUri([...published].find(([, other]) => other === entry)![0]),
     status: entry.status ?? "publish",
     isRestricted: entry.isRestricted ?? false,
     featuredImage: null,
@@ -85,7 +91,7 @@ function wordpress(
     home: frontPage,
     entry: entryAnswer,
     design: () => data({ designTokens: presets }),
-    routes: () => routes("/", ...published.keys()),
+    routes: () => routes("/", ...[...published.keys()].map(cmsUri)),
     ...handlers,
   });
 }
@@ -122,6 +128,7 @@ beforeEach(() => {
     ],
   ]);
   presets = { colors: [{ slug: "brand", color: "#c00" }], spacingSizes: [] };
+  permalinkOrigin = null;
   directory = mkdtempSync(join(tmpdir(), "acme-entries-"));
   bind(openTestD1(join(directory, "publications.sqlite")));
   consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -632,6 +639,70 @@ test("an entry refresh whose read started earlier doesn't overwrite a newer one"
   expect(fast.report.entries["/about/"]).toEqual({ outcome: "promoted", state: "published" });
   expect(late.report.entries["/about/"]).toEqual({ outcome: "superseded", state: "published" });
   expect(html).toContain("Latest news");
+});
+
+test("a full refresh on a CMS that gives absolute URIs stores every entry at its path, moving none", async () => {
+  permalinkOrigin = "https://acme-fe.example";
+  wordpress();
+
+  const { status, report } = await refresh();
+  cmsDown();
+  const about = await visit("/about/");
+
+  expect(status).toBe(200);
+  expect(report).toMatchObject({
+    ready: true,
+    routes: { outcome: "listed", count: 3 },
+    entries: {
+      "/about/": { outcome: "promoted", state: "published" },
+      "/2026/09/hello/": { outcome: "promoted", state: "published" },
+    },
+    moved: {},
+  });
+  expect(Object.keys(report.entries)).toEqual(["/about/", "/2026/09/hello/"]);
+  expect(about.status).toBe(200);
+  expectServedAbout(about.html);
+});
+
+test("an entry moved on a CMS that gives absolute URIs redirects to its new path", async () => {
+  await prepare();
+  permalinkOrigin = "https://acme-fe.example";
+  const about = published.get("/about/")!;
+  published.delete("/about/");
+  published.set("/company/about/", about);
+  wordpress();
+
+  const { report } = await refresh();
+  const oldRoute = await visit("/about/");
+
+  expect(report.moved).toEqual({ "/about/": "/company/about/" });
+  expect(oldRoute.status).toBe(301);
+  expect(oldRoute.location).toBe("/company/about/");
+});
+
+test("an entry WordPress gives an absolute URI is refreshed and served at its path", async () => {
+  await prepare();
+  permalinkOrigin = "https://acme-fe.example";
+  published.set("/café/", { id: "page-30", title: "Café", content: "<p>Coffee.</p>" });
+  wordpress();
+
+  const { report } = await refresh({ uris: ["/about/", "/caf%c3%a9/"] });
+  cmsDown();
+  const about = await visit("/about/");
+  const cafe = await visit("/caf%C3%A9/");
+
+  expect(report).toMatchObject({
+    refreshed: true,
+    entries: {
+      "/about/": { outcome: "promoted", state: "published" },
+      "/café/": { outcome: "promoted", state: "published" },
+    },
+    moved: {},
+  });
+  expect(about.status).toBe(200);
+  expectServedAbout(about.html);
+  expect(cafe.status).toBe(200);
+  expect(cafe.html).toContain("Coffee.");
 });
 
 test("a percent-encoded route is the same entry as WordPress's", async () => {
