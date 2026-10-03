@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import test from "node:test";
 
-import { recordingExec, recordingFetch } from "../support/fixture-site.mjs";
+import { fakeClock, recordingExec, recordingFetch } from "../support/fixture-site.mjs";
 import {
   answering,
   changes,
@@ -1004,6 +1004,135 @@ test("a scoped key that fails to delete doesn't hide why the archive stopped", a
       .every((id) => id === "temp-3"),
     "every other temporary token is deleted",
   );
+});
+
+// --- freshly minted keys ------------------------------------------------------
+
+// The access key an R2 request is signed with.
+const r2AccessKey = ({ url, headers }) =>
+  new URL(url).hostname.endsWith(".r2.cloudflarestorage.com")
+    ? /Credential=([^/,]+)/u.exec(headers.authorization ?? headers.Authorization ?? "")?.[1]
+    : undefined;
+
+const unauthorized = () =>
+  new Response(
+    '<?xml version="1.0"?><Error><Code>Unauthorized</Code><Message>Unauthorized</Message></Error>',
+    { status: 401 },
+  );
+
+// R2 answers 401 to the first `count` requests signed with the first key the
+// run mints for a bucket (temp-2 is the run's own API token), as it does
+// while a new token propagates.
+function propagating(account, count) {
+  let first;
+  let rejected = 0;
+  return intercepting(account, (request) => {
+    const key = r2AccessKey(request);
+    if (!key?.startsWith("temp-")) return;
+    first ??= key;
+    if (key === first && rejected < count) {
+      rejected += 1;
+      return unauthorized();
+    }
+  });
+}
+
+test("a freshly minted key R2 rejects at first is retried with backoff until it works", async () => {
+  const { fixture, account } = await cutSite();
+  const clock = fakeClock();
+
+  const result = await fixture.run(["offboard", "--archive", "--dry-run"], {
+    env: ENV,
+    fetch: propagating(account, 3),
+    exec: account.exec,
+    clock,
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(clock.sleeps, [2000, 4000, 8000]);
+});
+
+test("a freshly minted key R2 never accepts fails after 90 s, saying so", async () => {
+  const { fixture, account } = await cutSite();
+  const clock = fakeClock();
+
+  const result = await fixture.run(["offboard", "--archive", "--dry-run"], {
+    env: ENV,
+    fetch: propagating(account, Infinity),
+    exec: account.exec,
+    clock,
+  });
+
+  assert.equal(result.code, 1);
+  assert.equal(
+    result.stderr,
+    "gq: R2 listing fixture-releases failed with 401: Unauthorized: Unauthorized (the key was minted just now; gq waited 90 s for R2 to accept it)\n",
+  );
+  assert.deepEqual(
+    clock.sleeps,
+    [2000, 4000, 8000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 6000],
+  );
+  assertNoSecret(result);
+});
+
+test("a presigned URL goes to Ploi only once R2 accepts its freshly minted key", async () => {
+  // Without the media bucket to archive, the database dump is the first
+  // thing written with the archive's key, and Ploi's server writes it.
+  const ops = { ...OPS, media: { bucket: "team-media", domain: "team-media.example.test" } };
+  const { fixture, account } = await cutSite({ ops });
+  const clock = fakeClock();
+  const archiveBucket = (url) =>
+    new URL(url).hostname.endsWith(".r2.cloudflarestorage.com") &&
+    new URL(url).pathname.split("/")[1] === "offboarded-clients";
+  let rejected = 0;
+  const fetch = intercepting(account, ({ url }) => {
+    if (archiveBucket(url) && rejected < 2) {
+      rejected += 1;
+      return unauthorized();
+    }
+  });
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], {
+    env: ENV,
+    fetch,
+    exec: account.exec,
+    clock,
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(clock.sleeps, [2000, 4000]);
+  const accepted = fetch.requests.filter(({ url }) => archiveBucket(url))[2];
+  const dump = fetch.requests.find(
+    ({ method, url }) => method === "POST" && url.endsWith("/scripts/run"),
+  );
+  assert.ok(accepted, "gq checks R2 accepts the archive's key");
+  assert.ok(
+    fetch.requests.indexOf(accepted) < fetch.requests.indexOf(dump),
+    "before Ploi uploads the dump with it",
+  );
+});
+
+test("a 401 for a key R2 has already accepted is not retried", async () => {
+  const { fixture, account } = await cutSite();
+  const clock = fakeClock();
+  // R2 accepts the archive's key once, then rejects it.
+  let accepted = false;
+  const fetch = intercepting(account, ({ url }) => {
+    if (!new URL(url).hostname.endsWith(".r2.cloudflarestorage.com") || !isArchive(url)) return;
+    if (accepted) return unauthorized();
+    accepted = true;
+  });
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], {
+    env: ENV,
+    fetch,
+    exec: account.exec,
+    clock,
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /^gq: R2 .* failed with 401: Unauthorized: Unauthorized\n$/u);
+  assert.deepEqual(clock.sleeps, []);
 });
 
 // --- the shared zone and the tokens -------------------------------------------

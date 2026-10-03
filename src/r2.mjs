@@ -8,12 +8,21 @@ import { redactText } from "./cli/redact.mjs";
 // the last to be the same size), so only one part is ever held in memory.
 const PART_SIZE = 16 * 1024 * 1024;
 
+// R2 rejects a token's S3 key (401 or 403) for a while after the token is
+// created. A key minted just now is retried until R2 first accepts it,
+// waiting 2 s, then twice as long each time up to 10 s, for 90 s in all.
+const FIRST_WAIT_MS = 2000;
+const LONGEST_WAIT_MS = 10_000;
+const PROPAGATION_MS = 90_000;
+
 // Minimal R2 (S3 API) client for one bucket (Lombardi's scripts/lib/r2.mjs):
 // release archives are uploaded here and handed to Ploi as short-lived
 // presigned GET URLs, and live database backups are uploaded by Ploi through
 // presigned PUT URLs. Requests are signed here and sent through the injected
 // `fetch`; S3 signing leaves the payload unsigned, so bodies stream as is.
-export function createR2Client({ accountId, bucket, accessKeyId, secretAccessKey, fetch }) {
+// `minted` ({ now(), sleep(ms) }) says the key was minted just now: R2's
+// rejections are waited out until it first accepts the key, and only then.
+export function createR2Client({ accountId, bucket, accessKeyId, secretAccessKey, fetch, minted }) {
   if (!accessKeyId || !secretAccessKey) {
     throw new Error(
       "R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY are missing; store the bucket's R2 credentials in the secret store first.",
@@ -23,11 +32,45 @@ export function createR2Client({ accountId, bucket, accessKeyId, secretAccessKey
   const origin = `https://${accountId}.r2.cloudflarestorage.com/${bucket}`;
   const url = (key, query) =>
     `${origin}/${key.split("/").map(encodeURIComponent).join("/")}${query ? `?${query}` : ""}`;
-  const send = async (key, { method, body, headers, query }) => {
-    const signed = await client.sign(url(key, query), { method, headers });
-    return fetch(signed.url, { method, headers: Object.fromEntries(signed.headers), body });
+  // Until R2 accepts a minted key: when it was minted, and the response R2
+  // still rejected once the wait ran out, with how long gq waited.
+  const mintedAt = minted?.now();
+  let propagating = Boolean(minted);
+  const waitedOut = new WeakMap();
+  const signedFetch = async (target, { method, body, headers }) => {
+    let wait = FIRST_WAIT_MS;
+    for (;;) {
+      const signed = await client.sign(target, { method, headers });
+      const response = await fetch(signed.url, {
+        method,
+        headers: Object.fromEntries(signed.headers),
+        body,
+      });
+      if (!propagating) return response;
+      if (response.status !== 401 && response.status !== 403) {
+        // A server error says nothing about the key.
+        if (response.status < 500) propagating = false;
+        return response;
+      }
+      const waited = minted.now() - mintedAt;
+      if (waited >= PROPAGATION_MS) {
+        waitedOut.set(response, waited);
+        return response;
+      }
+      await response.body?.cancel();
+      await minted.sleep(Math.min(wait, PROPAGATION_MS - waited));
+      wait = Math.min(wait * 2, LONGEST_WAIT_MS);
+    }
   };
+  const send = (key, { method, body, headers, query }) =>
+    signedFetch(url(key, query), { method, body, headers });
+  // Whoever a presigned URL goes to can't wait for R2 to accept the key, so
+  // gq waits first, listing one object.
   const presign = async (method, key, expiresSeconds) => {
+    if (propagating) {
+      const response = await signedFetch(`${origin}?list-type=2&max-keys=1`, { method: "GET" });
+      if (!response.ok) throw await failed(`listing ${bucket}`, response);
+    }
     const signed = await client.sign(`${url(key)}?X-Amz-Expires=${expiresSeconds}`, {
       method,
       aws: { signQuery: true },
@@ -42,8 +85,14 @@ export function createR2Client({ accountId, bucket, accessKeyId, secretAccessKey
     const code = xmlValue(body, "Code");
     const message = xmlValue(body, "Message");
     const detail = code ? `${code}${message ? `: ${message}` : ""}` : body.slice(0, 200);
-    return new Error(`R2 ${what} failed with ${response.status}: ${redactText(detail)}`);
+    return new Error(
+      `R2 ${what} failed with ${response.status}: ${redactText(detail)}${propagation(response)}`,
+    );
   };
+  const propagation = (response) =>
+    waitedOut.has(response)
+      ? ` (the key was minted just now; gq waited ${Math.round(waitedOut.get(response) / 1000)} s for R2 to accept it)`
+      : "";
 
   async function put(key, body, contentType) {
     const response = await send(key, {
@@ -128,11 +177,7 @@ export function createR2Client({ accountId, bucket, accessKeyId, secretAccessKey
         const query = new URLSearchParams({ "list-type": "2", "max-keys": "1000" });
         if (prefix) query.set("prefix", prefix);
         if (continuation) query.set("continuation-token", continuation);
-        const signed = await client.sign(`${origin}?${query}`, { method: "GET" });
-        const response = await fetch(signed.url, {
-          method: "GET",
-          headers: Object.fromEntries(signed.headers),
-        });
+        const response = await signedFetch(`${origin}?${query}`, { method: "GET" });
         if (!response.ok) throw await failed(`listing ${bucket}`, response);
         const body = await response.text();
         for (const [, entry] of body.matchAll(/<Contents>([\s\S]*?)<\/Contents>/gu)) {
@@ -166,7 +211,8 @@ export function createR2Client({ accountId, bucket, accessKeyId, secretAccessKey
     async exists(key) {
       const response = await send(key, { method: "HEAD" });
       if (response.status === 404) return false;
-      if (!response.ok) throw new Error(`R2 HEAD ${key} failed with ${response.status}`);
+      if (!response.ok)
+        throw new Error(`R2 HEAD ${key} failed with ${response.status}${propagation(response)}`);
       return true;
     },
     async put(key, body, contentType = "application/gzip") {
@@ -175,11 +221,13 @@ export function createR2Client({ accountId, bucket, accessKeyId, secretAccessKey
         body,
         headers: { "Content-Type": contentType },
       });
-      if (!response.ok) throw new Error(`R2 PUT ${key} failed with ${response.status}`);
+      if (!response.ok)
+        throw new Error(`R2 PUT ${key} failed with ${response.status}${propagation(response)}`);
     },
     async get(key) {
       const response = await send(key, { method: "GET" });
-      if (!response.ok) throw new Error(`R2 GET ${key} failed with ${response.status}`);
+      if (!response.ok)
+        throw new Error(`R2 GET ${key} failed with ${response.status}${propagation(response)}`);
       return response;
     },
     presignGet(key, expiresSeconds = 1800) {

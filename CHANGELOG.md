@@ -5,6 +5,17 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ## Unreleased
 
+### Fixed
+
+- `gq offboard --archive` no longer stops with
+  `R2 listing <bucket> failed with 401` on the bucket keys it mints for the
+  run. R2 rejects a new token's key for a while, so each key's requests are
+  retried on 401 or 403 until R2 first accepts it: 2 s, doubling up to 10 s,
+  for 90 s in all. After that a 401 or 403 fails at once. A key R2 still
+  rejects after 90 s fails with an error that says the key was minted just
+  now and how long gq waited. A presigned URL (the database dump Ploi's
+  server uploads) is handed out only once R2 accepts its key.
+
 ## 0.15.0 — 2026-10-03
 
 ### Added

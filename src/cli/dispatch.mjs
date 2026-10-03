@@ -81,7 +81,10 @@ const COMMAND_OPTIONS = new Map([
 
 // Resolves to an exit code when the command has its own (a wrapped command's),
 // otherwise to undefined for success.
-export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, interactive }) {
+export async function runCli(
+  argv,
+  { cwd, env, fetch, exec, lookup, clock, stdin, io, interactive },
+) {
   // The Sigillo wrapper parses its own arguments: everything after `--` belongs
   // to the wrapped command, not to gq.
   if (isSigilloCommand(argv)) return runSigilloCommand(argv.slice(1), { cwd, env, exec });
@@ -200,6 +203,7 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
       env,
       fetch,
       exec,
+      clock,
       stdin,
       io,
       interactive,

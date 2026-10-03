@@ -87,6 +87,21 @@ export function json(payload, status = 200) {
   });
 }
 
+// A clock whose sleep() returns at once and moves now() on by what it slept;
+// `sleeps` records each wait (ms).
+export function fakeClock(start = Date.parse("2026-10-01T09:00:00Z")) {
+  let now = start;
+  const sleeps = [];
+  return {
+    now: () => now,
+    async sleep(ms) {
+      sleeps.push(ms);
+      now += ms;
+    },
+    sleeps,
+  };
+}
+
 // Records every child process; `respond` may override { code, stdout, stderr }.
 // `options` keeps each call's full options (stdio, streams) beside `calls`.
 export function recordingExec(respond = () => ({})) {
@@ -111,6 +126,7 @@ export async function runGq(
     fetch = recordingFetch(),
     exec = recordingExec(),
     lookup,
+    clock,
     stdin,
     interactive = false,
   } = {},
@@ -123,6 +139,7 @@ export async function runGq(
     fetch,
     exec,
     lookup,
+    clock,
     stdin,
     stdout,
     stderr,
