@@ -5,6 +5,8 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ## Unreleased
 
+## 0.15.1 — 2026-10-03
+
 ### Fixed
 
 - `gq offboard --archive` no longer stops with
