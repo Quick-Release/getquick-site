@@ -15,6 +15,12 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
   rejects after 90 s fails with an error that says the key was minted just
   now and how long gq waited. A presigned URL (the database dump Ploi's
   server uploads) is handed out only once R2 accepts its key.
+- `gq cms stop` on macOS no longer fails with `kill EPERM` when the background
+  DDEV startup's processes have exited but are not yet reaped. macOS answers
+  EPERM to a signal sent to a process group whose members are all zombies or
+  part-way through exit. gq now takes that group as exited, and still reports
+  EPERM for a group that belongs to another user. `gq cms status` and
+  `gq cms start` also no longer take such a startup for one still running.
 
 ## 0.15.0 — 2026-10-03
 
