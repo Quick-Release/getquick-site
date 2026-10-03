@@ -5,6 +5,34 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ## Unreleased
 
+### Fixed
+
+- A new content site's Frontend serves its entries on a CMS whose permalinks
+  point at the Frontend, as a GETQUICK CMS's do. WPGraphQL then gives every
+  entry's `uri` as an absolute URL (`https://acme.example/team/`; only the
+  front page is `/`), and the Frontend took it for a path: every entry looked
+  moved to `/https://acme.example/team//`, and the list of published routes
+  named routes that don't exist. `src/lib/wordpress.ts` now reduces each URI
+  WordPress gives to its path (`uriPath`), keeping its percent-encoding and
+  trailing slash, so refreshes, events, withdrawals and reconciliation see
+  the routes visitors use.
+  - **Existing sites:** the Frontend is site-owned, so syncing doesn't change
+    it. To adopt, copy `uriPath` and its two uses (in `normalizePost` and
+    `getPublishedEntries`) from a newly generated site's
+    `src/lib/wordpress.ts`, keeping the site's own changes, then run
+    `gq frontend refresh`. Without it, a CMS with absolute URIs has every
+    entry stored as moved.
+- `gq frontend refresh` reports every record the Frontend's refresh returns,
+  not only the front page, chrome and design presets: a record a Site adds to
+  its own refresh, such as its design patterns, is listed by its name with
+  its outcome, and a kept one says why.
+- `scripts/smoke/frontend-check.sh`, `frontend-runtime.sh` and
+  `cms-events.sh` install `@getquick/site` from this checkout, packed with
+  `pnpm pack` and set as a `pnpm-workspace.yaml` override, rather than from
+  npm. CI no longer fails on a release push until npm serves the new
+  version. The generated site's `package.json` is unchanged, and generation
+  stays offline.
+
 ## 0.15.1 — 2026-10-03
 
 ### Fixed

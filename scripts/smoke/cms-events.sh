@@ -10,10 +10,10 @@
 # built by Alchemy's Astro Cloudflare build, served in workerd with a local D1
 # publication store, receives the signed events.
 #
-# Generation stays offline and secret-free; only the downloads (npm packages,
-# WordPress, its SQLite integration, WPGraphQL and WP-CLI, cached in
-# GQ_SMOKE_CACHE) use
-# the network. Nothing is provisioned or deployed: no Cloudflare account,
+# The site installs @getquick/site from this checkout, not npm
+# (this-checkout.sh). Generation stays offline and secret-free; only the
+# downloads (npm packages, WordPress, its SQLite integration, WPGraphQL and
+# WP-CLI, cached in GQ_SMOKE_CACHE) use the network. Nothing is provisioned or deployed: no Cloudflare account,
 # token, remote resource or live CMS is used. The site is deleted afterwards
 # unless KEEP=1. Needs php and unzip. The real-cron check runs only when
 # Docker has the image GQ_SMOKE_CRON_IMAGE (default ddev/ddev-webserver:v1.25.4,
@@ -22,6 +22,7 @@
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/../.." && pwd)
+source "$repo/scripts/smoke/this-checkout.sh"
 cache="${GQ_SMOKE_CACHE:-${TMPDIR:-/tmp}/gq-smoke-cache}"
 version=$(sed -n 's/.*"roots\/wordpress": "\([0-9.]*\)".*/\1/p' "$repo/blueprint/templates/apps/cms/composer.json")
 mkdir -p "$cache"
@@ -44,6 +45,7 @@ fi
 
 cd "$parent"
 node "$repo/bin/gq.mjs" new acme --project acme --variant content >/dev/null
+use_this_checkout "$repo" "$parent/acme"
 cd acme
 CI=1 pnpm install --filter @acme/frontend... --filter @acme/ci... --filter . >/dev/null
 

@@ -95,17 +95,25 @@ function requestedUris(parsed) {
 }
 
 function describe(outcome) {
-  if (outcome.outcome === "kept") {
+  if (outcome.outcome === "kept" && outcome.failure) {
     return `kept the stored version (${outcome.failure.reason}): ${outcome.failure.message}`;
   }
+  if (!outcome.state) return outcome.outcome;
   return `${outcome.outcome} (${outcome.state}${outcome.uri ? ` to ${outcome.uri}` : ""})`;
 }
+
+const REPORTED = new Set(["home", "chrome", "design", "routes", "entries", "moved"]);
 
 function printReport(body, io) {
   const lines = [];
   if (body.home) lines.push(["front page", body.home]);
   if (body.chrome) lines.push(["site chrome", body.chrome]);
   if (body.design) lines.push(["design presets", body.design]);
+  // A record a Site adds to its refresh (such as its patterns), by its name.
+  for (const [key, value] of Object.entries(body)) {
+    if (REPORTED.has(key) || typeof value?.outcome !== "string") continue;
+    lines.push([key, value]);
+  }
   for (const [label, outcome] of lines) {
     io.out(`  ${MARKS[outcome.outcome] ?? "?"} ${label}: ${describe(outcome)}`);
   }

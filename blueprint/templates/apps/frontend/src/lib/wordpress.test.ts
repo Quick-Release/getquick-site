@@ -349,6 +349,49 @@ test("the published routes are read page by page, and any failed page fails the 
   });
 });
 
+test("absolute URIs from WordPress become paths, keeping their percent-encoding and trailing slash", async () => {
+  const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+    const { query } = JSON.parse(init.body as string) as { query: string };
+    const data = query.includes("contentNodes")
+      ? {
+          contentNodes: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              { uri: "/" },
+              { uri: "https://acme-fe.example/team/" },
+              { uri: "https://acme-fe.example/caf%c3%a9/" },
+              { uri: "https://acme-fe.example/2026/hello" },
+              { uri: "/about/" },
+            ],
+          },
+        }
+      : {
+          postBy: null,
+          pageBy: {
+            id: "page-30",
+            title: "Café",
+            content: "<p>Coffee.</p>",
+            uri: "https://acme-fe.example/caf%c3%a9/",
+            status: "publish",
+            isRestricted: false,
+            featuredImage: null,
+          },
+          designTokens: { colors: [], spacingSizes: [] },
+        };
+    return { ok: true, json: async () => ({ data }) };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  expect(await getPublishedRoutes()).toEqual({
+    kind: "found",
+    content: ["/", "/team/", "/caf%c3%a9/", "/2026/hello", "/about/"],
+  });
+  expect(await getEntryByUri("/caf%c3%a9/")).toMatchObject({
+    kind: "found",
+    content: { uri: "/caf%c3%a9/" },
+  });
+});
+
 test("the front page's blocks are recovered like an entry's, and a failed recovery stays unavailable", async () => {
   const frontPage = {
     data: {

@@ -64,6 +64,12 @@ interface WordPress {
 }
 
 let cms: WordPress;
+// Where WordPress's permalinks point. A GETQUICK CMS points them at the
+// Frontend, and WPGraphQL then gives every entry's uri as an absolute URL.
+let permalinkOrigin: string | null;
+
+/** An entry's uri as WordPress gives it. */
+const cmsUri = (path: string) => (permalinkOrigin ? new URL(path, permalinkOrigin).href : path);
 
 const unreachable = () => Promise.reject(new TypeError("fetch failed"));
 const presets = () => ({ colors: [{ slug: "brand", color: cms.color }], spacingSizes: [] });
@@ -79,7 +85,7 @@ function entryAnswer({ uri }: Record<string, unknown>): Answer {
           id: entry.id,
           title: entry.title,
           content: `<p class="has-brand-color">${entry.content}</p>`,
-          uri: path,
+          uri: cmsUri(path),
           status: "publish",
           isRestricted: false,
           modifiedGmt: gmt(entry.modified),
@@ -119,7 +125,7 @@ const handlers = {
     listing(
       { uri: "/", id: "page-2", modifiedGmt: gmt(Date.parse("2026-09-01T00:00:00Z")) },
       ...[...cms.entries].map(([uri, entry]) => ({
-        uri,
+        uri: cmsUri(uri),
         id: entry.id,
         modifiedGmt: gmt(entry.modified),
       })),
@@ -187,6 +193,7 @@ beforeEach(() => {
     tagline: "Things",
     color: "#c00",
   };
+  permalinkOrigin = null;
   directory = mkdtempSync(join(tmpdir(), "acme-reconciliation-"));
   bind(openTestD1(join(directory, "publications.sqlite")));
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -376,6 +383,60 @@ test("a lost move redirects the route it left, and a lost removal is a 404 once 
   expect(runs.at(-1)?.body).toMatchObject({
     status: "reconciled",
     entries: {
+      "/about-us/": { change: "moved", outcome: "refreshed" },
+      "/2026/09/hello/": { change: "removed", outcome: "refreshed" },
+    },
+  });
+  expect(moved.location).toBe("/about-us/");
+  expect(renamed.status).toBe(200);
+  expect(renamed.html).toContain("We make things.");
+});
+
+test("on a CMS that gives absolute URIs, an unchanged site is reconciled as unchanged", async () => {
+  permalinkOrigin = "https://acme-fe.example";
+  await prepare();
+
+  after(MINUTE);
+  const first = await cron();
+  after(MINUTE);
+  const second = await cron();
+  const about = await served("/about/");
+
+  for (const run of [first, second]) {
+    expect(run.body).toMatchObject({ status: "reconciled", changed: 0, failed: 0 });
+    // Stored entries are only re-read in turn: none is new, moved or removed.
+    for (const entry of Object.values(run.body.entries ?? {})) {
+      expect(entry).toMatchObject({ change: "verified" });
+    }
+  }
+  expect(about.status).toBe(200);
+  expect(about.html).toContain("We make things.");
+  expect(await publicationEvents()).toEqual([]);
+});
+
+test("on a CMS that gives absolute URIs, lost publications, moves and removals reach their paths", async () => {
+  permalinkOrigin = "https://acme-fe.example";
+  await prepare();
+  publishWithoutEvent("/news/", "page-80", "We launched.");
+  const about = cms.entries.get("/about/")!;
+  cms.entries.delete("/about/");
+  cms.entries.set("/about-us/", { ...about, modified: now() });
+  cms.entries.delete("/2026/09/hello/");
+
+  const { took, runs } = await untilVisible(
+    async () =>
+      (await served("/news/")).html.includes("We launched.") &&
+      (await served("/about/")).status === 301 &&
+      (await served("/2026/09/hello/")).status === 404,
+  );
+  const moved = await served("/about/");
+  const renamed = await served("/about-us/");
+
+  expect(took!).toBeLessThanOrEqual(TARGET);
+  expect(runs.at(-1)?.body).toMatchObject({
+    status: "reconciled",
+    entries: {
+      "/news/": { change: "new", outcome: "refreshed" },
       "/about-us/": { change: "moved", outcome: "refreshed" },
       "/2026/09/hello/": { change: "removed", outcome: "refreshed" },
     },
