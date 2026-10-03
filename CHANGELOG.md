@@ -5,6 +5,8 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ## Unreleased
 
+## 0.16.0 — 2026-10-03
+
 ### Added
 
 - **Artifacts-only Sites** ([ADR 0012](https://github.com/Quick-Release/gq-site/blob/main/docs/adr/0012-keep-a-sites-code-in-artifacts-when-it-has-no-github-repository.md)).
