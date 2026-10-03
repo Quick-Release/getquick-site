@@ -5,6 +5,8 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ## Unreleased
 
+## 0.14.1 — 2026-10-03
+
 ### Fixed
 
 - `gq ploi api` no longer prints credentials. Responses, `--dry-run` requests
