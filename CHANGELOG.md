@@ -5,6 +5,8 @@ All notable changes to `@getquick/site` are recorded here. Versions follow
 
 ## Unreleased
 
+## 0.14.0 — 2026-10-03
+
 ### Added
 
 - New content sites serve their published pages and posts (entries) from the
