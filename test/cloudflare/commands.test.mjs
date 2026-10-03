@@ -91,7 +91,23 @@ function fakeCloudflare({ tokens = [], buckets = [], domains = {}, repos = [] } 
     const data = body === undefined ? undefined : JSON.parse(body);
     const ok = (result) => ({ success: true, result });
 
-    if (method === "GET" && path === "/tokens?per_page=50") return ok(state.tokens);
+    // Cloudflare lists tokens a page at a time: 20 unless asked, at most 50.
+    const tokenPage = /^\/tokens\?(.*)$/u.exec(path);
+    if (method === "GET" && tokenPage) {
+      const query = new URLSearchParams(tokenPage[1]);
+      const size = Math.min(Number(query.get("per_page") ?? 20), 50);
+      const page = Number(query.get("page") ?? 1);
+      return {
+        success: true,
+        result: state.tokens.slice((page - 1) * size, page * size),
+        result_info: {
+          page,
+          per_page: size,
+          total_count: state.tokens.length,
+          total_pages: Math.ceil(state.tokens.length / size),
+        },
+      };
+    }
     if (method === "GET" && path === "/tokens/permission_groups") return ok(PERMISSION_GROUPS);
     if (method === "POST" && path === "/tokens") {
       const token = { id: `token-${next}`, value: `value-${next}`, status: "active", ...data };
@@ -259,6 +275,24 @@ test("cloudflare deploy-token changes nothing when the token and its value exist
   assert.match(result.stdout, /Nothing to do\./u);
   assert.deepEqual(state.created, []);
   assert.ok(exec.calls.every(({ args }) => args[1] !== "set"));
+});
+
+test("cloudflare deploy-token finds its token on a later page instead of creating it again", async () => {
+  const fixture = await site();
+  const others = Array.from({ length: 60 }, (_, index) => ({
+    id: `other-${index}`,
+    name: `GETQUICK CLIENT${index} Staging Alchemy`,
+  }));
+  const { fetch, state } = fakeCloudflare({
+    tokens: [...others, { id: "t1", name: "GETQUICK FIXTURE Staging Alchemy" }],
+  });
+  const { exec } = fakeSigillo({ CLOUDFLARE_API_TOKEN: "stored" });
+
+  const result = await fixture.run(["cloudflare", "deploy-token"], { env: ENV, fetch, exec });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /Nothing to do\./u);
+  assert.deepEqual(state.created, [], "no duplicate token");
 });
 
 test("the deploy token can create and migrate the Frontend's D1 publication store", () => {
@@ -568,5 +602,5 @@ test("a Cloudflare error without messages still names the HTTP status", async ()
   const result = await fixture.run(["cloudflare", "deploy-token"], { env: ENV, fetch, exec });
 
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /Cloudflare GET \/tokens\?per_page=50 failed: 503/u);
+  assert.match(result.stderr, /Cloudflare GET \/tokens\?per_page=50&page=1 failed: 503/u);
 });

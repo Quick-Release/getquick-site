@@ -30,12 +30,37 @@ async function accountRequest(
   return data;
 }
 
+// Every page of a listing (`result_info`), 50 at a time, as one array.
+async function listAllPages(options, path, requestOptions) {
+  const items = [];
+  for (let page = 1; page <= 100; page += 1) {
+    const separator = path.includes("?") ? "&" : "?";
+    const data = await accountRequest(
+      options,
+      "GET",
+      `${path}${separator}per_page=50&page=${page}`,
+      undefined,
+      requestOptions,
+    );
+    const result = data?.result ?? [];
+    items.push(...result);
+    const info = data?.result_info ?? {};
+    const pages =
+      Number(info.total_pages) ||
+      Math.ceil((Number(info.total_count) || 0) / (Number(info.per_page) || 50));
+    if (pages ? page >= pages : result.length < 50) return items;
+  }
+  throw new Error(`Cloudflare GET ${path} has more than 100 pages.`);
+}
+
 // Resolves to the response's `result`; with `{ allowNotFound: true }`, a 404
-// resolves to null.
+// resolves to null; with `{ paginate: true }`, a GET resolves to every page's.
 export function createCloudflareAccountClient({ token, accountId, fetch }) {
   const options = { token, accountId, fetch, label: "Cloudflare" };
-  return async (method, path, body, requestOptions) =>
-    (await accountRequest(options, method, path, body, requestOptions))?.result ?? null;
+  return async (method, path, body, { paginate = false, ...requestOptions } = {}) =>
+    paginate
+      ? listAllPages(options, path, requestOptions)
+      : ((await accountRequest(options, method, path, body, requestOptions))?.result ?? null);
 }
 
 // The same, for one zone (its DNS records).

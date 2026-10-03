@@ -57,14 +57,18 @@ export const PUBLICATIONS_SQL =
   "CREATE TABLE publications (id TEXT);\nINSERT INTO publications VALUES ('home');\n";
 export const HEAD_COMMIT = "0123456789abcdef0123456789abcdef01234567";
 
-export function offboardingSite({ ops = OPS } = {}) {
-  return createFixtureSite({
+// Synced with this blueprint, as `gq offboard` requires of the deploy files.
+export async function offboardingSite({ ops = OPS } = {}) {
+  const fixture = await createFixtureSite({
     ops,
     files: {
       "package.json": `${JSON.stringify({ devDependencies: { sigillo: "0.13.0" } })}\n`,
       [SIGILLO_BIN]: "#!/bin/sh\n",
     },
   });
+  const synced = await fixture.run(["sync"]);
+  assert.equal(synced.code, 0, synced.stderr);
+  return fixture;
 }
 
 const PERMISSION_GROUPS = [
@@ -90,6 +94,35 @@ const projectToken = (id, purpose) => ({
   status: "active",
   policies: [{ effect: "allow", resources: {}, permission_groups: [{ id: "g", name: "Some" }] }],
 });
+
+// Other clients' tokens enough to fill the first page of a listing: the
+// project's own come after them.
+export const CROWDED_TOKENS = Object.freeze(
+  Array.from({ length: 60 }, (_, index) => ({
+    id: `client-${index}`,
+    name: `GETQUICK CLIENT${index} Staging Alchemy`,
+    status: "active",
+    policies: [],
+  })),
+);
+
+// Other hooks and crontabs enough to fill a first page: the Site's own come
+// after them.
+export const CROWDED_HOOKS = Object.freeze(
+  Array.from({ length: 105 }, (_, index) => ({
+    id: 1000 + index,
+    active: true,
+    config: { url: `https://hooks.example.test/${index}` },
+  })),
+);
+export const CROWDED_CRONTABS = Object.freeze(
+  Array.from({ length: 55 }, (_, index) => ({
+    id: 1000 + index,
+    user: "other",
+    frequency: "0 * * * *",
+    command: `job ${index}`,
+  })),
+);
 
 const object = (body, lastModified = "2026-09-01T10:00:00.000Z") => ({
   body: Buffer.from(body),
@@ -136,6 +169,8 @@ export function exposedState() {
       status: "active",
       system_user: "fixture",
     },
+    // The server's other sites, besides `site`.
+    otherSites: [{ id: 35, domain: "other-cms.example.test", system_user: "other" }],
     crontabs: [
       { id: 7, ...RETRY_CRONTAB },
       { id: 8, user: "fixture", frequency: "0 3 * * *", command: "other job" },
@@ -196,6 +231,8 @@ export function exposedState() {
       { id: 79, name: "other" },
     ],
     repository: { archived: false, head: HEAD_COMMIT },
+    // The bucket Sigillo staging's R2 key belongs to: the backups bucket.
+    stagingBucket: "fixture-releases",
     log: [],
   };
 }
@@ -221,7 +258,7 @@ export function fakeAccount(overrides = {}) {
     const { hostname, pathname, search } = new URL(url);
     if (hostname === "ploi.io") {
       const data = body === undefined ? undefined : JSON.parse(body);
-      return ploi(method, pathname.replace("/api/servers/12", ""), data);
+      return ploi(method, pathname.replace("/api/servers/12", ""), data, new URL(url).searchParams);
     }
     if (hostname === "account-1.r2.cloudflarestorage.com") return s3(method, url, headers, body);
     if (hostname === "d1-export.example.test") {
@@ -238,6 +275,7 @@ export function fakeAccount(overrides = {}) {
     if (pathname.startsWith(ZONE)) {
       assert.ok(temporary.has(bearer), `${method} ${pathname} uses the temporary token`);
       const path = `${pathname.slice(ZONE.length)}${search}`;
+      if (method === "GET" && path === "") return ok({ id: "zone-1", name: "example.test" });
       const name = /^\/dns_records\?name=(.+)$/u.exec(path)?.[1];
       if (method === "GET" && name) {
         return ok(state.dnsRecords.filter((record) => record.name === decodeURIComponent(name)));
@@ -257,7 +295,8 @@ export function fakeAccount(overrides = {}) {
 
     if (path.startsWith("/tokens")) {
       assert.equal(bearer, "manager-secret", `${method} ${path} uses the manager token`);
-      if (method === "GET" && path === "/tokens?per_page=50") return ok(state.tokens);
+      const tokenPage = /^\/tokens\?(.*)$/u.exec(path)?.[1];
+      if (method === "GET" && tokenPage) return paged(state.tokens, new URLSearchParams(tokenPage));
       if (method === "GET" && path === "/tokens/verify") return ok({ id: "manager" });
       if (method === "GET" && path === "/tokens/permission_groups") return ok(PERMISSION_GROUPS);
       if (method === "POST" && path === "/tokens") {
@@ -328,9 +367,13 @@ export function fakeAccount(overrides = {}) {
       state.log.push(`worker ${worker} deleted`);
       return ok(null);
     }
-    const d1Name = /^\/d1\/database\?name=(.+)$/u.exec(path)?.[1];
-    if (method === "GET" && d1Name) {
-      return ok(state.d1.filter(({ name }) => name.includes(decodeURIComponent(d1Name))));
+    const d1Query = /^\/d1\/database\?(.+)$/u.exec(path)?.[1];
+    if (method === "GET" && d1Query) {
+      const query = new URLSearchParams(d1Query);
+      return paged(
+        state.d1.filter(({ name }) => name.includes(query.get("name"))),
+        query,
+      );
     }
     const d1Export = /^\/d1\/database\/([^/]+)\/export$/u.exec(path)?.[1];
     if (method === "POST" && d1Export && state.d1.some(({ uuid }) => uuid === d1Export)) {
@@ -351,8 +394,10 @@ export function fakeAccount(overrides = {}) {
       state.log.push(`d1 ${d1} deleted`);
       return ok(null);
     }
-    if (method === "GET" && path === "/workflows?per_page=100") {
-      return ok(state.workflows.map((name) => ({ id: `wf-${name}`, name })));
+    const workflowPage = /^\/workflows\?(.*)$/u.exec(path)?.[1];
+    if (method === "GET" && workflowPage) {
+      const workflows = state.workflows.map((name) => ({ id: `wf-${name}`, name }));
+      return paged(workflows, new URLSearchParams(workflowPage));
     }
     const workflow = /^\/workflows\/([^/]+)$/u.exec(path)?.[1];
     if (method === "DELETE" && workflow) {
@@ -425,7 +470,7 @@ export function fakeAccount(overrides = {}) {
   });
 
   // R2's S3 API: a key reaches a bucket only through a live token scoped to
-  // it (Sigillo staging's R2 key is the releases bucket's own).
+  // it (Sigillo staging's R2 key is `state.stagingBucket`'s own).
   function s3(method, url, headers, body) {
     const { pathname, searchParams } = new URL(url);
     const [, bucket, ...segments] = pathname.split("/");
@@ -436,7 +481,7 @@ export function fakeAccount(overrides = {}) {
     const accessKey = credential?.split("/")[0];
     const scoped =
       accessKey === STAGING.R2_ACCESS_KEY_ID
-        ? bucket === "fixture-releases"
+        ? bucket === state.stagingBucket
         : state.tokens.some(
             (token) =>
               token.id === accessKey &&
@@ -530,7 +575,22 @@ export function fakeAccount(overrides = {}) {
     );
   }
 
-  function ploi(method, path, data) {
+  // Ploi lists a page at a time (at most 50), linking the next.
+  function ploiPage(path, items, query) {
+    const size = Math.min(Number(query.get("per_page") ?? 10), 50);
+    const page = Number(query.get("page") ?? 1);
+    const more = page * size < items.length;
+    return {
+      data: items.slice((page - 1) * size, page * size),
+      links: {
+        next: more
+          ? `https://ploi.io/api/servers/12${path}?per_page=${size}&page=${page + 1}`
+          : null,
+      },
+    };
+  }
+
+  function ploi(method, path, data, query) {
     const route = `${method} ${path}`;
     if (route === "GET /sites/34") {
       return state.site ? { data: state.site } : json({ message: "Not found" }, 404);
@@ -550,7 +610,10 @@ export function fakeAccount(overrides = {}) {
       state.log.push("ploi site deleted");
       return {};
     }
-    if (route === "GET /crontabs") return { data: state.crontabs };
+    if (route === "GET /sites") {
+      return ploiPage(path, [...(state.site ? [state.site] : []), ...state.otherSites], query);
+    }
+    if (route === "GET /crontabs") return ploiPage(path, state.crontabs, query);
     const crontab = /^DELETE \/crontabs\/(\d+)$/u.exec(route)?.[1];
     if (crontab) {
       state.crontabs = state.crontabs.filter((entry) => String(entry.id) !== crontab);
@@ -562,14 +625,14 @@ export function fakeAccount(overrides = {}) {
       state.log.push(`crontab added: ${data.command}`);
       return { data: state.crontabs.at(-1) };
     }
-    if (route === "GET /databases") return { data: state.databases };
+    if (route === "GET /databases") return ploiPage(path, state.databases, query);
     const database = /^DELETE \/databases\/(\d+)$/u.exec(route)?.[1];
     if (database) {
       state.databases = state.databases.filter(({ id }) => String(id) !== database);
       state.log.push(`ploi database ${database} deleted`);
       return {};
     }
-    if (route === "GET /system-users") return { data: state.systemUsers };
+    if (route === "GET /system-users") return ploiPage(path, state.systemUsers, query);
     const user = /^DELETE \/system-users\/(\d+)$/u.exec(route)?.[1];
     if (user) {
       state.systemUsers = state.systemUsers.filter(({ id }) => String(id) !== user);
@@ -608,6 +671,10 @@ export function fakeAccount(overrides = {}) {
         ? { code: 1, stderr: `secret ${args[2]} not found` }
         : { stdout: `${value}\n` };
     }
+    // The environment's secret names.
+    if (args[0] === "secrets" && args[1].startsWith("-")) {
+      return { stdout: `${Object.keys(state.staging).join("\n")}\n` };
+    }
     return { code: 1, stderr: `unexpected sigillo ${args.join(" ")}` };
   });
 
@@ -627,8 +694,8 @@ export function fakeAccount(overrides = {}) {
     if (method === "GET" && path === "repos/Example/fixture/commits/HEAD") {
       return { stdout: JSON.stringify({ sha: state.repository.head }) };
     }
-    if (method === "GET" && path === "repos/Example/fixture/hooks") {
-      return { stdout: JSON.stringify(state.hooks) };
+    if (method === "GET" && path.startsWith("repos/Example/fixture/hooks?")) {
+      return { stdout: hookPages(new URLSearchParams(path.split("?")[1]), args) };
     }
     const id = /^repos\/Example\/fixture\/hooks\/(\d+)$/u.exec(path)?.[1];
     const hook = state.hooks.find((candidate) => String(candidate.id) === id);
@@ -649,7 +716,37 @@ export function fakeAccount(overrides = {}) {
     return { code: 1, stderr: `unexpected gh ${args.join(" ")}` };
   }
 
+  // GitHub lists hooks a page at a time (30 unless asked, at most 100); gh
+  // fetches the rest only with --paginate, and --slurp wraps the pages in
+  // one array (otherwise it prints them one after another).
+  function hookPages(query, args) {
+    const size = Math.min(Number(query.get("per_page") ?? 30), 100);
+    const pages = [];
+    for (let start = 0; start === 0 || start < state.hooks.length; start += size) {
+      pages.push(state.hooks.slice(start, start + size));
+    }
+    if (!args.includes("--paginate")) return JSON.stringify(pages[0]);
+    if (args.includes("--slurp")) return JSON.stringify(pages);
+    return pages.map((page) => JSON.stringify(page)).join("");
+  }
+
   return { fetch, exec, state };
+}
+
+// One page of a Cloudflare listing: 20 items unless asked, at most 50.
+function paged(items, query) {
+  const size = Math.min(Number(query.get("per_page") ?? 20), 50);
+  const page = Number(query.get("page") ?? 1);
+  return {
+    success: true,
+    result: items.slice((page - 1) * size, page * size),
+    result_info: {
+      page,
+      per_page: size,
+      total_count: items.length,
+      total_pages: Math.ceil(items.length / size),
+    },
+  };
 }
 
 function xml(text) {

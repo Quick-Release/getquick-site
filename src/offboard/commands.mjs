@@ -15,6 +15,7 @@
 //   gq offboard --archive [--dry-run] [--yes]
 
 import { createReporter } from "../cli/reporter.mjs";
+import { planManagedFiles } from "../sync/managed-files.mjs";
 import { archivePlan, inspectArchive } from "./archive.mjs";
 import { runPlan } from "./plan.mjs";
 import { withOffboardingProviders } from "./providers.mjs";
@@ -48,6 +49,30 @@ export function runOffboardCommand(command, dependencies) {
   return runner(dependencies);
 }
 
+// The managed files that refuse to deploy an offboarded Site (frontend.run.ts
+// drops its URLs; the deploy and CI release scripts refuse): an older or
+// edited copy would expose it again on the next deploy.
+const DEPLOY_FILES = [
+  "infra/frontend.run.ts",
+  "infra/scripts/deploy-frontend.mjs",
+  "scripts/ci-release.mjs",
+];
+const STALE = {
+  create: "missing",
+  update: "gq sync would update it",
+  edited: "edited since gq last wrote it",
+};
+
+// Throws, naming each, unless the deploy files are as gq sync writes them.
+async function refuseStaleDeployFiles(context) {
+  const { files } = await planManagedFiles(context.projectRoot, context.config);
+  const stale = files.filter(({ path, status }) => DEPLOY_FILES.includes(path) && STALE[status]);
+  if (stale.length === 0) return;
+  throw new Error(
+    `The managed deploy files aren't current: ${stale.map(({ path, status }) => `${path} (${STALE[status]})`).join(", ")}. A deploy from them could expose ${context.config.project} again: run gq sync first (gq sync --check shows what it changes), then gq offboard.`,
+  );
+}
+
 // `gq offboard [--restore | --archive] [--dry-run] [--yes]`. Resolves to an
 // exit code.
 async function runOffboard(dependencies) {
@@ -65,6 +90,7 @@ async function runOffboard(dependencies) {
         : `${ops.project} is being archived (gq.ops.json offboarded.archive): finish it with gq offboard --archive (pnpm offboard:archive).`,
     );
   }
+  if (!parsed.restore) await refuseStaleDeployFiles(context);
   const ui = createReporter(io, interactive, stdin);
   ui.intro(`${parsed.restore ? "Restore" : "Offboard"} · ${ops.project}`);
   return withOffboardingProviders(dependencies, async (providers) => {

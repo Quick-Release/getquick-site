@@ -103,8 +103,9 @@ nulls stay. The other `ploi` and `cloudflare` commands print only selected,
 non-secret fields.
 The `cloudflare accounts|zones|zone|dns` commands are read-only.
 
-`gq offboard` cuts a Site's public URLs and credentials, deleting nothing, and
-records `offboarded` in `gq.ops.json`; `--restore` reverses it. Both print the
+`gq offboard` records `offboarded` in `gq.ops.json`, then cuts a Site's public
+URLs and credentials, deleting nothing; it needs the managed deploy files as
+`gq sync` writes them. `--restore` reverses what the cut recorded. Both print the
 plan (`✓` done, `-` to cut or `+` to restore, `!` by hand) and need `--yes`
 outside a terminal. While `offboarded` is set, every command that would expose
 the Site again refuses: `cloudflare media|deploy-token|ci|releases`,
@@ -113,8 +114,9 @@ the Site again refuses: `cloudflare media|deploy-token|ci|releases`,
 `frontend refresh|secrets`. `--archive` (irreversible, only once `offboarded`
 is recorded) archives the Site's content to
 `r2://offboarded-clients/<project>/<UTC date>/`, reads it all back, and only
-then deletes its Ploi site, Workers, D1 store, buckets, Artifacts repository,
-its own DNS records and its tokens, archives its GitHub repository, and
+then deletes its Ploi site, Workers, D1 stores, buckets, its own backups,
+Artifacts repository, its own DNS records and its tokens (only what is named
+as the project's own), archives its GitHub repository, and
 records `offboarded.phase: "archived"`; in a terminal it asks for the
 project's name, elsewhere `--yes`. See
 [Offboarding a Site](../guides/offboarding.md).

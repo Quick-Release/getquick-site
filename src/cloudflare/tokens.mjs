@@ -5,7 +5,7 @@
 // Cloudflare never shows a token's value twice.
 
 import { s3CredentialsFromToken } from "../r2.mjs";
-import { createCloudflareAccountClient } from "./account-client.mjs";
+import { createCloudflareAccountClient, createCloudflareZoneClient } from "./account-client.mjs";
 
 const ONE_HOUR = 60 * 60 * 1000;
 
@@ -82,10 +82,15 @@ export function bucketTokenSpec({ name, accountId, bucket, accessKeySecret, secr
   };
 }
 
-// Runs `work(client, token)` with a client for a 1-hour token holding
-// `policies` (and the token itself, for another kind of client), and deletes
-// the token afterwards whatever happens.
-export async function withTemporaryToken(request, { name, accountId, policies, fetch }, work) {
+// Runs `work(client, zone)` with a client for a 1-hour token holding
+// `policies` (and, given `zoneId`, a client for that zone with the same
+// token; its value never leaves here), and deletes the token afterwards
+// whatever happens.
+export async function withTemporaryToken(
+  request,
+  { name, accountId, zoneId, policies, fetch },
+  work,
+) {
   const temporary = await request("POST", "/tokens", {
     name,
     expires_on: new Date(Date.now() + ONE_HOUR).toISOString().replace(/\.\d{3}Z$/u, "Z"),
@@ -94,7 +99,7 @@ export async function withTemporaryToken(request, { name, accountId, policies, f
   try {
     return await work(
       createCloudflareAccountClient({ token: temporary.value, accountId, fetch }),
-      temporary,
+      zoneId && createCloudflareZoneClient({ token: temporary.value, zoneId, fetch }),
     );
   } finally {
     await request("DELETE", `/tokens/${temporary.id}`);
@@ -144,7 +149,7 @@ export function missingPermissions(existing, spec) {
 // name. Resolves to one plan per spec: "update" when the token and its value
 // exist but lack some of the permissions (`missing`).
 export async function inspectTokens(request, secrets, specs) {
-  const tokens = await request("GET", "/tokens?per_page=50");
+  const tokens = await request("GET", "/tokens", undefined, { paginate: true });
   const stored = await secrets.list();
   return specs.map((spec) => {
     const existing = tokens.find((token) => token.name === spec.name);

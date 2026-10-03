@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 
 import { AwsClient } from "aws4fetch";
 
+import { redactText } from "./cli/redact.mjs";
+
 // A streamed upload goes up in parts of this size (R2 wants every part but
 // the last to be the same size), so only one part is ever held in memory.
 const PART_SIZE = 16 * 1024 * 1024;
@@ -33,10 +35,15 @@ export function createR2Client({ accountId, bucket, accessKeyId, secretAccessKey
     return signed.url;
   };
 
-  const failed = async (what, response) =>
-    new Error(
-      `R2 ${what} failed with ${response.status}: ${(await response.text()).slice(0, 200)}`,
-    );
+  // S3's error code and message, never the rest of its body (which can
+  // echo the signed request), and with any credential masked.
+  const failed = async (what, response) => {
+    const body = await response.text();
+    const code = xmlValue(body, "Code");
+    const message = xmlValue(body, "Message");
+    const detail = code ? `${code}${message ? `: ${message}` : ""}` : body.slice(0, 200);
+    return new Error(`R2 ${what} failed with ${response.status}: ${redactText(detail)}`);
+  };
 
   async function put(key, body, contentType) {
     const response = await send(key, {

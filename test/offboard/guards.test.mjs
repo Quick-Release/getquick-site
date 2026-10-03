@@ -121,3 +121,31 @@ test("read-only commands keep working while the Site is offboarded", async () =>
   const plan = await fixture.run(["offboard", "--dry-run"], { env: ENV, fetch, exec });
   assert.equal(plan.code, 0, plan.stderr);
 });
+
+test("gq ploi api list and describe keep working while the Site is offboarded", async () => {
+  const fixture = await offboardingSite({ ops: OFFBOARDED });
+
+  for (const argv of [
+    ["ploi", "api", "list", "--group", "sites"],
+    ["ploi", "api", "describe", "sites.resume-site"],
+  ]) {
+    const result = await fixture.run(argv, { env: STAGING });
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /sites\.resume-site/u);
+  }
+});
+
+test("an unknown ploi api operation says so while the Site is offboarded", async () => {
+  const fixture = await offboardingSite({ ops: OFFBOARDED });
+  const fetch = recordingFetch();
+
+  const result = await fixture.run(["ploi", "api", "sites.nope", "--yes"], {
+    env: STAGING,
+    fetch,
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /Unknown Ploi API operation: sites\.nope\. Run gq ploi api list\./u);
+  assert.doesNotMatch(result.stderr, /TypeError|would expose/u);
+  assert.deepEqual(fetch.requests, []);
+});

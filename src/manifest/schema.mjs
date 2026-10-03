@@ -131,6 +131,25 @@ export const manifestSchema = z
       .strictObject({
         at: z.iso.datetime(),
         phase: z.enum(OFFBOARDING_PHASES),
+        cut: z
+          .strictObject({
+            backup: z.literal(true).optional(),
+            crontab: z.strictObject({ user: name, frequency: name, command: name }).optional(),
+            suspended: z.literal(true).optional(),
+            workerDomains: z
+              .array(z.strictObject({ hostname, service: name, zoneId: name }))
+              .optional(),
+            workersDev: z
+              .record(name, z.strictObject({ enabled: z.boolean(), previewsEnabled: z.boolean() }))
+              .optional(),
+            mediaDomain: hostname.optional(),
+            webhook: z.number().int().optional(),
+            tokens: z.array(name).optional(),
+          })
+          .optional()
+          .describe(
+            "Written by gq offboard as it cuts: what it changed (the final backup, the retry crontab, the suspension, detached Worker domains, each Worker's workers.dev setting before, the media domain, the webhook id and the token ids it disabled); gq offboard --restore brings back only these.",
+          ),
         archive: z
           .strictObject({
             bucket: name,

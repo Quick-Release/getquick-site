@@ -23,14 +23,13 @@
 
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { redactText } from "../cli/redact.mjs";
+
 import { exportLiveDatabase, runBackup } from "../db/sync.mjs";
 import { createR2Client, s3CredentialsFromToken } from "../r2.mjs";
 import { createPloiServerClient } from "../ploi/server-client.mjs";
 import { sigilloSecrets } from "../sigillo/commands.mjs";
-import {
-  createCloudflareAccountClient,
-  createCloudflareZoneClient,
-} from "../cloudflare/account-client.mjs";
+import { createCloudflareAccountClient } from "../cloudflare/account-client.mjs";
 import {
   accountPolicy,
   bucketPolicies,
@@ -94,11 +93,6 @@ const ARCHIVE_KEYS = [
   ["artifacts.repo", (ops) => ops.artifacts?.repo],
 ];
 
-// The production Frontend Worker, named as infra/frontend.run.ts names it.
-export function frontendWorker(project) {
-  return `${project}-fe`;
-}
-
 // Runs `work(providers)` with every provider connected, and deletes the
 // temporary Cloudflare tokens afterwards whatever happens. `dependencies` are
 // the run() seam's (context, env, fetch, exec, io, interactive); `archive`
@@ -120,9 +114,26 @@ export async function withOffboardingProviders(dependencies, work, { archive = f
     fetch,
   });
   const staging = await sigilloSecrets({ context, env, exec }, SECRETS_ENVIRONMENT);
+  // A secret Sigillo doesn't list (or holds empty) is missing; one it lists
+  // but can't hand over, or a listing that fails too, is a failed read.
   const stagingSecret = async (name) => {
-    const value = context.env[name]?.trim() || (await staging.get(name).catch(() => ""));
-    if (!value) throw new Error(`${name} is missing in Sigillo ${staging.name}.`);
+    const injected = context.env[name]?.trim();
+    if (injected) return injected;
+    const missing = new Error(`${name} is missing in Sigillo ${staging.name}.`);
+    let value;
+    try {
+      value = await staging.get(name);
+    } catch (error) {
+      const listed = await staging.list().catch(() => undefined);
+      if (listed !== undefined && !new RegExp(`\\b${name}\\b`, "u").test(listed)) throw missing;
+      throw new Error(
+        `Reading ${name} from Sigillo ${staging.name} failed: ${redactText(error.message)}`,
+        {
+          cause: error,
+        },
+      );
+    }
+    if (!value) throw missing;
     return value;
   };
 
@@ -141,6 +152,7 @@ export async function withOffboardingProviders(dependencies, work, { archive = f
     {
       name: tokenName(ops.project, "offboarding (temporary)"),
       accountId,
+      zoneId: ops.cloudflare.zoneId,
       policies: [
         accountPolicy(
           accountId,
@@ -151,13 +163,9 @@ export async function withOffboardingProviders(dependencies, work, { archive = f
       ],
       fetch,
     },
-    async (cloudflare, token) => {
-      const zone = createCloudflareZoneClient({
-        token: token.value,
-        zoneId: ops.cloudflare.zoneId,
-        fetch,
-      });
+    async (cloudflare, zone) => {
       const keys = scopedKeys({ manager, accountId, project: ops.project, groups, fetch });
+      let failure;
       try {
         return await work({
           ops,
@@ -187,8 +195,15 @@ export async function withOffboardingProviders(dependencies, work, { archive = f
             if (code !== 0) throw new Error("The final database backup failed.");
           },
         });
+      } catch (error) {
+        failure = error;
+        throw error;
       } finally {
-        await keys.close();
+        // A key left behind expires within the hour; why the run stopped
+        // matters more.
+        await keys.close().catch((error) => {
+          if (!failure) throw error;
+        });
       }
     },
   );
@@ -212,13 +227,16 @@ function scopedKeys({ manager, accountId, project, groups, fetch }) {
       if (!minted.has(bucket)) minted.set(bucket, mint(bucket));
       return (await minted.get(bucket)).client;
     },
+    // Deletes every key, then fails on the first that couldn't be.
     async close() {
       const settled = await Promise.allSettled(minted.values());
-      for (const result of settled) {
-        if (result.status === "fulfilled") {
-          await manager("DELETE", `/tokens/${result.value.token.id}`);
-        }
-      }
+      const deleted = await Promise.allSettled(
+        settled
+          .filter((result) => result.status === "fulfilled")
+          .map((result) => manager("DELETE", `/tokens/${result.value.token.id}`)),
+      );
+      const failed = deleted.find((result) => result.status === "rejected");
+      if (failed) throw failed.reason;
     },
   };
 }
@@ -229,7 +247,7 @@ function cloudflareOperations({ manager, cloudflare, zone, managerId, project, f
     // The project's own tokens ("GETQUICK <PROJECT> …"), without the
     // temporary ones gq mints and deletes, and never the manager token.
     async projectTokens() {
-      const tokens = await manager("GET", "/tokens?per_page=50");
+      const tokens = await manager("GET", "/tokens", undefined, { paginate: true });
       return tokens.filter(
         (token) =>
           token.name.startsWith(prefix) &&
@@ -282,7 +300,8 @@ function cloudflareOperations({ manager, cloudflare, zone, managerId, project, f
     },
     deleteWorker: (name) => cloudflare("DELETE", `/workers/scripts/${name}`, undefined, GONE),
     async workflows() {
-      return (await cloudflare("GET", "/workflows?per_page=100")).map(({ name }) => name);
+      const workflows = await cloudflare("GET", "/workflows", undefined, { paginate: true });
+      return workflows.map(({ name }) => name);
     },
     deleteWorkflow: (name) => cloudflare("DELETE", `/workflows/${name}`, undefined, GONE),
     containerApplications: () => cloudflare("GET", "/containers/applications"),
@@ -291,6 +310,12 @@ function cloudflareOperations({ manager, cloudflare, zone, managerId, project, f
     async d1(name) {
       const found = await cloudflare("GET", `/d1/database?name=${encodeURIComponent(name)}`);
       return found.find((database) => database.name === name);
+    },
+    // Every D1 store whose name starts with `prefix`.
+    async d1Stores(prefix) {
+      const query = `?name=${encodeURIComponent(prefix)}`;
+      const found = await cloudflare("GET", `/d1/database${query}`, undefined, { paginate: true });
+      return found.filter((database) => database.name.startsWith(prefix));
     },
     deleteD1: (id) => cloudflare("DELETE", `/d1/database/${id}`, undefined, GONE),
     // The D1 store's SQL export, as a Response to stream: Cloudflare writes
@@ -333,6 +358,10 @@ function cloudflareOperations({ manager, cloudflare, zone, managerId, project, f
       }),
     deleteArtifactsRepository: (namespace, repo) =>
       cloudflare("DELETE", `/artifacts/namespaces/${namespace}/repos/${repo}`, undefined, GONE),
+    // The zone's own name (its apex).
+    async zoneName() {
+      return (await zone("GET", "")).name;
+    },
     // The zone's records named exactly `hostname`.
     async dnsRecords(hostname) {
       const records = await zone("GET", `/dns_records?name=${encodeURIComponent(hostname)}`);
@@ -356,15 +385,15 @@ function ploiOperations(client, siteId) {
       );
     },
     deleteSite: () => client.request("DELETE", sitePath, undefined, GONE),
+    // Every site on the server.
+    sites: () => client.list("/sites"),
     databases: () => client.list("/databases"),
     deleteDatabase: (id) => client.request("DELETE", `/databases/${id}`, undefined, GONE),
     systemUsers: () => client.list("/system-users"),
     deleteSystemUser: (id) => client.request("DELETE", `/system-users/${id}`, undefined, GONE),
     suspend: (reason) => client.request("POST", `${sitePath}/suspend`, { reason }),
     resume: () => client.request("POST", `${sitePath}/resume`),
-    async crontabs() {
-      return (await client.request("GET", "/crontabs")).data ?? [];
-    },
+    crontabs: () => client.list("/crontabs"),
     deleteCrontab: (id) => client.request("DELETE", `/crontabs/${id}`),
     createCrontab: (crontab) => client.request("POST", "/crontabs", crontab),
   };
@@ -379,13 +408,16 @@ function githubOperations(exec, env, repository) {
       input: input === undefined ? undefined : JSON.stringify(input),
     });
     if (result.code !== 0) {
-      throw new Error(`gh api ${args.join(" ")} failed: ${result.stderr.trim()}`);
+      throw new Error(`gh api ${args.join(" ")} failed: ${redactText(result.stderr.trim())}`);
     }
     return result.stdout ? JSON.parse(result.stdout) : null;
   }
   return {
     repository,
-    hooks: () => gh([`repos/${repository}/hooks`]),
+    // Every page of them: --slurp wraps the pages in one array.
+    async hooks() {
+      return (await gh(["--paginate", "--slurp", `repos/${repository}/hooks?per_page=100`])).flat();
+    },
     updateHook: (id, change) =>
       gh(["-X", "PATCH", `repos/${repository}/hooks/${id}`, "--input", "-"], change),
     deleteHook: (id) => gh(["-X", "DELETE", `repos/${repository}/hooks/${id}`]),
@@ -399,7 +431,9 @@ function githubOperations(exec, env, repository) {
     async archive() {
       const result = await exec("gh", ["repo", "archive", repository, "--yes"], { env });
       if (result.code !== 0) {
-        throw new Error(`gh repo archive ${repository} failed: ${result.stderr.trim()}`);
+        throw new Error(
+          `gh repo archive ${repository} failed: ${redactText(result.stderr.trim())}`,
+        );
       }
     },
   };

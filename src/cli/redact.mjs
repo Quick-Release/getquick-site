@@ -12,6 +12,7 @@ const SECRET_FIELD_WORDS = new Set([
   ...["tokens", "passwords", "secrets", "keys"],
 ]);
 const SECRET_QUERY_WORDS = new Set(["token", "key", "secret", "signature"]);
+const SECRET_ELEMENT_WORDS = new Set([...SECRET_FIELD_WORDS, "signature"]);
 
 export function redactSecrets(value, { secret = false } = {}) {
   if (typeof value === "string") return secret ? REDACTED : redactQueryParameters(value);
@@ -26,6 +27,15 @@ export function redactSecrets(value, { secret = false } = {}) {
     );
   }
   return value;
+}
+
+// A provider's free text (an error body, a CLI's stderr) with its secret
+// query parameters masked, and every XML element named as a secret (S3's
+// <AWSAccessKeyId>, <SignatureProvided>).
+export function redactText(text) {
+  return redactQueryParameters(text).replace(/<([A-Za-z][\w-]*)>([^<]*)<\/\1>/g, (match, name) =>
+    isSecretName(name, SECRET_ELEMENT_WORDS) ? `<${name}>${REDACTED}</${name}>` : match,
+  );
 }
 
 function redactQueryParameters(text) {

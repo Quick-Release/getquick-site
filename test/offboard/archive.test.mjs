@@ -4,13 +4,15 @@
 // its dry run, the archive and its verification, the deletions in order, the
 // shared zone, resuming after a failure, and the gq.ops.json record.
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import test from "node:test";
 
-import { recordingFetch } from "../support/fixture-site.mjs";
+import { recordingExec, recordingFetch } from "../support/fixture-site.mjs";
 import {
   answering,
   changes,
+  CROWDED_HOOKS,
+  CROWDED_TOKENS,
   DUMP,
   ENV,
   fakeAccount,
@@ -26,12 +28,20 @@ async function readOps(fixture) {
   return JSON.parse(await readFile(fixture.path("gq.ops.json"), "utf8"));
 }
 
+// gq.ops.json as `change(ops)` leaves it.
+async function rewriteOps(fixture, change) {
+  const ops = await readOps(fixture);
+  change(ops);
+  await writeFile(fixture.path("gq.ops.json"), `${JSON.stringify(ops, null, 2)}\n`);
+}
+
 const today = () => new Date().toISOString().slice(0, 10);
 
-// A Site phase 1 has cut, and the account it was cut in.
-async function cutSite() {
-  const fixture = await offboardingSite();
-  const account = fakeAccount();
+// A Site phase 1 has cut, and the account it was cut in: `ops` is its
+// gq.ops.json, `state` what the account holds besides exposedState().
+async function cutSite({ ops = OPS, state = {} } = {}) {
+  const fixture = await offboardingSite({ ops });
+  const account = fakeAccount(state);
   const cut = await fixture.run(["offboard", "--yes"], { env: ENV, ...account });
   assert.equal(cut.code, 0, cut.stderr);
   account.state.log.length = 0;
@@ -73,7 +83,7 @@ test("offboard --archive --dry-run plans the archive and every deletion, and cha
     `  - Archive: ${prefix}uploads.zip ← the 3 objects of fixture-media, keys kept`,
     `  - Archive: ${prefix}database.sql.gz ← a fresh dump of fixture_db`,
     `  - Archive: ${prefix}publications.sql ← the D1 store fixture-fe-publications`,
-    `  - Archive: ${prefix}backups/ ← the 2 database backups in r2://fixture-releases/db/`,
+    `  - Archive: ${prefix}backups/ ← the 2 database backups in r2://fixture-releases/db/fixture_db/`,
     `  - Archive: ${prefix}gq.ops.json, and manifest.json (each file's size and sha256, and the source resources)`,
     "  - Verify: re-read every archived file against manifest.json, and count uploads.zip's entries against fixture-media; nothing is deleted unless all match, then gq.ops.json records the archive",
     "  - Ploi: delete the site fixture-cms.example.test (34) and forget ploi.siteId in gq.ops.json",
@@ -237,6 +247,7 @@ test("offboard --archive --yes archives everything, verifies it, then deletes in
       worker: "fixture-fe",
       domain: "fixture-fe.example.test",
       d1: { name: "fixture-fe-publications", id: "d1-fixture" },
+      stages: [],
     },
     ci: {
       worker: "fixture-ci",
@@ -317,6 +328,190 @@ test("offboard --archive deletes nothing that isn't the Site's", async () => {
   );
 });
 
+// --- what is the Site's own -----------------------------------------------------
+
+const object = (body) => ({ body: Buffer.from(body), lastModified: "2026-09-29T10:00:00.000Z" });
+
+test("a backups bucket shared with other Sites keeps everything but the Site's own backups", async () => {
+  // Every client's backups in one team bucket, as Ekis's backups-sites.
+  const { fixture, account } = await cutSite({
+    ops: { ...OPS, backups: { bucket: "backups-sites", prefix: "db/" } },
+    state: {
+      stagingBucket: "backups-sites",
+      buckets: {
+        ...structuredClone(fakeAccount().state.buckets),
+        "backups-sites": {
+          "db/fixture_db/2026-09-29T10-00-00Z.sql.gz": object("fixture's backup"),
+          "db/other_db/2026-09-29T10-00-00Z.sql.gz": object("another client's backup"),
+          "ekis/db/ekis/2026-09-29T10-00-00Z.sql.gz": object("Ekis's backup"),
+        },
+      },
+    },
+  });
+  const { state } = account;
+  const ownBackups = Object.keys(state.buckets["backups-sites"]).filter((key) =>
+    key.startsWith("db/fixture_db/"),
+  );
+  assert.equal(ownBackups.length, 2, "the old backup and phase 1's final one");
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(
+    result.stdout,
+    /- Archive: r2:\/\/offboarded-clients\/fixture\/[\d-]+\/backups\/ ← the 2 database backups in r2:\/\/backups-sites\/db\/fixture_db\//u,
+  );
+  assert.match(
+    result.stdout,
+    /- R2: delete the 2 backups under r2:\/\/backups-sites\/db\/fixture_db\/ once archived; the bucket and everything else in it stay/u,
+  );
+  assert.doesNotMatch(result.stdout, /empty backups-sites/u);
+  assert.deepEqual(Object.keys(state.buckets["backups-sites"]).sort(), [
+    "db/other_db/2026-09-29T10-00-00Z.sql.gz",
+    "ekis/db/ekis/2026-09-29T10-00-00Z.sql.gz",
+  ]);
+  const archived = Object.keys(state.buckets["offboarded-clients"]).filter((key) =>
+    key.includes("/backups/"),
+  );
+  assert.deepEqual(
+    archived.map((key) => key.replace(/^fixture\/[\d-]+\/backups\//u, "")).sort(),
+    ownBackups.map((key) => key.slice("db/".length)).sort(),
+    "only the Site's own backups are archived",
+  );
+  assert.ok(!state.log.includes("bucket backups-sites deleted"));
+});
+
+test("offboard --archive leaves any bucket, Worker, Workflow, container or Artifacts repository not named as the project's for the operator", async () => {
+  const ops = {
+    ...OPS,
+    ci: { worker: "team-ci", backupBucket: "team-ci-backups" },
+    artifacts: { namespace: "fixture", repo: "team-site" },
+  };
+  const exposed = fakeAccount().state;
+  const { fixture, account } = await cutSite({
+    ops,
+    state: {
+      subdomains: { ...exposed.subdomains, "team-ci": { enabled: true, previews_enabled: false } },
+      workers: [...exposed.workers, "team-ci"],
+      workflows: [...exposed.workflows, "team-ci"],
+      containers: [...exposed.containers, { id: "c-team", name: "team-ci-cisandbox" }],
+      buckets: { ...exposed.buckets, "team-ci-backups": { "snapshots/1.tar": object("team") } },
+      artifacts: [...exposed.artifacts, { namespace: "fixture", name: "team-site" }],
+    },
+  });
+  const { state } = account;
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 0, result.stderr);
+  const lines = planLines(result.stdout);
+  for (const expected of [
+    "  ! CI: the Worker team-ci isn't named as fixture's own (fixture-…); delete it by hand if it should go",
+    "  ! CI: the Workflow team-ci isn't named as fixture's own (fixture-…); delete it by hand if it should go",
+    "  ! CI: the container application team-ci-cisandbox isn't named as fixture's own (fixture-…); delete it by hand if it should go",
+    "  ! R2: the bucket team-ci-backups isn't named as fixture's own (fixture-…); empty and delete it by hand if it should go",
+    "  ! Artifacts: the repository fixture/team-site isn't named as fixture's own (fixture-…); delete it by hand if it should go",
+  ]) {
+    assert.ok(lines.includes(expected), `${expected}\n${lines.join("\n")}`);
+  }
+  assert.ok(state.workers.includes("team-ci"));
+  assert.ok(state.workflows.includes("team-ci"));
+  assert.ok(state.containers.some(({ id }) => id === "c-team"));
+  assert.deepEqual(Object.keys(state.buckets["team-ci-backups"]), ["snapshots/1.tar"]);
+  assert.ok(state.artifacts.some(({ name }) => name === "team-site"));
+  // What is named as the project's own still goes.
+  assert.ok(!state.workers.includes("fixture-fe"));
+  assert.ok(!state.workflows.includes("fixture-mirror"));
+  assert.equal(state.buckets["fixture-media"], undefined);
+});
+
+test("offboard --archive keeps a Ploi system user another site on the server runs as", async () => {
+  const { fixture, account } = await cutSite({
+    state: {
+      otherSites: [
+        { id: 35, domain: "other-cms.example.test", system_user: "other" },
+        { id: 36, domain: "fixture-shop.example.test", system_user: "fixture" },
+      ],
+    },
+  });
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(
+    planLines(result.stdout).includes(
+      "  ! Ploi: the system user fixture stays: fixture-shop.example.test runs as it too; delete it by hand once nothing does",
+    ),
+    result.stdout,
+  );
+  assert.deepEqual(
+    account.state.systemUsers.map(({ id }) => id),
+    [78, 79],
+  );
+  assert.ok(account.state.log.includes("ploi site deleted"));
+});
+
+test("offboard --archive refuses when ploi.siteId is another site than domains.admin", async () => {
+  const { fixture, account } = await cutSite();
+  account.state.site = { ...account.state.site, domain: "other-cms.example.test" };
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 1);
+  assert.match(
+    result.stderr,
+    /The Ploi site 34 \(gq\.ops\.json ploi\.siteId\) is other-cms\.example\.test, not fixture-cms\.example\.test \(domains\.admin\): stopping before anything changes\./u,
+  );
+  assert.deepEqual(account.state.log, []);
+  assert.ok(account.state.tokens.every(({ id }) => !id.startsWith("temp-")));
+});
+
+test("offboard --archive archives and deletes the Frontend's other stages too", async () => {
+  const exposed = fakeAccount().state;
+  const { fixture, account } = await cutSite({
+    state: {
+      workers: [...exposed.workers, "fixture-fe-staging", "fixture-fe-shop-fe"],
+      subdomains: {
+        ...exposed.subdomains,
+        "fixture-fe-staging": { enabled: true, previews_enabled: true },
+        "fixture-fe-shop-fe": { enabled: true, previews_enabled: true },
+      },
+      d1: [...exposed.d1, { uuid: "d1-staging", name: "fixture-fe-publications-staging" }],
+      d1Exports: { "d1-staging": "-- staging\n" },
+    },
+  });
+  const { state } = account;
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 0, result.stderr);
+  const prefix = `fixture/${today()}/`;
+  const lines = planLines(result.stdout);
+  for (const expected of [
+    `  - Archive: r2://offboarded-clients/${prefix}publications-staging.sql ← the D1 store fixture-fe-publications-staging`,
+    "  - Frontend: delete the Worker fixture-fe-staging",
+    "  - Frontend: delete the D1 store fixture-fe-publications-staging (d1-staging)",
+    "  ! Frontend: the Worker fixture-fe-shop-fe is named like one of fixture's Frontend stages, but not as fixture-fe-<stage>; check it by hand",
+  ]) {
+    assert.ok(lines.includes(expected), `${expected}\n${lines.join("\n")}`);
+  }
+  const archived = state.buckets["offboarded-clients"];
+  assert.equal(archived[`${prefix}publications-staging.sql`].body.toString(), "-- staging\n");
+  const manifest = JSON.parse(archived[`${prefix}manifest.json`].body);
+  assert.ok(manifest.files.some(({ path }) => path === "publications-staging.sql"));
+  assert.deepEqual(manifest.sources.frontend.stages, [
+    {
+      worker: "fixture-fe-staging",
+      d1: { name: "fixture-fe-publications-staging", id: "d1-staging" },
+    },
+  ]);
+  assert.deepEqual(state.workers, ["other-fe", "fixture-fe-shop-fe"]);
+  assert.deepEqual(
+    state.d1.map(({ uuid }) => uuid),
+    ["d1-other"],
+  );
+});
+
 // --- verification ------------------------------------------------------------
 
 // `account.fetch`, except that `override(request)` may answer first.
@@ -374,7 +569,7 @@ test("an archived file that reads back differently stops the archive before anyt
   assert.match(
     result.stderr,
     new RegExp(
-      `The archive at r2://offboarded-clients/fixture/${today()}/ failed verification: database\\.sql\\.gz's sha256 differs\\. Nothing was deleted; run gq offboard --archive again to archive it anew\\.`,
+      `The archive at r2://offboarded-clients/fixture/${today()}/ failed verification: database\\.sql\\.gz's sha256 differs\\. Nothing was deleted\\.`,
       "u",
     ),
   );
@@ -413,6 +608,62 @@ test("uploads.zip holding fewer entries than the media bucket has objects stops 
   await assertNothingDeleted(fixture, account);
 });
 
+for (const [what, source, message] of [
+  [
+    "a media object",
+    "/fixture-media/2026/01/a.jpg",
+    "2026/01/a\\.jpg read 3 bytes, but r2://fixture-media lists 6",
+  ],
+  [
+    "a backup",
+    "/fixture-releases/db/fixture_db/2026-09-30T10-00-00Z.sql.gz",
+    "db/fixture_db/2026-09-30T10-00-00Z\\.sql\\.gz read 3 bytes, but r2://fixture-releases lists 10",
+  ],
+]) {
+  test(`${what} that reads back shorter than its listing stops the archive before anything is deleted`, async () => {
+    const { fixture, account } = await cutSite();
+    // A body cut short without an error.
+    const fetch = intercepting(account, async ({ method, url }) => {
+      if (
+        method === "GET" &&
+        new URL(url).pathname === source.split("/").map(encodeURIComponent).join("/")
+      ) {
+        return new Response("abc");
+      }
+    });
+
+    const result = await fixture.run(["offboard", "--archive", "--yes"], {
+      env: ENV,
+      fetch,
+      exec: account.exec,
+    });
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, new RegExp(message, "u"));
+    assert.ok(
+      account.state.log.every((entry) => !/deleted$/u.test(entry)),
+      account.state.log.join("\n"),
+    );
+    assert.equal((await readOps(fixture)).offboarded.archive, undefined, "no archive is recorded");
+  });
+}
+
+test("offboard --archive refuses when the final backup the cut took is missing", async () => {
+  const { fixture, account } = await cutSite();
+  for (const key of Object.keys(account.state.buckets["fixture-releases"])) {
+    if (key.startsWith("db/")) delete account.state.buckets["fixture-releases"][key];
+  }
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 1);
+  assert.match(
+    result.stderr,
+    /There is no database backup under r2:\/\/fixture-releases\/db\/fixture_db\/, though gq offboard took a final one there: stopping before anything is written or deleted\./u,
+  );
+  assert.deepEqual(account.state.log, []);
+});
+
 test("no deletion request is sent before the archive is read back", async () => {
   const { fixture, account } = await cutSite();
 
@@ -448,6 +699,106 @@ test("no deletion request is sent before the archive is read back", async () => 
   );
 });
 
+// --- secrets -------------------------------------------------------------------
+
+// What must never be printed: the injected and Sigillo values, every token the
+// run mints, the S3 secret each scoped key derives from it, and a presigned
+// URL's signature.
+function assertNoSecret(result) {
+  const output = `${result.stdout}${result.stderr}`;
+  const minted = Array.from({ length: 30 }, (_, index) => `temp-value-${index + 1}`);
+  for (const secret of [
+    "manager-secret",
+    "ploi-secret",
+    "r2-secret",
+    ...minted,
+    ...minted.map((value) => sha256(value)),
+    "X-Amz-Signature=",
+  ]) {
+    assert.ok(!output.includes(secret), `${secret} is printed`);
+  }
+}
+
+test("offboard --archive prints no secret", async () => {
+  const { fixture, account } = await cutSite();
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 0, result.stderr);
+  assertNoSecret(result);
+});
+
+test("offboard --archive redacts what R2 and gh echo back when they fail", async () => {
+  const r2 = await cutSite();
+  const signature = "deadbeefcafe";
+  const failing = intercepting(r2.account, ({ method, url }) => {
+    if (method === "PUT" && isArchive(url) && url.includes("/uploads.zip")) {
+      return new Response(
+        `<?xml version="1.0"?><Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match the signature you provided.</Message><AWSAccessKeyId>temp-2</AWSAccessKeyId><CanonicalRequest>PUT /offboarded-clients/x?X-Amz-Credential=temp-2&amp;X-Amz-Signature=${signature}</CanonicalRequest><SignatureProvided>${signature}</SignatureProvided></Error>`,
+        { status: 403 },
+      );
+    }
+  });
+  const r2Failure = await r2.fixture.run(["offboard", "--archive", "--yes"], {
+    env: ENV,
+    fetch: failing,
+    exec: r2.account.exec,
+  });
+  assert.equal(r2Failure.code, 1);
+  assert.match(r2Failure.stderr, /R2 PUT .*uploads\.zip failed with 403: SignatureDoesNotMatch/u);
+  assert.ok(!r2Failure.stderr.includes(signature), r2Failure.stderr);
+  assertNoSecret(r2Failure);
+
+  const gh = await cutSite();
+  const exec = recordingExec(({ command, args, input }) =>
+    command === "gh" && args[0] === "repo"
+      ? {
+          code: 1,
+          stderr:
+            "HTTP 401: Bad credentials (https://api.github.com/repos/Example/fixture?access_token=ghs_leaked)",
+        }
+      : gh.account.exec(command, args, { input }),
+  );
+  const ghFailure = await gh.fixture.run(["offboard", "--archive", "--yes"], {
+    env: ENV,
+    fetch: gh.account.fetch,
+    exec,
+  });
+  assert.equal(ghFailure.code, 1);
+  assert.match(
+    ghFailure.stderr,
+    /gh repo archive Example\/fixture failed: HTTP 401: Bad credentials/u,
+  );
+  assert.ok(!ghFailure.stderr.includes("ghs_leaked"), ghFailure.stderr);
+});
+
+test("a scoped key that fails to delete doesn't hide why the archive stopped", async () => {
+  const { fixture, account } = await cutSite();
+  const fetch = intercepting(account, ({ method, url }) => {
+    const failure = (message) =>
+      new Response(JSON.stringify({ success: false, errors: [{ message }] }), { status: 500 });
+    if (method === "DELETE" && url.endsWith("/dns_records/r-media")) return failure("boom");
+    // The first scoped key the run minted (after its own token, temp-2).
+    if (method === "DELETE" && url.endsWith("/tokens/temp-3")) return failure("key cleanup");
+  });
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], {
+    env: ENV,
+    fetch,
+    exec: account.exec,
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /dns_records\/r-media failed: boom/u);
+  assert.ok(
+    account.state.tokens
+      .filter(({ id }) => id.startsWith("temp-"))
+      .map(({ id }) => id)
+      .every((id) => id === "temp-3"),
+    "every other temporary token is deleted",
+  );
+});
+
 // --- the shared zone and the tokens -------------------------------------------
 
 test("offboard --archive deletes only the Site's own hosts' records from the shared zone", async () => {
@@ -467,6 +818,64 @@ test("offboard --archive deletes only the Site's own hosts' records from the sha
     "DELETE /client/v4/zones/zone-1/dns_records/r-fe",
     "DELETE /client/v4/zones/zone-1/dns_records/r-media",
   ]);
+});
+
+test("offboard --archive deletes only the A, AAAA and CNAME records serving the Site's hosts", async () => {
+  const exposed = fakeAccount().state;
+  const { fixture, account } = await cutSite({
+    state: {
+      dnsRecords: [
+        ...exposed.dnsRecords,
+        {
+          id: "r-fe-mx",
+          type: "MX",
+          name: "fixture-fe.example.test",
+          content: "mail.example.test",
+        },
+        { id: "r-fe-txt", type: "TXT", name: "fixture-fe.example.test", content: "v=spf1 -all" },
+        { id: "r-fe-caa", type: "CAA", name: "fixture-fe.example.test", content: '0 issue "ca"' },
+      ],
+    },
+  });
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 0, result.stderr);
+  const lines = planLines(result.stdout);
+  for (const record of [
+    "MX fixture-fe.example.test → mail.example.test",
+    "TXT fixture-fe.example.test → v=spf1 -all",
+  ]) {
+    assert.ok(
+      lines.includes(
+        `  ! DNS: ${record} stays: only A, AAAA and CNAME records serve the Site; delete it by hand if it should go`,
+      ),
+      lines.join("\n"),
+    );
+  }
+  assert.deepEqual(
+    account.state.dnsRecords.map(({ id }) => id),
+    ["r-other", "r-sub", "r-apex", "r-fe-mx", "r-fe-txt", "r-fe-caa"],
+  );
+});
+
+test("offboard --archive deletes no record at the zone's apex", async () => {
+  const { fixture, account } = await cutSite();
+  await rewriteOps(fixture, (ops) => {
+    ops.domains.frontend = "example.test";
+  });
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(
+    planLines(result.stdout).includes(
+      "  ! DNS: example.test is the zone's apex: gq deletes no record there; delete the Site's by hand",
+    ),
+    result.stdout,
+  );
+  assert.ok(account.state.dnsRecords.some(({ id }) => id === "r-apex"));
+  assert.ok(!account.state.dnsRecords.some(({ id }) => id === "r-cms"));
 });
 
 test("the project's tokens are deleted after everything else on Cloudflare, and kept when that fails", async () => {
@@ -498,7 +907,97 @@ test("the project's tokens are deleted after everything else on Cloudflare, and 
   assert.equal(account.state.hooks.length, 2, "GitHub comes after the tokens");
 });
 
+test("offboard --archive deletes every project token however many pages list them", async () => {
+  const exposed = fakeAccount().state;
+  const { fixture, account } = await cutSite({
+    state: {
+      tokens: [exposed.tokens[0], ...structuredClone(CROWDED_TOKENS), ...exposed.tokens.slice(1)],
+    },
+  });
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(
+    account.state.tokens.filter(({ name }) => name.startsWith("GETQUICK FIXTURE ")),
+    [],
+  );
+  assert.equal(account.state.tokens.length, 2 + CROWDED_TOKENS.length);
+});
+
+test("offboard --archive finds the CI webhook however many pages list the hooks", async () => {
+  const exposed = fakeAccount().state;
+  const { fixture, account } = await cutSite({
+    state: { hooks: [...structuredClone(CROWDED_HOOKS), ...exposed.hooks] },
+  });
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(account.state.log.includes("github hook 99 deleted"), account.state.log.join("\n"));
+  assert.equal(account.state.hooks.length, CROWDED_HOOKS.length + 1);
+});
+
 // --- rerunning ------------------------------------------------------------------
+
+test("offboard --archive never writes over objects already under its prefix", async () => {
+  const { fixture, account } = await cutSite();
+  const prefix = `fixture/${today()}/`;
+  // A verified archive whose gq.ops.json record was lost (never committed).
+  account.state.buckets["offboarded-clients"] = {
+    [`${prefix}uploads.zip`]: object("the complete uploads"),
+    [`${prefix}manifest.json`]: object("{}"),
+  };
+  const before = snapshot(account.state.buckets["offboarded-clients"]);
+
+  const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+  assert.equal(result.code, 1);
+  assert.match(
+    result.stderr,
+    new RegExp(
+      `r2://offboarded-clients/${prefix} already holds 2 objects, and gq\\.ops\\.json records no archive: gq never archives over them\\.`,
+      "u",
+    ),
+  );
+  assert.deepEqual(snapshot(account.state.buckets["offboarded-clients"]), before);
+  assert.deepEqual(account.state.log, []);
+});
+
+for (const [gone, take] of [
+  [
+    "the Ploi site fixture-cms.example.test, the database fixture_db, the Frontend Worker fixture-fe, the D1 store fixture-fe-publications are",
+    (state) => {
+      state.site = null;
+      state.databases = state.databases.filter(({ name }) => name !== "fixture_db");
+      state.workers = state.workers.filter((name) => name !== "fixture-fe");
+      state.d1 = state.d1.filter(({ name }) => name !== "fixture-fe-publications");
+    },
+  ],
+  [
+    "the D1 store fixture-fe-publications is",
+    (state) => {
+      state.d1 = state.d1.filter(({ name }) => name !== "fixture-fe-publications");
+    },
+  ],
+]) {
+  test(`offboard --archive starts no new archive once a source is gone: ${gone.split(",")[0]}…`, async () => {
+    const { fixture, account } = await cutSite();
+    take(account.state);
+
+    const result = await fixture.run(["offboard", "--archive", "--yes"], { env: ENV, ...account });
+
+    assert.equal(result.code, 1);
+    assert.ok(
+      result.stderr.includes(
+        `${gone} already gone, but gq.ops.json records no archive (offboarded.archive): a new archive would miss`,
+      ),
+      result.stderr,
+    );
+    assert.deepEqual(account.state.log, []);
+    assert.equal(account.state.buckets["offboarded-clients"], undefined, "nothing is archived");
+  });
+}
 
 test("offboard --archive after a failed deletion resumes where it stopped, without archiving again", async () => {
   const { fixture, account } = await cutSite();
