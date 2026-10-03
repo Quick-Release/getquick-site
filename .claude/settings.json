@@ -6,7 +6,23 @@
       "Bash(git tag v:*)",
       "Bash(gh pr merge:*)",
       "Bash(git push:*)",
-      "Bash(pnpm release:publish)"
+      "Bash(pnpm release:publish)",
+      "Bash(herdr pane close:*)",
+      "Bash(herdr agent start:*)",
+      "Bash(herdr agent prompt:*)",
+      "Bash(herdr agent send-keys:*)",
+      "Bash(herdr pane split:*)",
+      "Bash(herdr pane rename:*)",
+      "Bash(herdr pane list:*)",
+      "Bash(herdr pane read:*)",
+      "Bash(herdr agent list:*)",
+      "Bash(herdr agent get:*)",
+      "Bash(herdr agent read:*)",
+      "Bash(herdr agent wait:*)",
+      "Bash(git worktree add:*)",
+      "Bash(git worktree remove:*)",
+      "Bash(git merge:*)",
+      "Bash(pnpm install:*)"
     ]
   }
 }
