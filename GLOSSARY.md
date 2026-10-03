@@ -11,7 +11,8 @@ it ([ADR 0001](docs/adr/0001-the-getquick-site-blueprint.md)).
 **Site**:
 One GETQUICK client website: its own repository, CMS, Frontend, and data.
 Lombardi and Ekis are sites.
-_Avoid_: project (in prose; `project` is the manifest key naming a site)
+_Avoid_: project (in prose; `project` is the manifest key naming a site),
+tenant (sites don't share a deployment)
 
 **Blueprint**:
 The shared definition of a site's managed files and conventions.
