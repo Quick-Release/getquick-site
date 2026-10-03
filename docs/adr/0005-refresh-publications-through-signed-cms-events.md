@@ -4,7 +4,8 @@
   (withdraw events; a password-protected entry is withdrawn, not refreshed)
   and [ADR 0009](0009-reconcile-missed-changes-on-the-cms-scheduler.md) (a
   signed `reconcile` event asks the Frontend to compare the whole store with
-  WordPress)
+  WordPress) and [ADR 0010](0010-declare-a-new-content-site-ready-through-one-readiness-gate.md)
+  (the `check` event's answer also reports the store's states and counts)
 - Date: 2026-10-02
 
 ## Context

@@ -44,7 +44,11 @@ to DDEV or Composer as is.
 - `cms status` reports the last background startup (ready, failed with its
   message, cancelled, or still starting) and the log's path, and exits 1 when
   it failed or its worker died. `cms stop` cancels a pending startup before
-  stopping DDEV.
+  stopping DDEV. A started DDEV isn't a ready CMS: `gq site check --local`
+  (`pnpm site:check:local`) also requires WordPress installed, WPGraphQL
+  active with every field the Frontend reads (the GETQUICK plugins and theme
+  add some), and uploads kept on disk, and says what to do for each
+  ([provisioning](provisioning.md#a-new-content-site-end-to-end)).
 - `cms composer` runs Composer in a running DDEV project (its PHP matches the
   server), else with the host Composer, else in DDEV started for it. `install`,
   `update` and `reinstall` always use the host Composer with

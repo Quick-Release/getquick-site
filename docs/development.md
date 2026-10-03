@@ -102,8 +102,13 @@ its Frontend dependencies (the networked step) and runs its tests,
 the durable published content runtime proof (see
 [Durable published content](guides/provisioning.md#durable-published-content));
 `scripts/smoke/cms-events.sh` adds a real WordPress for publication and
-settings events. The runtime proof also installs the CI Worker's
-dependencies for Wrangler's local workerd runtime.
+settings events, and real WPGraphQL for `gq site check`'s CMS readiness. The
+runtime proof also installs the CI Worker's dependencies for Wrangler's local
+workerd runtime. `scripts/smoke/acceptance.sh` runs `pnpm check` and the
+three proofs in order: spec #38's local acceptance gate. CI runs `pnpm check`,
+`frontend-check.sh` and `frontend-runtime.sh` on every push; the
+real-WordPress proof needs PHP and downloads, and the live gate is the
+gq-smoke wizard ([A new content Site, end to end](guides/provisioning.md#a-new-content-site-end-to-end)).
 
 For blueprint source roles, ownership mappings, and deliberate dotless source
 names, see the [blueprint map](../blueprint/README.md). `ownership.json` remains
