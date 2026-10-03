@@ -6,6 +6,7 @@
 // and its output in ddev-start.log, so `gq cms status` can report ready or
 // failed long after the launcher returned.
 
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -85,22 +86,38 @@ function isStarting(status) {
   return processGroupAlive(status.pid);
 }
 
-// Whether any process in the group still runs. Where nothing reaps orphans (a
-// container whose PID 1 is not an init, like the CI sandbox) a killed worker
-// lingers as a zombie that signal 0 still reaches, so on Linux /proc decides.
-// macOS answers EPERM while a killed group is still being reaped.
+// Whether any process in the group still runs, meaning a member that is not a
+// zombie or exiting. Signal 0 alone cannot say: a zombie whose parent has not
+// reaped it yet (a worker the launcher's exit left to launchd or init, or one
+// in a container whose PID 1 is not an init, like the CI sandbox) stays in its
+// group. Linux counts it as reachable, while Darwin's killpg1 skips zombies and
+// members part-way through exit, and so answers EPERM for a group of only
+// those, as it does for another user's group. The process table tells these
+// apart.
 export function processGroupAlive(pgid) {
   try {
     process.kill(-pgid, 0);
   } catch (error) {
     if (error.code === "ESRCH") return false;
-    if (error.code === "EPERM") return true;
-    throw error;
+    if (error.code !== "EPERM") throw error;
   }
-  return !onlyZombiesInGroup(pgid);
+  return !nothingRunsInGroup(pgid);
 }
 
-function onlyZombiesInGroup(pgid) {
+// Signals the group, which is a no-op once it has exited, even before its
+// zombies are reaped. Another user's group still fails with EPERM.
+export function signalProcessGroup(pgid, signal) {
+  try {
+    process.kill(-pgid, signal);
+  } catch (error) {
+    if (error.code === "ESRCH") return;
+    if (error.code === "EPERM" && !processGroupAlive(pgid)) return;
+    throw error;
+  }
+}
+
+function nothingRunsInGroup(pgid) {
+  if (process.platform === "darwin") return nothingRunsInDarwinGroup(pgid);
   if (process.platform !== "linux") return false;
   let entries;
   try {
@@ -119,6 +136,16 @@ function onlyZombiesInGroup(pgid) {
     const [state, , pgrp] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
     return Number(pgrp) === pgid && state !== "Z" && state !== "X";
   });
+}
+
+// `ps -g` lists every member of the group, any user's, marking zombies "Z" and
+// members part-way through exit "E".
+function nothingRunsInDarwinGroup(pgid) {
+  const { stdout, error } = spawnSync("/bin/ps", ["-o", "stat=", "-g", String(pgid)], {
+    encoding: "utf8",
+  });
+  if (error) return false;
+  return !stdout.split("\n").some((stat) => stat.trim() && !/[ZE]/u.test(stat));
 }
 
 async function startupOperation(cmsRoot, action) {
@@ -157,14 +184,10 @@ function cancelDdevStart(cmsRoot) {
     const current = reconcileDdevStart(cmsRoot);
     if (!current || !isStarting(current)) return;
     if (!current.pid) throw new Error("Startup is still launching; retry gq cms stop shortly.");
-    try {
-      process.kill(-current.pid, "SIGTERM");
-    } catch (error) {
-      if (error.code !== "ESRCH") throw error;
-    }
+    signalProcessGroup(current.pid, "SIGTERM");
     for (let attempt = 0; attempt < 100 && processGroupAlive(current.pid); attempt++)
       await sleep(20);
-    if (processGroupAlive(current.pid)) process.kill(-current.pid, "SIGKILL");
+    if (processGroupAlive(current.pid)) signalProcessGroup(current.pid, "SIGKILL");
     writeStatus(cmsRoot, { ...current, phase: "cancelled", finishedAt: new Date().toISOString() });
   });
 }

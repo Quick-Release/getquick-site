@@ -19,7 +19,8 @@
 // keys scoped to one bucket each, minted for the run as 1-hour tokens
 // ("GETQUICK <PROJECT> offboarding <bucket> (temporary)") and deleted with
 // the run's token: phase 1 disabled the project's own bucket keys, and a
-// scoped key can't reach another client's bucket.
+// scoped key can't reach another client's bucket. R2 rejects a new key for
+// a while, so each is retried until R2 first accepts it (src/r2.mjs).
 
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -97,10 +98,10 @@ const ARCHIVE_KEYS = [
 
 // Runs `work(providers)` with every provider connected, and deletes the
 // temporary Cloudflare tokens afterwards whatever happens. `dependencies` are
-// the run() seam's (context, env, fetch, exec, io, interactive); `archive`
+// the run() seam's (context, env, fetch, exec, clock, io, interactive); `archive`
 // grants what the archive needs and requires its keys.
 export async function withOffboardingProviders(dependencies, work, { archive = false } = {}) {
-  const { context, env, fetch, exec } = dependencies;
+  const { context, env, fetch, exec, clock } = dependencies;
   const ops = context.config;
   const required = archive ? [...REQUIRED_KEYS, ...ARCHIVE_KEYS] : [...REQUIRED_KEYS, SITE_ID_KEY];
   const missing = required.filter(([, read]) => !read(ops)).map(([key]) => key);
@@ -166,7 +167,14 @@ export async function withOffboardingProviders(dependencies, work, { archive = f
       fetch,
     },
     async (cloudflare, zone) => {
-      const keys = scopedKeys({ manager, accountId, project: ops.project, groups, fetch });
+      const keys = scopedKeys({
+        manager,
+        accountId,
+        project: ops.project,
+        groups,
+        fetch,
+        clock,
+      });
       let failure;
       try {
         return await work({
@@ -212,8 +220,9 @@ export async function withOffboardingProviders(dependencies, work, { archive = f
 }
 
 // R2 clients for one bucket each, minted on first use as 1-hour tokens that
-// can only read and write that bucket's objects; close() deletes them.
-function scopedKeys({ manager, accountId, project, groups, fetch }) {
+// can only read and write that bucket's objects; close() deletes them. R2
+// takes a while to accept a new key: each client waits for it on `clock`.
+function scopedKeys({ manager, accountId, project, groups, fetch, clock }) {
   const minted = new Map();
   async function mint(bucket) {
     const token = await manager("POST", "/tokens", {
@@ -222,7 +231,10 @@ function scopedKeys({ manager, accountId, project, groups, fetch }) {
       policies: bucketPolicies({ accountId, bucket }, groups),
     });
     const credentials = await s3CredentialsFromToken(token.id, token.value);
-    return { token, client: createR2Client({ accountId, bucket, ...credentials, fetch }) };
+    return {
+      token,
+      client: createR2Client({ accountId, bucket, ...credentials, fetch, minted: clock }),
+    };
   }
   return {
     async r2(bucket) {

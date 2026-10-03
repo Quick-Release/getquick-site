@@ -7,7 +7,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { localCmsLinks, processGroupAlive, readDdevStart } from "../../src/cms/ddev.mjs";
+import {
+  localCmsLinks,
+  processGroupAlive,
+  readDdevStart,
+  signalProcessGroup,
+} from "../../src/cms/ddev.mjs";
 
 // Lombardi's ddev.test.mjs: the real gq bin, with a fake `ddev` on PATH, so the
 // background worker really detaches, claims its job and reports through it.
@@ -49,13 +54,12 @@ if (args[0] === 'start') {
 `,
     { mode: 0o755 },
   );
-  t.after(() => {
+  // A job that already finished may linger as a zombie until launchd or init
+  // reaps it; wait only until nothing in its group still runs.
+  t.after(async () => {
     for (const pid of jobs) {
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch (error) {
-        if (error.code !== "ESRCH") throw error;
-      }
+      signalProcessGroup(pid, "SIGKILL");
+      await waitFor(() => !processGroupAlive(pid));
     }
     rmSync(root, { recursive: true, force: true });
   });
@@ -106,6 +110,35 @@ if (args[0] === 'start') {
           .map((line) => JSON.parse(line))
       : [];
   return { root, cms, gate, calls, invoke, invokeAsync, invocations };
+}
+
+// A detached group whose only member is a zombie: its parent, blocked forever,
+// never reaps it. Darwin then answers EPERM to any signal sent to the group.
+async function zombieGroup(t) {
+  const holder = spawn(
+    process.execPath,
+    [
+      "-e",
+      `const child = require("node:child_process").spawn(process.execPath, ["-e", ""], { detached: true, stdio: "ignore" });
+child.once("spawn", () => {
+  require("node:fs").writeSync(1, child.pid + "\\n");
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+});`,
+    ],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  );
+  t.after(() => holder.kill("SIGKILL"));
+  const pgid = await new Promise((resolve, reject) => {
+    holder.stdout.once("data", (chunk) => resolve(Number(String(chunk).trim())));
+    holder.once("error", reject);
+  });
+  await waitFor(
+    () =>
+      spawnSync("ps", ["-o", "stat=", "-p", String(pgid)], {
+        encoding: "utf8",
+      }).stdout.trim()[0] === "Z",
+  );
+  return pgid;
 }
 
 async function waitFor(predicate) {
@@ -266,4 +299,47 @@ test("log-open failure is terminal and does not prevent an immediate retry", asy
   assert.match(retry.stdout, /launched in background/u);
   writeFileSync(f.gate, "ready");
   await waitFor(() => readDdevStart(f.cms)?.phase === "ready");
+});
+
+test("a group of only zombies is not alive, and signalling it does not throw", async (t) => {
+  const pgid = await zombieGroup(t);
+  if (process.platform === "darwin") assert.throws(() => process.kill(-pgid, 0), { code: "EPERM" });
+  assert.equal(processGroupAlive(pgid), false);
+  assert.doesNotThrow(() => signalProcessGroup(pgid, "SIGKILL"));
+});
+
+test("stop treats a job whose group is only zombies as exited rather than failing", async (t) => {
+  const f = fixture(t);
+  const pgid = await zombieGroup(t);
+  mkdirSync(join(f.cms, ".local-plugins"));
+  writeFileSync(
+    join(f.cms, ".local-plugins/ddev-start.json"),
+    JSON.stringify({
+      id: "zombie",
+      pid: pgid,
+      phase: "starting",
+      startedAt: new Date().toISOString(),
+    }),
+  );
+  const result = f.invoke(["stop"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readDdevStart(f.cms).phase, "failed");
+  assert.deepEqual(f.invocations(), [["stop"]]);
+});
+
+test("a group owned by another user is alive, and signalling it surfaces EPERM", (t) => {
+  const uid = process.getuid();
+  const owners = new Map();
+  for (const line of spawnSync("ps", ["-A", "-o", "pgid=,uid="], { encoding: "utf8" })
+    .stdout.trim()
+    .split("\n")) {
+    const [pgid, owner] = line.trim().split(/\s+/u).map(Number);
+    owners.set(pgid, [...(owners.get(pgid) ?? []), owner]);
+  }
+  const foreign = [...owners].find(
+    ([pgid, members]) => pgid > 1 && members.every((owner) => owner !== uid),
+  )?.[0];
+  if (uid === 0 || foreign === undefined) return t.skip("no group owned only by another user");
+  assert.equal(processGroupAlive(foreign), true);
+  assert.throws(() => signalProcessGroup(foreign, 0), { code: "EPERM" });
 });
