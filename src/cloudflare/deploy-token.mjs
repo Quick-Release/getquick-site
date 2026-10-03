@@ -2,12 +2,14 @@
 // cloudflare-deploy-token.mjs), using the account's token-manager token:
 //
 //   1. find or create "GETQUICK <PROJECT> Staging Alchemy" (account Workers
-//      permissions + Zone Read / DNS Write / Workers Routes Write on the
-//      gq.ops.json cloudflare.zoneId zone only)
+//      permissions, D1 for the Frontend's publication store, + Zone Read /
+//      DNS Write / Workers Routes Write on the gq.ops.json cloudflare.zoneId
+//      zone only)
 //   2. store its value in Sigillo `staging` as CLOUDFLARE_API_TOKEN
 //
 // Idempotent: nothing is created when the token exists and Sigillo already
-// has its value. A token whose value was lost is rolled.
+// has its value. A token whose value was lost is rolled; one created before
+// a permission was added here (D1) gets it, keeping its value.
 //
 //   gq cloudflare deploy-token [--dry-run]
 
@@ -28,6 +30,10 @@ const SECRET = "CLOUDFLARE_API_TOKEN";
 
 export const accountPermissions = [
   "Account Settings Read",
+  // The publication store: Alchemy creates the Site's D1 database and
+  // applies the Frontend's migrations on deploy (ADR 0003).
+  "D1 Read",
+  "D1 Write",
   "Secrets Store Read",
   "Secrets Store Write",
   "Workers Metadata Read-Only",
@@ -43,6 +49,7 @@ export function deployTokenSpec({ project, accountId, zoneId }) {
   return {
     name: tokenName(project, "Staging Alchemy"),
     secrets: [SECRET],
+    permissions: [...accountPermissions, ...zonePermissions],
     policies: (groups) => [
       accountPolicy(accountId, accountPermissions, groups),
       zonePolicy(zoneId, zonePermissions, groups),
@@ -79,13 +86,19 @@ export async function runDeployToken({ context, parsed, env, fetch, exec, io, in
   }
   spin.stop("Inspected");
 
-  const { plan } = planned;
+  const { plan, missing } = planned;
   ui.note(
-    {
-      ok: `✓ token exists and Sigillo ${secrets.name} has ${SECRET}`,
-      create: `+ create token, store it in Sigillo ${secrets.name}`,
-      roll: `~ token exists but Sigillo has no value: roll it, store the new value in Sigillo`,
-    }[plan],
+    [
+      {
+        ok: `✓ token exists and Sigillo ${secrets.name} has ${SECRET}`,
+        update: `✓ token exists and Sigillo ${secrets.name} has ${SECRET}`,
+        create: `+ create token, store it in Sigillo ${secrets.name}`,
+        roll: `~ token exists but Sigillo has no value: roll it, store the new value in Sigillo`,
+      }[plan],
+      ...(missing.length > 0 && plan !== "create"
+        ? [`~ add ${missing.join(", ")} to its permissions (its value is kept)`]
+        : []),
+    ].join("\n"),
     "Plan",
   );
   if (plan === "ok" || parsed.dryRun) {
@@ -94,9 +107,14 @@ export async function runDeployToken({ context, parsed, env, fetch, exec, io, in
   }
 
   const step = ui.spinner();
-  step.start(plan === "create" ? "Creating token" : "Rolling token");
+  step.start(
+    { create: "Creating token", roll: "Rolling token", update: "Updating its permissions" }[plan],
+  );
   try {
-    const groups = plan === "create" ? await request("GET", "/tokens/permission_groups") : [];
+    const groups =
+      plan === "create" || missing.length > 0
+        ? await request("GET", "/tokens/permission_groups")
+        : [];
     step.message(`Storing in Sigillo ${secrets.name}`);
     await applyToken(request, secrets, planned, groups);
   } catch (error) {

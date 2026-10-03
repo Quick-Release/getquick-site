@@ -16,22 +16,42 @@
 // printed, only the signature. A Frontend that reconciles with WordPress
 // (ADR 0009) also says how its last reconciliation went, which is printed.
 //
+// `gq frontend secrets` generates the Site's own FRONTEND_REFRESH_TOKEN and
+// PUBLICATION_EVENT_SECRET (32 random bytes each, hex) into Sigillo staging
+// when they are missing or too short for the Frontend to accept. Values go to
+// Sigillo over stdin and are never printed. Deploys, CI releases (gq ci
+// deploy) and the CMS (gq ploi events) take them from there.
+//
+//   gq frontend secrets [--dry-run]
 //   gq frontend refresh [--uri <path>]... [--url <frontend origin>] [--json]
 //   gq frontend events check [--url <frontend origin>] [--json]
 
-import { createHmac, randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
+
+import { createReporter } from "../cli/reporter.mjs";
+import { SECRETS_ENVIRONMENT } from "../cloudflare/tokens.mjs";
+import { sigilloSecrets } from "../sigillo/commands.mjs";
 
 export const FRONTEND_USAGE = [
+  "gq frontend secrets [--dry-run]",
   "gq frontend refresh [--uri <path>]... [--url <frontend origin>] [--json]",
   "gq frontend events check [--url <frontend origin>] [--json]",
 ];
 
+/** The Frontend's per-Site secrets; it refuses either when shorter than 32 characters. */
+export const FRONTEND_SECRETS = {
+  FRONTEND_REFRESH_TOKEN: "the trusted refresh's bearer token (gq frontend refresh)",
+  PUBLICATION_EVENT_SECRET: "the key the CMS signs its events with",
+};
+const MINIMUM_SECRET_LENGTH = 32;
+
 const MARKS = { promoted: "✓", superseded: "✓", kept: "✗" };
 
 /** Without a reconciliation that matched WordPress for this long, it is reported as behind. */
-const RECONCILIATION_STALE_MS = 10 * 60_000;
+export const RECONCILIATION_STALE_MS = 10 * 60_000;
 
 const COMMANDS = new Map([
+  ["frontend secrets", ["dryRun"]],
   ["frontend refresh", ["url", "uri"]],
   ["frontend events check", ["url"]],
 ]);
@@ -44,7 +64,7 @@ export function frontendCommandOptions(command) {
   return COMMANDS.get(command.join(" "));
 }
 
-function frontendOrigin(parsed, ops, path = "/gq/refresh") {
+export function frontendOrigin(parsed, ops, path = "/gq/refresh") {
   const origin = parsed.url ?? (ops.domains?.frontend ? `https://${ops.domains.frontend}` : null);
   if (!origin) {
     throw new Error("gq.ops.json domains.frontend is required, or pass --url <frontend origin>.");
@@ -106,9 +126,12 @@ function printReport(body, io) {
 
 // Resolves to the exit code: 0 when everything asked for was refreshed (or the
 // Frontend accepts this Site's events), 1 when not.
-export async function runFrontendCommand({ context, parsed, fetch, io }) {
+export async function runFrontendCommand({ context, parsed, env, fetch, exec, io, interactive }) {
   if (parsed.command.join(" ") === "frontend events check") {
     return checkEvents({ context, parsed, fetch, io });
+  }
+  if (parsed.command.join(" ") === "frontend secrets") {
+    return generateSecrets({ context, parsed, env, exec, io, interactive });
   }
   const url = frontendOrigin(parsed, context.config);
   const uris = requestedUris(parsed);
@@ -175,23 +198,68 @@ export async function runFrontendCommand({ context, parsed, fetch, io }) {
   return body.refreshed && (!site || body.ready) ? 0 : 1;
 }
 
+// `gq frontend secrets [--dry-run]`: generates what Sigillo staging lacks.
+// A value this process was given (through gq sigillo run staging) is checked
+// for length; one Sigillo lists but didn't inject is kept as it is.
+async function generateSecrets({ context, parsed, env, exec, io, interactive }) {
+  const secrets = await sigilloSecrets({ context, env, exec }, SECRETS_ENVIRONMENT);
+  const listed = await secrets.list();
+  const plan = Object.keys(FRONTEND_SECRETS).map((name) => {
+    const stored = new RegExp(`\\b${name}\\b`, "u").test(listed);
+    const value = context.env[name]?.trim();
+    if (!stored) return { name, action: "generate" };
+    if (value !== undefined && value.length < MINIMUM_SECRET_LENGTH) {
+      return { name, action: "replace" };
+    }
+    return { name, action: "keep" };
+  });
+
+  const ui = createReporter(io, interactive);
+  ui.intro(`Frontend secrets · Sigillo ${secrets.name}`);
+  ui.note(
+    plan
+      .map(({ name, action }) =>
+        action === "keep"
+          ? `✓ ${name} in Sigillo ${secrets.name}`
+          : action === "generate"
+            ? `+ generate ${name} (${FRONTEND_SECRETS[name]}), store it in Sigillo ${secrets.name}`
+            : `~ ${name} is shorter than ${MINIMUM_SECRET_LENGTH} characters, which the Frontend refuses: generate a new one`,
+      )
+      .join("\n"),
+    "Plan (values not shown)",
+  );
+  const changes = plan.filter(({ action }) => action !== "keep");
+  if (changes.length === 0) {
+    ui.outro("Nothing to do.");
+    return 0;
+  }
+  if (parsed.dryRun) {
+    ui.outro("Dry run: nothing changed.");
+    return 0;
+  }
+  for (const { name } of changes) {
+    await secrets.set(name, randomBytes(32).toString("hex"));
+    ui.success(`${name} stored in Sigillo ${secrets.name}`);
+  }
+  ui.outro(
+    "Bind them: pnpm ci:deploy (CI releases), then deploy the Frontend (a release or pnpm deploy:frontend); pnpm ploi:events gives the CMS its event key for its next release.",
+  );
+  return 0;
+}
+
 /** The headers the Site's CMS signs an event with: HMAC-SHA256 of "<timestamp>.<body>". */
 export function signEvent(body, secret, timestamp = Math.floor(Date.now() / 1000)) {
   const signature = createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
   return { "GQ-Event-Timestamp": String(timestamp), "GQ-Event-Signature": `v1=${signature}` };
 }
 
-async function checkEvents({ context, parsed, fetch, io }) {
-  const url = frontendOrigin(parsed, context.config, "/gq/events");
-  const site = context.config.project;
-  if (!site) throw new Error("gq.ops.json project is required.");
-  const secret = context.env.PUBLICATION_EVENT_SECRET?.trim();
-  if (!secret) {
-    throw new Error(
-      "PUBLICATION_EVENT_SECRET is missing; add it to Sigillo staging, deploy the Frontend with it and run this through gq sigillo run staging.",
-    );
-  }
-
+/**
+ * Sends the Frontend at `url` (its /gq/events) a signed check event, which
+ * changes nothing. Resolves to the HTTP status, the answer (null when it isn't
+ * JSON) and whether it accepted this Site's key; throws when the Frontend
+ * can't be reached.
+ */
+export async function sendCheckEvent({ url, site, secret, fetch }) {
   const body = JSON.stringify({ site, id: randomUUID(), action: "check", occurredAt: Date.now() });
   let response;
   try {
@@ -208,20 +276,35 @@ async function checkEvents({ context, parsed, fetch, io }) {
   }
   const answer = await response.json().catch(() => null);
   const accepted = response.status === 200 && answer?.status === "checked" && answer.site === site;
+  return { status: response.status, answer, accepted };
+}
+
+async function checkEvents({ context, parsed, fetch, io }) {
+  const url = frontendOrigin(parsed, context.config, "/gq/events");
+  const site = context.config.project;
+  if (!site) throw new Error("gq.ops.json project is required.");
+  const secret = context.env.PUBLICATION_EVENT_SECRET?.trim();
+  if (!secret) {
+    throw new Error(
+      "PUBLICATION_EVENT_SECRET is missing; add it to Sigillo staging, deploy the Frontend with it and run this through gq sigillo run staging.",
+    );
+  }
+
+  const { status, answer, accepted } = await sendCheckEvent({ url, site, secret, fetch });
   if (parsed.json) {
-    io.out(JSON.stringify({ accepted, status: response.status, answer }, null, 2));
+    io.out(JSON.stringify({ accepted, status, answer }, null, 2));
   } else if (accepted) {
     io.out(`✓ The Frontend at ${url.origin} accepts ${site}'s publication events.`);
     if ("reconciliation" in answer) io.out(describeReconciliation(answer.reconciliation));
   } else {
-    const reason = answer?.error ?? `HTTP ${response.status}`;
+    const reason = answer?.error ?? `HTTP ${status}`;
     io.out(`✗ The Frontend at ${url.origin} refused ${site}'s publication events: ${reason}`);
   }
   return accepted ? 0 : 1;
 }
 
 /** The Frontend's last reconciliation with WordPress, in one line. */
-function describeReconciliation(reconciliation) {
+export function describeReconciliation(reconciliation) {
   if (!reconciliation) {
     return "✗ It hasn't reconciled with WordPress yet: the CMS's cron (gq ploi events) asks for it every minute.";
   }

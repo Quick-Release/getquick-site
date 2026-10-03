@@ -44,6 +44,34 @@ export function retryCrontab({ systemUser, domain }) {
   };
 }
 
+/**
+ * What the Ploi site's CMS has for its events: its .env with `secret` applied
+ * (`changed` names PUBLICATION_EVENT_SECRET when it is missing or differs;
+ * values are never returned), the retry crontab it needs, and the one it has,
+ * if any. Read-only. `gq ploi events` applies it; `gq site check` reports it.
+ */
+export async function inspectCmsEvents({ ops, token, secret, fetch }) {
+  const client = createPloiServerClient({ token, serverId: ops.ploi.serverId, fetch });
+  const sitePath = `/sites/${ops.ploi.siteId}`;
+  const response = await client.request("GET", `${sitePath}/env`);
+  const current = response?.data ?? response?.env;
+  if (typeof current !== "string" || !current.trim()) {
+    throw new Error("The Ploi site has no .env yet; run gq ploi provision first.");
+  }
+  const { output, changed } = applyEnv(current, { [EVENT_SECRET]: secret });
+
+  const site = (await client.request("GET", sitePath))?.data ?? {};
+  const crontab = retryCrontab({
+    systemUser: site.system_user ?? ops.ploi.systemUser,
+    domain: site.domain ?? ops.domains?.admin,
+  });
+  const crontabs = (await client.request("GET", "/crontabs"))?.data ?? [];
+  const existing = crontabs.find(
+    (entry) => entry.user === crontab.user && entry.command === crontab.command,
+  );
+  return { client, sitePath, output, changed, crontab, existing };
+}
+
 // `gq ploi events [--dry-run]`. Resolves to an exit code.
 export async function runEvents({ context, parsed, fetch, io, interactive }) {
   const ops = context.config;
@@ -62,28 +90,12 @@ export async function runEvents({ context, parsed, fetch, io, interactive }) {
 
   const ui = createReporter(io, interactive);
   ui.intro("Ploi · publication events");
-  const client = createPloiServerClient({
+  const { client, sitePath, output, changed, crontab, existing } = await inspectCmsEvents({
+    ops,
     token: context.env.PLOI_API_TOKEN,
-    serverId: ops.ploi.serverId,
+    secret,
     fetch,
   });
-  const sitePath = `/sites/${ops.ploi.siteId}`;
-  const response = await client.request("GET", `${sitePath}/env`);
-  const current = response?.data ?? response?.env;
-  if (typeof current !== "string" || !current.trim()) {
-    throw new Error("The Ploi site has no .env yet; run gq ploi provision first.");
-  }
-  const { output, changed } = applyEnv(current, { [EVENT_SECRET]: secret });
-
-  const site = (await client.request("GET", sitePath))?.data ?? {};
-  const crontab = retryCrontab({
-    systemUser: site.system_user ?? ops.ploi.systemUser,
-    domain: site.domain ?? ops.domains?.admin,
-  });
-  const crontabs = (await client.request("GET", "/crontabs"))?.data ?? [];
-  const existing = crontabs.find(
-    (entry) => entry.user === crontab.user && entry.command === crontab.command,
-  );
   if (existing && existing.frequency !== crontab.frequency) {
     ui.warn(
       `The retry crontab runs at "${existing.frequency}", not every minute; retries are only as frequent.`,

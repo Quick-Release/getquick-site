@@ -219,7 +219,7 @@ export async function runSync(dependencies) {
 // So, as Lombardi's db-sync-run.mjs did, gq relaunches itself with mkcert's
 // public CA (never its private key) rather than disabling TLS checks.
 // Resolves to the relaunched command's exit code, or null to go on here.
-async function relaunchWithLocalCa({ argv, context, env, exec }) {
+export async function relaunchWithLocalCa({ argv, context, env, exec }) {
   if (env.NODE_EXTRA_CA_CERTS) return null;
   const caRoot = await exec("mkcert", ["-CAROOT"], { env }).catch(() => null);
   const root = caRoot?.code === 0 ? caRoot.stdout.trim() : "";

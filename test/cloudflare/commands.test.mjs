@@ -80,6 +80,7 @@ function fakeCloudflare({ tokens = [], buckets = [], domains = {}, repos = [] } 
     namespaces: [],
     deleted: [],
     created: [],
+    updated: [],
   };
   let next = 1;
   const fetch = recordingFetch(({ method, url, body }) => {
@@ -102,6 +103,10 @@ function fakeCloudflare({ tokens = [], buckets = [], domains = {}, repos = [] } 
     const tokenValue = /^\/tokens\/([^/]+)\/value$/u.exec(path);
     if (method === "PUT" && tokenValue) return ok(`rolled-${tokenValue[1]}`);
     const tokenId = /^\/tokens\/([^/]+)$/u.exec(path);
+    if (method === "PUT" && tokenId) {
+      state.updated.push({ id: tokenId[1], ...data });
+      return ok({ id: tokenId[1], ...data });
+    }
     if (method === "DELETE" && tokenId) {
       state.deleted.push(tokenId[1]);
       state.tokens = state.tokens.filter((token) => token.id !== tokenId[1]);
@@ -254,6 +259,83 @@ test("cloudflare deploy-token changes nothing when the token and its value exist
   assert.match(result.stdout, /Nothing to do\./u);
   assert.deepEqual(state.created, []);
   assert.ok(exec.calls.every(({ args }) => args[1] !== "set"));
+});
+
+test("the deploy token can create and migrate the Frontend's D1 publication store", () => {
+  assert.ok(accountPermissions.includes("D1 Read"));
+  assert.ok(accountPermissions.includes("D1 Write"));
+  const spec = deployTokenSpec({ project: "fixture", accountId: "acct", zoneId: "zone1" });
+  assert.deepEqual(spec.permissions, [...accountPermissions, ...zonePermissions]);
+});
+
+test("cloudflare deploy-token adds the permissions an older token lacks, keeping its value", async () => {
+  const fixture = await site();
+  const granted = (names) =>
+    PERMISSION_GROUPS.filter(({ name }) => names.includes(name)).map(({ id, name }) => ({
+      id,
+      name,
+    }));
+  const withoutD1 = accountPermissions.filter((name) => !name.startsWith("D1 "));
+  const { fetch, state } = fakeCloudflare({
+    tokens: [
+      {
+        id: "t1",
+        name: "GETQUICK FIXTURE Staging Alchemy",
+        policies: [
+          { permission_groups: granted(withoutD1) },
+          { permission_groups: granted(zonePermissions) },
+        ],
+      },
+    ],
+  });
+  const { exec, secrets } = fakeSigillo({ CLOUDFLARE_API_TOKEN: "stored" });
+
+  const dryRun = await fixture.run(["cloudflare", "deploy-token", "--dry-run"], {
+    env: ENV,
+    fetch,
+    exec,
+  });
+  assert.equal(dryRun.code, 0, dryRun.stderr);
+  assert.match(dryRun.stdout, /~ add D1 Read, D1 Write to its permissions \(its value is kept\)/u);
+  assert.deepEqual(state.updated, []);
+
+  const result = await fixture.run(["cloudflare", "deploy-token"], { env: ENV, fetch, exec });
+
+  assert.equal(result.code, 0, result.stderr);
+  const [update] = state.updated;
+  assert.equal(update.id, "t1");
+  assert.equal(update.name, "GETQUICK FIXTURE Staging Alchemy");
+  assert.equal(update.status, "active");
+  const names = update.policies[0].permission_groups.map(
+    ({ id }) => PERMISSION_GROUPS.find((group) => group.id === id).name,
+  );
+  assert.deepEqual(names, accountPermissions);
+  assert.equal(secrets.CLOUDFLARE_API_TOKEN, "stored", "the value is kept");
+  assert.deepEqual(state.created, []);
+  assert.ok(
+    fetch.requests.every(({ url }) => !url.endsWith("/value")),
+    "nothing is rolled",
+  );
+});
+
+test("cloudflare deploy-token leaves a token with every permission alone", async () => {
+  const fixture = await site();
+  const { fetch, state } = fakeCloudflare({
+    tokens: [
+      {
+        id: "t1",
+        name: "GETQUICK FIXTURE Staging Alchemy",
+        policies: [{ permission_groups: PERMISSION_GROUPS.map(({ id, name }) => ({ id, name })) }],
+      },
+    ],
+  });
+  const { exec } = fakeSigillo({ CLOUDFLARE_API_TOKEN: "stored" });
+
+  const result = await fixture.run(["cloudflare", "deploy-token"], { env: ENV, fetch, exec });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /Nothing to do\./u);
+  assert.deepEqual(state.updated, []);
 });
 
 test("cloudflare deploy-token rolls a token whose value Sigillo lost", async () => {

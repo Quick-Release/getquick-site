@@ -175,7 +175,7 @@ export async function runCli(argv, { cwd, env, fetch, exec, lookup, stdin, io, i
   }
 
   if (isFrontendCommand(parsed.command)) {
-    return runFrontendCommand({ context, parsed, fetch, io });
+    return runFrontendCommand({ context, parsed, env, fetch, exec, io, interactive });
   }
 
   if (provider === "context" && resource === "show") {
